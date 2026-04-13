@@ -71,9 +71,11 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
   _lesson-core/                 Shared module (imported via @core)
     chat/                       Chatbot, ChatBubble, ThreadPanel, processResponse,
                                 buildSystemPrompt, chatState, chat.css.js
-    ui/                         Eq, M, P, Section, KeyConcept, CollapsibleBlock, RefImg
+    ui/                         Eq, M, P, Section, KeyConcept, CollapsibleBlock,
+                                RefImg, DesmosGraph
     constants/                  THEMES_G, MODELS, EFFORT_LEVELS
     hooks/useKatex.js           KaTeX CDN loader
+    hooks/useDesmos.js          Desmos CDN loader (gated on VITE_DESMOS_KEY)
     server/proxy.js             Canonical Express proxy (shim-imported by lessons)
     package.json                Backend deps (express, cors)
     index.js                    Barrel export consumed via @core alias
@@ -90,6 +92,12 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 ```
 
 `<workspace_root>` is the monorepo root; `<course>` and `<slug>` are collected at Phase 0. The three-level layout `<workspace_root>/<course>/claude_lessons/<slug>/` is required because the `@core` alias and proxy shim depths are hardcoded to it.
+
+**Chat protocols the bot can emit (already implemented in `_lesson-core/chat/`)** — useful when planning which media to author into the lesson vs. leave for the chatbot to produce live:
+
+- `<<EDIT_GRAPH>>`, `<<DEMO>>` (inline SVG), `<<SUGGEST>>` (lesson augmentation), `<<SOURCES>>`, `<<COMMIT_SUGGEST>>`.
+- `<<DESMOS>>` — bot emits a Desmos state JSON; client hydrates a live calculator with a manual play button for any slider. Requires `VITE_DESMOS_KEY` in `.env.local`; fails loud if missing. Authors can also embed `<DesmosGraph state={...}/>` directly in lesson JSX for pre-authored interactive graphs.
+- `<<REINFORCE>>` — bot records a concrete heuristic when a medium produces a positive signal (praise, breakthrough, slider engagement). The client accumulates these into `[REINFORCED BEHAVIORS]` injected back via ACTIVE CONTEXT and the system prompt treats them as the highest-priority media-selection rule for the rest of the session. Lesson planning does not need to do anything special — but seeding each topic with a diverse media mix gives the reinforcement loop something to learn from.
 
 Runtime architecture:
 ```

@@ -16,6 +16,7 @@ You recommend the best teaching medium for a given concept. You do not produce c
 - **manim**: runtime-rendered MP4 animation.
 - **web-image**: a real-world photo or microscopy fetched from the web.
 - **interactive-demo**: composed primitives that let the student manipulate parameters live.
+- **desmos-graph**: a live Desmos calculator embed. Lesson authors use `<DesmosGraph state={...}/>` from `@core/ui`; the chatbot emits `<<DESMOS>>...<<END_DESMOS>>` at runtime. Supports slider animation (student-driven play button), zoom/pan, and function composition. Costs ~1.3 MB first-load on a page that uses it.
 
 ## Decision heuristics (quality-first default)
 
@@ -27,7 +28,8 @@ Pick the medium that **teaches the concept best**. Render cost is not a reason t
 - Multi-panel plots, 3D surfaces, heatmaps: **matplotlib**.
 - Temporal dimension is essential (evolution, flow, transformation): **manim**.
 - Real-world appearance matters (apparatus, crystal structure, spectrum image): **web-image**.
-- Behavior emerges as you move a knob: **interactive-demo**.
+- Behavior emerges as you move a knob: **interactive-demo** (use when behavior is discrete / custom UI; use **desmos-graph** when the story is function-shape-under-continuous-parameters, and the student benefits from zoom/pan + typed-in expressions).
+- Function exploration, parameter sweeps on mathematical curves, multi-curve overlays where Desmos' rendering beats a hand-authored SVG or matplotlib figure: **desmos-graph**.
 
 ### Tie-break
 

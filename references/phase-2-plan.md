@@ -68,7 +68,9 @@ Main Claude presents the Lesson Plan with three options: approve, request change
 - Topic content (id, title, equations, key concepts, context string)
 - User media preferences from the Phase 0 scoping artifact (e.g., "prefer interactive where possible", "avoid manim, slow to render", "no web images")
 
-**Return**: a ranked recommendation across the full medium space (inline prose, SVG graph, matplotlib reference, manim animation, interactive demo, web image) with a written rationale per rank. Main Claude uses the top-ranked medium per topic but can fall back to lower ranks if a specialist's draft plan in Step 3 reveals the top choice isn't viable (e.g., manim render time estimate is prohibitive).
+**Return**: a ranked recommendation across the full medium space (inline prose, SVG graph, matplotlib reference, manim animation, interactive demo, web image, Desmos graph) with a written rationale per rank. Main Claude uses the top-ranked medium per topic but can fall back to lower ranks if a specialist's draft plan in Step 3 reveals the top choice isn't viable (e.g., manim render time estimate is prohibitive).
+
+Desmos embeds do not spawn a specialist — main Claude authors the `<DesmosGraph state={...}/>` JSX directly into the content function. Treat them the same as inline prose / KaTeX equations for spawn purposes: no delegation, written inline during assembly.
 
 ### Update mode
 
@@ -138,6 +140,8 @@ Main Claude aggregates verdicts across all topics. The `specialist` field routes
 **Static SVG** is right when: runtime-parameterized (slider, toggle); simple geometry where inline paths beat raster load cost; simple curves (exponential, sinusoid, linear) that benefit from crisp vector rendering.
 
 **Matplotlib `RefImg`** supplements SVG when: the figure needs scientifically accurate reference rendering (validated axis labels, gridlines); the figure is complex enough that matplotlib primitives win over hand-authored SVG.
+
+**Desmos graph (`<DesmosGraph>`)** is right when: the teaching story is function shape under continuous parameters (e.g., plot a Taylor approximation vs. the true function, root-finding convergence as a slider sweeps the initial guess, filter magnitude response with slider-tuned pole/zero); the student benefits from zoom, pan, and typing arbitrary expressions; multiple curves need to be layered. Each `<DesmosGraph>` costs a ~1.3 MB CDN fetch the first time any embed renders in a page. Do NOT reach for Desmos when a static SVG with 1-3 curves already tells the story — stick with `<<DEMO>>` / `graphics-agent` output there. A lesson may embed multiple Desmos graphs; the second onwards is free (bundle already loaded).
 
 ## Lesson Plan artifact formats
 

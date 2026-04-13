@@ -109,6 +109,28 @@ Prevents the "all curves crammed together" failure that dominates visual-QA revi
 
 ---
 
+## Desmos embed checklist
+
+Only applies to lessons that import `DesmosGraph` from `@core/ui/DesmosGraph` or that the chatbot will drive with `<<DESMOS>>` during the session.
+
+- [ ] `.env.local` exists at the lesson root with `VITE_DESMOS_KEY=<key>`. Obtain a key at https://www.desmos.com/api (free for educational use). Register the allowed origins (`http://localhost:*` for dev; the deploy domain for prod) in the Desmos dashboard.
+- [ ] `.env.local` is gitignored at the repo root. Never commit the key.
+- [ ] The `state` prop passed to `<DesmosGraph>` is stable across renders. If it's built from component state, wrap in `useMemo` so the calculator does not remount every render.
+- [ ] Do NOT pass `isPlaying: true` in the state. The component strips it; sliders get a student-driven play button automatically.
+- [ ] `height` prop is set (default 400px). Avoid `100%` unless the parent has a fixed height.
+- [ ] Cap at 3 Desmos embeds per visible topic. Each additional embed is free after the first (bundle already loaded) but visual density still matters.
+- [ ] For lessons NOT using Desmos: the key check does nothing; the hook is a no-op until a component calls it with `{ enabled: true }` (the chat path gates on the presence of a `.chat-desmos-block`).
+
+---
+
+## Chat reinforcement-learning awareness
+
+The chatbot emits `<<REINFORCE>>` when it detects a positive signal (praise, breakthrough, a student engaging with a Desmos slider, iterating on a visual). The client merges these into a per-tab list and injects them back via `[REINFORCED BEHAVIORS]` in ACTIVE CONTEXT. The system prompt treats this block as the highest-priority media-selection heuristic for the rest of the session.
+
+Lesson builders do **not** need to do anything to opt in — the machinery lives entirely in `_lesson-core/chat/`. The only planning implication: topics with a diverse media mix (prose + SVG + interactive + Desmos where appropriate) give the reinforcement loop more to learn from than monoculture topics. Avoid authoring every topic with the same medium "just to be consistent" — variety is the teaching asset.
+
+---
+
 ## Chatbot props checklist
 
 The `<Chatbot>` signature expanded with the graph-schema feature.

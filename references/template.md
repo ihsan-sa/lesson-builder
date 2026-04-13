@@ -21,6 +21,10 @@ import {
   Eq, M, P, Section, KeyConcept, CollapsibleBlock, RefImg,
   THEMES_G, useKatex, STYLES,
 } from "@core";
+// Optional: add `DesmosGraph` to the import block only when the lesson embeds
+// a live Desmos calculator. Requires VITE_DESMOS_KEY in .env.local (the hook
+// fails loud and renders a red fallback if the key is missing).
+// import { DesmosGraph } from "@core/ui/DesmosGraph";
 
 // ───────────────────────────────────────────────────────────────
 // Lesson Context (passed to Chatbot as system-prompt scaffolding)
@@ -459,4 +463,5 @@ export default LessonApp;
 - **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
 - **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
 - **No emojis** anywhere.
+- **Desmos embeds** (`<DesmosGraph>`): pass a stable `state` prop — if the parent rebuilds the state object on every render, the calculator remounts on every render too. Wrap in `useMemo` if constructing from component state. The component strips `isPlaying:true` from any bot-authored state (the student toggles animation via a play-button overlay the component renders automatically when sliders are present). Confirm `VITE_DESMOS_KEY` is set in the lesson's `.env.local` before relying on a Desmos embed.
 - **See also**: `references/phase-3-execution.md`, `references/graph-schema-guide.md`, `references/phase-4-review.md`.
