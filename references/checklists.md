@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This is the tactical-wins reference doc for the `lesson-builder` skill. It consolidates the checklists preserved from the legacy `jsx-lesson` agent pipeline (code quality, template compliance, KaTeX safety, graph quality, 17-test suite, research quality gate, project `CLAUDE.md` format) and adds new update-mode checklists (pre-flight detection, splice assembly, post-splice sanity pass). Phase 3 (execution) and Phase 4 (review) reference this document; spawned agents should receive relevant sections via pointer, not full copy. Items flagged **NEW** apply only to update mode or depend on the graph-schema feature being present in `_lesson-core/chat/graphSchema.js`.
+Tactical-wins reference. Phase 3 and Phase 4 consume pointers into this doc; agents receive relevant sections by pointer, not full copy. Items flagged **NEW** apply only to update mode or depend on the graph-schema feature.
 
 ---
 
 ## KaTeX safety rules
 
-Preserved from the legacy `jsx-lesson` skill references. These rules cause the most common Babel parse failures; apply them during generation, not after.
+Most common Babel parse failures. Apply during generation, not after.
 
 **Core rules**:
 
@@ -41,7 +41,7 @@ If anything shows up, fix immediately. The `safe` filter deliberately whitelists
 
 ## Template compliance checklist
 
-Preserved from jsx-lesson legacy, adjusted for the `@core` migration. Every refactored lesson imports chat + UI infrastructure from `@core`. Any lesson that still inlines the old chat code (e.g., carries its own copies of `ChatBubble`, `ThreadPanel`, or `buildSystemPrompt`) does not comply; update mode should halt on those with a migration-first warning. Detection: single Grep for `from "@core"` in `src/<slug>.jsx`.
+Every lesson imports chat + UI from `@core`. Lessons inlining old chat code (local copies of `ChatBubble`, `ThreadPanel`, `buildSystemPrompt`) do not comply; update mode halts on these with a migration-first warning. Detection: Grep for `from "@core"` in `src/<slug>.jsx`.
 
 - [ ] Imports `Chatbot` and UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`) from `@core` rather than inlining them.
 - [ ] No inlined chat code in the lesson file. The lesson JSX should not define `ChatBubble`, `ThreadPanel`, `processResponse`, `buildSystemPrompt`, or `chatState` locally.
@@ -56,7 +56,7 @@ Preserved from jsx-lesson legacy, adjusted for the `@core` migration. Every refa
 
 ## Core structure checklist
 
-Preserved from the jsx-lesson manual review. Run against the generated or spliced JSX before handing off to Phase 4.
+Run against generated or spliced JSX before handing to Phase 4.
 
 - [ ] `export default` present on the main component (`LessonApp`).
 - [ ] `TOPICS` array is non-empty; every topic `id` has a matching key in `TOPIC_CONTEXT`.
@@ -71,7 +71,7 @@ Preserved from the jsx-lesson manual review. Run against the generated or splice
 
 ## Theming checklist
 
-Preserved from jsx-lesson legacy. Every theme-related failure is visually obvious in the rendered lesson, which is why Phase 4 visual-QA catches regressions if this checklist is skipped.
+Theme failures are visually obvious; Phase 4 visual-QA catches regressions if skipped here.
 
 - [ ] CSS uses custom properties; no hardcoded hex values in the `<style>` block or inline styles.
 - [ ] CSS block contains expected selectors: `.eq-block`, `.key-concept`, `.chat-panel`, `.chat-toggle`, and the gold accent `#c8a45a` must appear in the CSS variable definitions.
@@ -86,7 +86,7 @@ Preserved from jsx-lesson legacy. Every theme-related failure is visually obviou
 
 ## Graphs checklist
 
-Preserved from jsx-lesson legacy, plus one **NEW** item for the graph-schema feature (`GRAPH_SCHEMA`).
+Includes a **NEW** item for the graph-schema feature.
 
 - [ ] `DEFAULT_GRAPH_PARAMS` is defined at module scope; every graph component accepts a `params` prop with defaults via `const p = { ...DEFAULT_GRAPH_PARAMS.myGraph, ...params };`.
 - [ ] **NEW**: `GRAPH_SCHEMA` is defined alongside `DEFAULT_GRAPH_PARAMS` with matching keys one-to-one. Each entry describes the editable fields so the chatbot can offer typed edits. See `references/graph-schema-guide.md` for the derivation procedure and backfill rules for lessons that predate the graph-schema feature.
@@ -96,9 +96,9 @@ Preserved from jsx-lesson legacy, plus one **NEW** item for the graph-schema fea
 - [ ] Graph equations must match the LaTeX equations in the same section. Discrepancies are caught by the Content Verification sub-agent's numerical spot-check but are much cheaper to prevent here.
 - [ ] Graph Preview tab exists as the **last** tab in the `TOPICS` array and renders every graph in the lesson. In update mode this is especially critical: a newly-added graph that is not also added to the graph-preview tab will not appear in visual-QA screenshots and will silently escape review.
 
-### Graph scale design rules (preserved)
+### Graph scale design rules
 
-To avoid the "all curves crammed together" problem that was the single most common Phase 4 visual-QA failure in jsx-lesson era lessons:
+Prevents the "all curves crammed together" failure that dominates visual-QA reviews:
 
 - [ ] **Split scale for mixed-range axes**: Use different pixels-per-unit for different regions. For example, forward bias at 480 px/V but reverse bias at 18 px/V. If the interesting behavior spans four decades, use a split-panel layout (two subplots side by side with different y-axis scales) rather than compressing everything into one panel.
 - [ ] **Minimum curve separation**: Any two visually distinct curves (e.g., Ideal at 0V and CVD at 0.7V) must be at least 150px apart at their closest point.
@@ -111,7 +111,7 @@ To avoid the "all curves crammed together" problem that was the single most comm
 
 ## Chatbot props checklist
 
-Updated from jsx-lesson for the lesson-builder era. The `<Chatbot>` component signature expanded when the graph-schema feature landed.
+The `<Chatbot>` signature expanded with the graph-schema feature.
 
 **Lesson/course identity props**:
 
@@ -126,7 +126,7 @@ Updated from jsx-lesson for the lesson-builder era. The `<Chatbot>` component si
 - [ ] `graphSchema={GRAPH_SCHEMA}` — passed so the chatbot knows the editable field shape of each graph. Without this, the runtime validator silently accepts arbitrary LLM edits.
 - [ ] `graphRenderId={graphRenderId}` — incrementing state that keys the graph-preview tab so it re-renders when `<<EDIT_GRAPH>>` mutates params. `const [graphRenderId, setGraphRenderId] = useState(0);` at the top of LessonApp, incremented by `onEditGraph`.
 
-**Existing session/UI props** (unchanged from jsx-lesson era — verify they still thread through):
+**Existing session/UI props** (verify they still thread through):
 
 - [ ] `topicId`
 - [ ] `topicTitle`
@@ -143,9 +143,9 @@ Updated from jsx-lesson for the lesson-builder era. The `<Chatbot>` component si
 
 ---
 
-## Automated checks (T1-T3 raw commands, preserved)
+## Automated checks (T1-T3 raw commands)
 
-These are the three lightweight checks Phase 4's `code-review-agent` runs first, before the full 17-test suite, because they catch the majority of Phase 3 splice errors for a fraction of the cost. Preserved verbatim from the jsx-lesson Code Review Agent section.
+Three lightweight checks Phase 4's `code-review-agent` runs first, before the full 17-test suite. Catches most Phase 3 splice errors cheaply.
 
 **T1 — Babel JSX parse** (run once per lesson file):
 
@@ -181,7 +181,7 @@ grep -n '<h[234]>.*[<>].*</h[234]>' FILEPATH | grep -v '{"' \
 
 ## 17-test suite summary
 
-Preserved from the legacy `jsx-lesson` skill references. Phase 4 executes the suite via `node test_lesson.cjs`; each lesson ships with its own `test_lesson.cjs` that runs these 17 tests against `src/<slug>.jsx`.
+Phase 4 runs the suite via `node test_lesson.cjs`; each lesson ships its own `test_lesson.cjs` running these 17 tests against `src/<slug>.jsx`.
 
 - **T1** — JSX Babel parse. Catches syntax errors and the most common KaTeX escape mistakes.
 - **T2** — KaTeX safety: no bare `<` in `{"..."}` string expressions (whitelist: `\\lt`, `\\leq`, `\\left`, `\\ll`, `\\lambda`, `\\langle`, `\\ldots`).
@@ -205,18 +205,18 @@ Preserved from the legacy `jsx-lesson` skill references. Phase 4 executes the su
 
 ## Research quality gate
 
-Preserved verbatim from the jsx-lesson Research Agent. Run this at the end of Phase 1 before handing the compiled content package to Phase 2.
+Run at the end of Phase 1 before handing to Phase 2.
 
-- [ ] Every equation has its source identified: specific lecture page, textbook section, or web source URL. "Standard result" is not acceptable.
-- [ ] Every variable in every equation is defined, including units.
-- [ ] No solutions to problems. No numerical answers. The chatbot is a tutor, not an answer key; the lesson content must not leak into solution territory.
-- [ ] **Concision**: every paragraph in the outline teaches something. Cut filler, restatements of the obvious, and "as we can see" throat-clearing. Prefer an equation or diagram reference over a wordy description of the same thing.
+- [ ] Every equation has a source (lecture page, textbook section, URL). "Standard result" is not acceptable.
+- [ ] Every variable is defined, with units.
+- [ ] No solutions, no numerical answers. The chatbot is a tutor, not an answer key.
+- [ ] **Concision**: every paragraph teaches something. Cut filler. Prefer an equation or diagram reference over prose describing the same thing.
 
 ---
 
-## Physics consistency and edge-case checklist (preserved)
+## Physics consistency and edge-case checklist
 
-Preserved from the jsx-lesson Content Verification Agent (Sub-Agent C). Phase 4 content-review-agent should run every new or refined graph through these checks, because they catch rendering bugs that numerical spot-checks miss.
+Phase 4 content-review-agent runs every new/refined graph through these; they catch rendering bugs that numerical spot-checks miss.
 
 - [ ] **Limiting behavior**: For every graph, check behavior at extremes. What happens at `x = 0`? At `x → ∞`? At `x → -∞`? Do the curves match known physics in these limits?
 - [ ] **Monotonicity**: Verify curves are monotonic where they should be. Shockley forward bias is strictly increasing. MOSFET saturation is flat with `VDS` (no channel-length modulation) or slightly increasing (with CLM). Bode LPF magnitude is non-increasing after the corner frequency.
@@ -224,9 +224,9 @@ Preserved from the jsx-lesson Content Verification Agent (Sub-Agent C). Phase 4 
 - [ ] **Multi-curve consistency**: For family-of-curves plots, higher control parameter must give higher output curve. Example: in MOSFET output characteristics, higher `VGS` → higher `IDS`. Curves must not cross where they shouldn't.
 - [ ] **Missing features**: Cross-reference against standard textbook figures for the lesson's domain. Whatever the textbook figure routinely shows (limiting regions, breakdown behavior, both magnitude and phase on a frequency plot, etc.), the lesson graph should show too unless there is a deliberate pedagogical reason to omit it.
 
-### Numerical spot-check pattern (preserved)
+### Numerical spot-check pattern
 
-When Phase 4 catches a suspect graph, the content-review-agent writes a small Node script to evaluate the graph's math at known test points. Pattern:
+When Phase 4 catches a suspect graph, content-review-agent writes a small Node script to evaluate the graph's math at known test points:
 
 1. Extract the core equation from the graph component function body.
 2. Evaluate it at specific test points where the expected answer is known from theory (e.g., diode at `VD=0`, `VD=0.5`, `VD=0.6`, `VD=0.7`).
@@ -247,7 +247,7 @@ When Phase 4 catches a suspect graph, the content-review-agent writes a small No
 
 ## Content concision rule
 
-Preserved from jsx-lesson. Phase 3 execution agents (graphics-agent, interactive-demo-agent) reference this when writing `<P>` blocks alongside their components.
+Phase 3 execution agents reference this when writing `<P>` blocks alongside components.
 
 - [ ] Every `<P>` block must teach something the student cannot get from the equation alone.
 - [ ] Do not restate what the equation already says. Example anti-pattern: writing "this equation tells us that X increases with Y" when that fact is obvious from the formula.
@@ -258,7 +258,7 @@ Preserved from jsx-lesson. Phase 3 execution agents (graphics-agent, interactive
 
 ## Project CLAUDE.md checklist
 
-Preserved from jsx-lesson. Phase 3 touches `CLAUDE.md` only if the course code or slug is new. In update mode this is typically a no-op (the existing `## Lesson App` section is preserved).
+Phase 3 touches `CLAUDE.md` only for new course/slug. Update mode is typically no-op (preserve `## Lesson App`).
 
 - [ ] `## Lesson App` heading present as a top-level section.
 - [ ] Section is 10-15 lines maximum. Longer means it is documenting something that should live elsewhere.
@@ -269,7 +269,7 @@ Preserved from jsx-lesson. Phase 3 touches `CLAUDE.md` only if the course code o
 
 ## Update-mode pre-flight checklist (NEW)
 
-**This section applies only to update mode.** Run before the scoping interview closes. Any failure surfaces to the user during mode confirmation, and most require either a halt or a documented opt-in bypass.
+Update mode only. Run before scoping closes. Failures surface at mode confirmation; most require halt or opt-in bypass.
 
 - [ ] Lesson root resolves to an existing directory. Canonical form: `<workspace_root>/<course>/claude_lessons/<slug>/`.
 - [ ] `src/<slug>.jsx` exists at the expected path and parses cleanly under Babel (`{ sourceType: "module", plugins: ["jsx"] }`). A parse failure means the baseline is already broken; halt and surface the parse error.
@@ -285,7 +285,7 @@ Preserved from jsx-lesson. Phase 3 touches `CLAUDE.md` only if the course code o
 
 ## Update-mode splice checklist (NEW)
 
-**This section applies only to update mode.** Run during Phase 3 assembly, after every individual splice edit and again as a final sweep before handing to Phase 4. Built for the assembly algorithm in `references/phase-3-execution.md`.
+Update mode only. Run after every splice edit and as final sweep before Phase 4. Pairs with the assembly algorithm in `references/phase-3-execution.md`.
 
 - [ ] Every `refine` component has the **same function name** as the existing component it replaces. Function-name anchoring is how the splice finds the edit site; a rename breaks the splice silently.
 - [ ] Every `remove` component has no remaining call sites in the JSX after splicing. Grep for `<ComponentName` and confirm zero hits. Dangling call sites become reference errors at runtime.
@@ -305,7 +305,7 @@ Preserved from jsx-lesson. Phase 3 touches `CLAUDE.md` only if the course code o
 
 ## Post-splice sanity pass
 
-**Main Claude runs this after assembly, before handing to Phase 4.** It is a cheap, fast gate that catches the most common splice corruption modes. Failures here halt and fix in-place without involving any review agent.
+Main Claude runs this after assembly, before Phase 4. Cheap gate catching common splice corruption. Failures halt and fix in-place without review agents.
 
 - [ ] Babel parse passes. This is the coarsest gate and must pass before any other post-splice check runs.
 - [ ] Grep count: every `DEFAULT_GRAPH_PARAMS[<key>]` access has a matching key definition in the `DEFAULT_GRAPH_PARAMS` object literal.
@@ -320,8 +320,7 @@ Preserved from jsx-lesson. Phase 3 touches `CLAUDE.md` only if the course code o
 
 ## Cross-references
 
-- Legacy source (preserved where marked): the `jsx-lesson` skill references.
-- Graph schema derivation procedure: `references/graph-schema-guide.md`
-- Phase 3 execution details (splice algorithm, assembly): `references/phase-3-execution.md`
-- Phase 4 review details (parallel reviews, fix loop): `references/phase-4-review.md`
-- Shared chat + UI core (all imports land here): `<workspace_root>/_lesson-core/`
+- Graph schema derivation: `references/graph-schema-guide.md`
+- Phase 3 execution (splice algorithm): `references/phase-3-execution.md`
+- Phase 4 review (parallel reviews, fix loop): `references/phase-4-review.md`
+- Shared chat + UI core: `<workspace_root>/_lesson-core/`

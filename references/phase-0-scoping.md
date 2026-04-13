@@ -2,18 +2,18 @@
 
 ## Purpose
 
-Phase 0 runs before any content work and produces a **scoping artifact** that drives every downstream phase (starting with Phase 1 content analysis). Main Claude conducts a short AskUserQuestion interview whose questions are adapted to the detected mode (`new` vs `update`) and to whatever materials the user provided with the initial request. The goal is to leave Phase 0 with enough information to either spawn `content-orchestrator-agent` against a clear scope (new mode) or against a known existing lesson root with a bounded research re-sweep (update mode). No research, no orchestrator spawns, and no file writes happen until Phase 0 completes.
+Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short AskUserQuestion interview whose questions adapt to the detected mode and to whatever materials the user provided. Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes.
 
 ## Mode detection recap
 
-Mode detection fires **before** the scoping interview as the very first action inside the skill. It is best-effort; Phase 0's first question always confirms the result. Logic summary:
+Detection fires before the scoping interview. Best-effort; Phase 0's first question confirms.
 
-- **Update verbs** scanned in the user's initial message: `update|updating|updated|rework|reworking|revise|revising|improve|improving|refresh|refreshing|modify|modifying|tweak|tweaking|fix|fixing|enhance|enhancing`.
-- **Lesson reference patterns**: course directories + slugs discovered via Glob over `<workspace_root>/*/claude_lessons/*/`, or any path the user pastes that contains `claude_lessons`.
-- **Candidate resolution**: full path → use directly; course + slug → resolve to `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob for matches and use if exactly one.
-- **Mode assignment**: verb + resolved candidate → `update` with `candidate_root`; verb + unresolved → `update` with `candidate_root=null` (ask in Phase 0); no verb + no candidate → `new`; verb + new-sounding intent → `new` with logged ambiguity.
+- **Update verbs**: `update|updating|updated|rework|reworking|revise|revising|improve|improving|refresh|refreshing|modify|modifying|tweak|tweaking|fix|fixing|enhance|enhancing`.
+- **Lesson references**: course + slug via Glob over `<workspace_root>/*/claude_lessons/*/`, or any path containing `claude_lessons`.
+- **Candidate resolution**: full path → use directly; course + slug → resolve to `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob; use if exactly one match.
+- **Mode assignment**: verb + resolved → `update`; verb + unresolved → `update` with `candidate_root=null`; no verb → `new`; verb + new-sounding intent → `new` with logged ambiguity.
 
-Full decision tree, edge cases, and the update verb table live in `references/update-mode.md`. High-level summary also lives in `SKILL.md`. Do not duplicate that detail here; cross-link it.
+Full decision tree in `references/update-mode.md`.
 
 Main Claude writes the detection result as the first line under `## Phase 0 — Scoping` in the log doc:
 
@@ -23,15 +23,12 @@ Main Claude writes the detection result as the first line under `## Phase 0 — 
 
 ### Resource-mode detection
 
-Alongside mode detection, main Claude scans the user's initial message for signals that they want a resource-conscious pass rather than the default maximum-quality pass. Trigger phrases: `quick`, `fast`, `cheap`, `minor`, `light pass`, `don't spend too much time`, `quick pass`, `keep it simple`, `avoid manim`, `skip research`, and similar. See `SKILL.md` → "Quality policy" for the full directive.
+Alongside mode detection, scan the initial message for resource-conscious signals: `quick`, `fast`, `cheap`, `minor`, `light pass`, `quick pass`, `keep it simple`, `avoid manim`, `skip research`, and similar.
 
-- No trigger phrases → `resource_mode: "full"` (default, maximum quality).
-- Trigger phrase present → `resource_mode: "limited"`.
+- No triggers → `resource_mode: "full"` (default).
+- Trigger present → `resource_mode: "limited"`.
 
-`resource_mode` threads through every downstream phase and every specialist spawn. Main Claude surfaces the detected value during Phase 0 confirmation so the user can override it explicitly. Log format:
-
-- `Resource mode: full` or `Resource mode: limited`
-- On ambiguity, default to `full` and note the ambiguity for the user to confirm.
+`resource_mode` threads through every phase and spawn. Surface the detected value at Phase 0 confirmation. Log as `Resource mode: full|limited`; on ambiguity, default to `full` and note for confirmation.
 
 ## Question taxonomy — new mode
 
@@ -61,19 +58,17 @@ If no material was provided, ask:
 
 ## Question taxonomy — update mode
 
-Update mode has **5 questions in order**. Course code, slug, and deploy target are auto-populated from `candidate_root` and are not re-asked. Audience level, pedagogical goal, and single-vs-multi are still asked because they may have shifted since the original build.
+Update mode asks **5 questions**. Course code, slug, and deploy target are auto-populated from `candidate_root`. Audience level, pedagogical goal, and single-vs-multi are asked because they may have shifted.
 
-Before asking, main Claude runs two **pre-checks**:
+Pre-checks run first:
 
-1. **Working-tree pre-check**: `git status --short <lesson_root>` from the repo root, captures stdout, and uses the result to decide whether question 2 needs to surface the dirty-tree warning. If the output is empty, working tree is clean and the question can be skipped (or confirmed implicitly).
+1. **Working-tree**: `git status --short <lesson_root>`. Empty stdout → clean; skip question 2.
 
-2. **`@core` pre-check**: Grep `src/<slug>.jsx` for `from "@core"` imports. If the count is zero, the lesson predates the `_lesson-core/` migration and still inlines chat code. Update mode is a default no-go on non-`@core` lessons because `code-review-agent` will block at Phase 4. Inject a migration-first warning into question 1 options:
+2. **`@core`**: Grep `src/<slug>.jsx` for `from "@core"`. If absent, the lesson predates the `_lesson-core/` migration and inlines old chat code. Update is a default no-go because `code-review-agent` will block at Phase 4. Replace question 1 options:
    - `Yes, update that lesson (migration required first — switch to new mode)` (default)
-   - `Update without migration (bypass @core check; I accept the risk)` (narrow escape hatch; warn in the log)
+   - `Update without migration (bypass @core check; I accept the risk)`
    - `Different lesson`
    - `Actually a brand-new lesson`
-
-If the `@core` check passes, proceed with the normal question 1 option set.
 
 ### The 5 update-mode questions
 
@@ -185,31 +180,20 @@ working_tree_state: "clean"
 
 ## Aggressive-defaults policy for casual one-liners
 
-If the user's initial request is a terse one-liner (e.g. "fix the `<component-name>` in `<slug>`", "update the `<slug>` lesson"), skip the 5-question gauntlet and instead present **one condensed confirmation** bundling the assumed defaults. The defaults are picked from `resource_mode`, which main Claude detected earlier — see "Resource-mode detection" above.
+For terse one-liners (e.g. "fix the `<component>` in `<slug>`", "update the `<slug>` lesson"), skip the 5-question gauntlet and present one condensed confirmation with assumed defaults.
 
-**Trigger conditions** (all must hold):
+**Triggers** (all must hold):
 
-- Mode is `update` with `candidate_root` already resolved.
-- Working tree is clean (no dirty-tree question needed).
-- User request is under ~20 words and uses an update verb.
-- No explicit scope flags (no mention of "full rewrite", "deep research", "rework everything").
+- Mode `update` with resolved `candidate_root`.
+- Clean working tree.
+- Request under ~20 words with an update verb.
+- No explicit scope flags ("full rewrite", "deep research", "rework everything").
 
-**When triggered and `resource_mode: "full"` (the default)**, assume:
+**Under `resource_mode: "full"`** (default): assume `research_depth: "targeted"` if the one-liner named a topic/component, else `"full"`. Never default to `light`. `scope_of_change: "specific"` if a topic was named, else `"any"`. `media_hints: []` (or single item if a medium was named). Carry audience / pedagogical goal / single-vs-multi from the existing `lesson_build.log.md`; fall back to `working`, `single`, inferred audience, or ask.
 
-- `research_depth: "targeted"` if the one-liner named a specific topic or component, else `"full"`. Do not default to `light` — the user did not ask for a cheap pass.
-- `scope_of_change: "specific"` if the user named a topic, else `"any"`.
-- `media_hints: []` (or a single-item list if the user named a medium in the one-liner).
-- Audience / pedagogical goal / single-vs-multi: carry forward from the existing lesson's `lesson_build.log.md` if present, otherwise the safest defaults for the detected course directory (`working`, `single`, audience inferred from any previously-built lesson under the same course directory, else ask).
+**Under `resource_mode: "limited"`**: `research_depth: "light"`. Otherwise as above.
 
-**When triggered and `resource_mode: "limited"`** (user said "quick pass" or similar), assume:
-
-- `research_depth: "light"`.
-- `scope_of_change: "specific"` if the user named a topic, else `"any"`.
-- Everything else as above.
-
-**Confirmation phrasing**: "Here's what I'm assuming for this update — change anything before I start?" followed by a compact bullet list of the assumed fields **including the detected `resource_mode`**. The user gets one AskUserQuestion with options `Looks good, proceed`, `Change some fields (specify)`, `Actually run the full 5-question interview`.
-
-If the user picks "change some fields", fall back to asking only the fields they flagged (including `resource_mode` if they want to flip it). If they pick "full interview", run the standard 5-question flow. Aggressive defaults never apply in new mode — new lessons always get the full scoping interview.
+**Confirmation**: "Here's what I'm assuming for this update — change anything?" with a compact bullet list including `resource_mode`. Options: `Looks good, proceed`, `Change some fields`, `Run the full 5-question interview`. On partial change, ask only the flagged fields. Aggressive defaults never apply in new mode.
 
 ## Output
 

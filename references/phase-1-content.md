@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Phase 1 produces a compiled content package that Phase 2 turns into a Lesson Plan. It is driven by `content-orchestrator-agent`, a sub-orchestrator spawned by main Claude with the scoping artifact from Phase 0. Behavior diverges on mode: new-mode does fresh research across provided materials and topic-area sources; update-mode performs a drift/gap diff against the existing lesson, branching on `research_depth`. In both modes main Claude reviews the returned package for consistency before handing off to Phase 2.
+Phase 1 produces a compiled content package for Phase 2. Driven by `content-orchestrator-agent`, spawned with the Phase 0 scoping artifact. New mode: fresh research across materials and topic-area sources. Update mode: drift/gap diff against existing lesson, branching on `research_depth`. Main Claude reviews the returned package for consistency before Phase 2 handoff.
 
 ---
 
@@ -20,34 +20,34 @@ Main Claude passes the following from the scoping artifact:
 
 ### Procedure
 
-1. **Initial sweep (pure-research only)**. If `provided_materials` is empty, the orchestrator does a rough initial sweep, reports a draft topic list to main Claude for scope confirmation, then commits to deep research. This prevents wasted agent time on misaligned scope.
-2. **Per-resource deep-review teams in parallel**. One team per provided resource (textbook chapter, slide deck, problem set, lecture notes). Each team extracts equations, concepts, constants, and candidate topic groupings from its single resource.
-3. **Topic-area research via `research-agent`**. Spawned in parallel with the per-resource teams for topics that need coverage beyond the provided materials. Each `research-agent` makes its own source reliability judgment.
-4. **Content dialogue loop with `content-review-agent`**. Aggregated research results get checked for alignment with scope, pedagogical goal, and audience level. Misalignments trigger corrective research rounds.
-5. **Gap-fill**. Remaining uncovered concepts trigger additional `research-agent` spawns with narrow briefs.
+1. **Initial sweep (pure-research only)**: if `provided_materials` is empty, do a rough sweep, report a draft topic list for scope confirmation, then commit to deep research.
+2. **Per-resource deep-review teams in parallel**: one per resource. Extract equations, concepts, constants, candidate topic groupings.
+3. **Topic-area research via `research-agent`**: parallel with step 2 for topics needing coverage beyond provided materials.
+4. **Content dialogue loop with `content-review-agent`**: check alignment with scope/goal/audience. Misalignment triggers corrective rounds.
+5. **Gap-fill**: narrow `research-agent` spawns for remaining concepts.
 6. **Compile and return**.
 
-### Tactical input-handling notes (preserved from legacy jsx-lesson Research Agent)
+### Tactical input-handling notes
 
-These rules apply inside per-resource deep-review teams and inside gap-fill `research-agent` spawns:
+Apply inside per-resource deep-review teams and gap-fill `research-agent` spawns.
 
 **Uploaded PDFs / files**:
-1. Run `file <path>` to check type. Many lecture PDFs are actually ZIP archives.
-2. If ZIP: `mkdir -p /tmp/extract/<name> && unzip -o -q <path> -d /tmp/extract/<name>`
-3. Check `manifest.json` inside for page list and metadata.
-4. View key page images directly when the PDF is a scan (`/tmp/extract/<name>/N.jpeg`).
-5. For text-extractable PDFs use `pdftotext` or `pypdf`.
+1. `file <path>` to check type; many lecture PDFs are actually ZIPs.
+2. If ZIP: `mkdir -p /tmp/extract/<name> && unzip -o -q <path> -d /tmp/extract/<name>`.
+3. Check `manifest.json` for page list and metadata.
+4. Scanned PDFs: view page images directly (`/tmp/extract/<name>/N.jpeg`).
+5. Text-extractable PDFs: `pdftotext` or `pypdf`.
 
 **Topic-based research (no files)**:
-1. `project_knowledge_search` first for all relevant terms — highest priority source.
-2. `web_search` for standard equations, definitions, physical constants.
-3. **Two-source cross-reference rule**: any non-trivial equation must be confirmed against at least two independent sources before it lands in the compiled package.
+1. `project_knowledge_search` first — highest priority.
+2. `web_search` for standard equations, definitions, constants.
+3. **Two-source cross-reference**: every non-trivial equation confirmed against ≥2 independent sources before inclusion.
 
-**Quality gate** (mirrored from legacy Research Agent):
-- Every equation must have its source identified (lecture page, textbook section, or web source).
-- Every variable must be defined.
-- No solutions or numerical answers to problems.
-- Concision: every paragraph in the outline must teach something. Cut filler, restatements of the obvious, and throat-clearing phrases. Prefer an equation or diagram reference over a wordy description.
+**Quality gate**:
+- Every equation has a source (lecture page, textbook section, URL).
+- Every variable defined.
+- No solutions or numerical answers.
+- Concision: every paragraph teaches something. Cut filler. Prefer an equation or diagram over prose.
 
 ### New-mode compiled content package schema
 
@@ -76,11 +76,11 @@ GAPS_REMAINING: [...]
 
 ## Update-mode content orchestration
 
-### Existing-media inventory pre-scan (runs in main Claude)
+### Existing-media inventory pre-scan (main Claude)
 
-Before spawning `content-orchestrator-agent`, main Claude runs a deterministic Grep/Glob sweep of the existing lesson to produce an inventory. This keeps the orchestrator deterministic — it does not re-discover media, it consumes a structured dict.
+Before spawning `content-orchestrator-agent`, run a deterministic Grep/Glob sweep to produce a structured inventory. The orchestrator consumes the dict; it does not re-discover media.
 
-All paths below are relative to `<lesson_root> = <workspace_root>/<course>/claude_lessons/<slug>/`.
+Paths below are relative to `<lesson_root> = <workspace_root>/<course>/claude_lessons/<slug>/`.
 
 **1. Graph function definitions** — names and line ranges:
 ```
@@ -214,11 +214,11 @@ Main Claude passes:
 
 ### Procedure branched on `research_depth`
 
-Quality-first defaults: when `resource_mode: "full"` (the default, see `SKILL.md` → "Quality policy"), Phase 0 picks `targeted` or `full` for most updates. `light` is reserved for `resource_mode: "limited"` or explicit user request. The orchestrator never downgrades the depth below what Phase 0 selected.
+Under `resource_mode: "full"`, Phase 0 picks `targeted` or `full` for most updates. `light` is reserved for `"limited"` or explicit request. The orchestrator never downgrades below Phase 0's choice.
 
-- **full**. Runs the complete new-mode Phase 1 flow — deep-review teams per provided resource, `research-agent` per topic, content-dialogue loop — but seeds every agent with the existing content as a baseline so they identify drift rather than start from zero. This is the quality-first default for broad-scope updates. It does take longer than `targeted` or `light` because it re-runs the new-mode research procedure; the orchestrator notes the runtime implication in its return so main Claude can surface it if the user has asked about runtime.
-- **targeted**. Same as light, plus one `research-agent` per user-named topic with a narrow equation/concept brief. Spawns scale with the number of named topics. Good balance when only part of the lesson needs a fresh look.
-- **light**. No `research-agent` spawns. Orchestrator reads the existing JSX end-to-end, cross-references the inventory, and spawns `content-review-agent` once with user concerns + new materials as criteria. Approximately 1-2 agent rounds total. Used only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
+- **full**: complete new-mode flow — deep-review per resource, `research-agent` per topic, dialogue loop — seeded with existing content as baseline. Longer than `targeted`/`light`; runtime noted in the return.
+- **targeted**: same as light plus one `research-agent` per user-named topic with narrow brief.
+- **light**: no `research-agent` spawns. Orchestrator reads JSX end-to-end, cross-references the inventory, spawns `content-review-agent` once with concerns + new materials. ~1-2 rounds.
 
 ### Drift / gap / redundancy / reorganization classification
 

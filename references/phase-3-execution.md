@@ -2,25 +2,25 @@
 
 ## Purpose
 
-Phase 3 takes the approved Lesson Plan from Phase 2 and writes the lesson JSX plus project files to disk. It is the only phase that modifies `<lesson_root>/` content, and it is hard-branched on mode: in **new mode**, Phase 3 spawns medium specialists in parallel, collects their scratch outputs, and assembles the final `src/<slug>.jsx` by filling in the skeleton from `references/template.md`; in **update mode**, Phase 3 first stages a git branch and optional stash, then splices specialist outputs into the existing lesson file using concrete edit anchors (function signatures, `DEFAULT_GRAPH_PARAMS` keys, `TOPICS` array entries) while preserving everything the Phase 2 change-list marked as `keep`. Both branches end with a cleaned-up `.build-scratch/` and a post-assembly sanity pass, leaving the lesson file ready for Phase 4's parallel reviews.
+Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project files. It is the only phase that modifies `<lesson_root>/` content, hard-branched on mode: **new** spawns specialists in parallel, collects scratch outputs, assembles `src/<slug>.jsx` from `references/template.md`. **Update** stages a git branch + optional stash, then splices specialist outputs into the existing file using edit anchors (function signatures, `DEFAULT_GRAPH_PARAMS` keys, `TOPICS` entries) while preserving `keep` items. Both end with a `.build-scratch/` cleanup and a post-assembly sanity pass.
 
 ## Shared conventions (both modes)
 
 ### Scratch directory
 
-All specialist work lands under `<lesson_root>/.build-scratch/`. The directory is gitignored (add `**/.build-scratch/` to the workspace `.gitignore` if it is not already present) and is deleted after successful assembly. A failed run leaves `.build-scratch/` in place so the next run can inspect what the specialists produced. One file per specialist output; see the mode-specific layouts below.
+All specialist work lands under `<lesson_root>/.build-scratch/`. Gitignored (add `**/.build-scratch/` to workspace `.gitignore` if missing). Deleted after successful assembly; left in place on failure for inspection. One file per specialist output.
 
 ### Log discipline
 
-Main Claude writes execution milestones to `<lesson_root>/lesson_build.log.md` under `## Phase 3 — Execution` (new mode) or `### Phase 3 — Execution (update)` nested under `## Update YYYY-MM-DD` (update mode). See `references/log-template.md` for the exact template. Log entries must include: specialists spawned, files written or spliced, splice counts (update mode), GRAPH_SCHEMA backfill status (update mode), and any drift-repair items.
+Write milestones to `lesson_build.log.md` under `## Phase 3 — Execution` (new) or `### Phase 3 — Execution (update)` nested under `## Update YYYY-MM-DD`. Entries: specialists spawned, files written/spliced, splice counts (update), GRAPH_SCHEMA backfill status (update), drift repairs.
 
 ### Parallel specialist spawning
 
-One specialist per topic per medium, spawned concurrently in a single message. Main Claude waits for all returns before assembling. This is the Phase 2 execution-plan split: if Phase 2 marked `topic-3` as needing one SVG graph + one manim video, that topic gets one `graphics-agent` spawn and one `manim-agent` spawn, running alongside every other topic's specialists. The spawn prompts come from the Phase 2 specialist briefs verbatim; main Claude does not rewrite them.
+One specialist per topic per medium, spawned concurrently in a single message. Wait for all returns before assembling. Spawn prompts come from Phase 2 briefs verbatim.
 
-**Degenerate fan-out cases**: if Phase 2 marks a topic as "text-only" (no media), no specialist is spawned for that topic and main Claude writes the topic content directly from the Phase 1 compiled package during assembly. If the entire lesson is text-only (rare but legal for a pure-derivation lesson), Phase 3 skips specialist spawning entirely and goes straight to assembly.
+**Degenerate cases**: text-only topics skip specialist spawns; main Claude writes content directly from Phase 1. Fully text-only lessons skip Step 1 entirely.
 
-**Spawn budget ceiling**: if Phase 2's plan fans out to more than ~20 concurrent specialists, split the spawn into two batches of ~10 each to avoid overloading the harness. Log the batching under specialists-spawned. Most lessons stay well under the ceiling.
+**Spawn budget**: above ~20 concurrent specialists, split into two batches of ~10. Log batching.
 
 ## New-mode execution
 
@@ -134,18 +134,18 @@ function MyGraph({ params, mid = "" }) {
 
 **Scale design**: for mixed-range axes (e.g., diode forward `mA` + reverse `µA`), use **split scales** via two SVG subplots side by side, not a single compressed axis. Distinct curves in a family plot must be separated by at least 150 px at the widest point so the student can visually distinguish them. Y-axis units are always chosen for practical readability: `mA` not `A`, `dB` not linear magnitude, `µA` for reverse-bias, `ps` or `ns` for sub-millisecond timing.
 
-**Matplotlib visual review loop** (for `matplotlib-ref` media): specialists follow a generate-inspect-iterate loop with a 3-agent review team. Flow:
+**Matplotlib visual review loop** (for `matplotlib-ref` media):
 
-1. Python specialist writes matplotlib code and saves PNG to a temp path (e.g., `/tmp/graph_name_v1.png`) at `dpi=150` with `bbox_inches='tight'`.
+1. Python specialist writes matplotlib code, saves PNG at `dpi=150` with `bbox_inches='tight'`.
 2. Specialist views the PNG.
 3. Specialist spawns a 3-agent review team in parallel:
-   - **Readability agent**: font size >= 9, no overlapping labels, legend in empty space, title present, annotations clear.
-   - **Correctness agent**: curve shapes match expected physics, critical points at correct positions (e.g., diode knee at 0.6 V, -3 dB at ω0), region labels present, axis variable names and units correct.
-   - **Scale agent**: nothing clipped or clamped, distinct curves separated, practical units used, split panels used when multi-scale.
-4. If any reviewer flags an issue: fix the Python, re-render, re-view, re-review. No iteration cap.
-5. When all three approve: base64-encode the final PNG and embed as a `const IMG_X = "..."` string constant. Pass to `<RefImg data={IMG_X} alt="..." caption="..." />` in the topic's `content` function.
+   - **Readability**: font ≥ 9, no overlapping labels, legend in empty space, title present, annotations clear.
+   - **Correctness**: curve shapes match expected physics, critical points correct (diode knee at 0.6 V, -3 dB at ω0), region labels and axis units correct.
+   - **Scale**: nothing clipped/clamped, distinct curves separated, practical units, split panels for multi-scale.
+4. Any flag → fix, re-render, re-review. No iteration cap.
+5. On approval: base64-encode as `const IMG_X = "..."` and pass to `<RefImg data={IMG_X} alt="..." caption="..." />`.
 
-**Graph Preview tab** (mandatory last tab): every lesson ends with a tab that renders every graph in the lesson in a single scrollable view. This is the screenshot target for post-deploy visual verification and for the student's "send this to the chatbot for review" workflow. Do not skip it. The tab's TOPIC_CONTEXT entry is the verbatim string from the template (`"Graph Preview tab. Shows all lesson graphs..."`).
+**Graph Preview tab** (mandatory last tab): renders every graph in one scrollable view. Screenshot target for post-deploy verification and the student's "send this to chat for review" flow. TOPIC_CONTEXT entry is the verbatim template string.
 
 ### Step 8: post-assembly cleanup
 
@@ -334,19 +334,17 @@ Iterate over the Phase 2 topic change-list:
 - **`remove`**: delete the TOPICS array entry and the matching TOPIC_CONTEXT entry. **Media referenced only by the removed topic and marked for removal** gets deleted from the component block; **media referenced by multiple topics** is preserved even if the current topic is gone. Track the cross-reference count as you walk. This is a common source of silent breakage.
 - **`reorder`**: reorder the TOPICS array entries in place. TOPIC_CONTEXT keys stay the same (they are IDs, not indices), so no reshuffle there.
 
-**Worked example — topic remove with media cascade**: user asks to remove `topic-3` from a lesson. Topic-3 references four graphs: `GraphA`, `GraphB`, `GraphC`, and `GraphD`. Phase 2's change-list marks `topic-3` for removal and all four graphs for removal. Main Claude walks the other topics and discovers that `GraphC` is also referenced from `topic-5`. So the splice step:
-1. Deletes TOPICS entry for `topic-3` and TOPIC_CONTEXT[`topic-3`].
-2. Deletes the `GraphA`, `GraphB`, `GraphD` component definitions and their `DEFAULT_GRAPH_PARAMS` / `GRAPH_SCHEMA` entries.
-3. **Preserves `GraphC`** — the def, the params entry, the schema entry, and the call site in `topic-5`.
-4. Deletes the call site for `GraphC` that was inside `topic-3`.
+**Worked example — remove with media cascade**: user removes `topic-3`, which references `GraphA`, `GraphB`, `GraphC`, `GraphD`. Change-list marks all four for removal. Walking other topics, `GraphC` is also used in `topic-5`. Splice:
+1. Delete TOPICS entry for `topic-3` and `TOPIC_CONTEXT[topic-3]`.
+2. Delete `GraphA`, `GraphB`, `GraphD` definitions and their params/schema entries.
+3. **Preserve `GraphC`** — def, params, schema, and its `topic-5` call site.
+4. Delete the `GraphC` call site inside `topic-3`.
 
-The post-splice sanity pass in step 4.6 will then verify that `GraphC` still has a call site (in `topic-5`) and a definition, and that no dangling `gp.graphA` / `gp.graphB` / `gp.graphD` references remain.
+Post-splice sanity pass verifies `GraphC` still has a definition and call site, and no dangling `gp.graphA|B|D` references remain.
 
 #### 4.4 Update the graph-preview tab
 
-**This is a common mistake**: forgetting to update the graph-preview tab. Its `content` function renders every graph component in the lesson for screenshot-based visual verification. If a refine/replace/add/remove changed the set of graphs, the graph-preview content function must reflect the new list.
-
-Locate the `graph-preview` topic in TOPICS and rewrite its `content` function's body to include **all final graphs** (kept + refined + replaced + added, minus removed). Missing this step means new graphs do not appear in visual-QA screenshots and Phase 4 visual-QA silently misses them.
+Commonly missed. The `graph-preview` tab's `content` function renders every graph for screenshot verification. If refine/replace/add/remove changed the graph set, rewrite the content body to include **all final graphs** (kept + refined + replaced + added, minus removed). Missing this step means new graphs do not appear in visual-QA screenshots.
 
 #### 4.5 Splice updated LESSON_CONTEXT if Phase 1 changed it
 

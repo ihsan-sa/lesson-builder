@@ -2,18 +2,18 @@
 
 A Claude Code skill for building and updating interactive JSX lesson apps. Each lesson is a Vite + React project with tabbed topics, LaTeX math, SVG graphs, manim animations, interactive demos, and an embedded AI tutor chatbot.
 
-The skill operates on a workspace laid out as `<workspace_root>/<course>/claude_lessons/<slug>/`, with shared chat and UI infrastructure at `<workspace_root>/_lesson-core/` imported via a `@core` Vite alias.
+The skill operates on workspaces laid out as `<workspace_root>/<course>/claude_lessons/<slug>/`, with shared chat and UI infrastructure at `<workspace_root>/_lesson-core/` imported via the `@core` Vite alias.
 
 ## Modes
 
-- **new** — build a lesson from scratch given source materials and scope.
+- **new** — build from scratch given source materials and scope.
 - **update** — modify an existing lesson in place (refine media, add topics, splice content, backfill drift).
 
-Mode is detected from the user's initial request (update verbs like *rework*, *revise*, *fix* + a resolvable lesson reference trigger update mode) and confirmed at the Phase 0 gate.
+Mode is detected from the initial request (update verbs like *rework*, *revise*, *fix* + a resolvable lesson reference trigger update mode) and confirmed at the Phase 0 gate.
 
 ## Pipeline
 
-Both modes run through the same 6-phase shell. Phase 2 is the only human approval gate; everything downstream is constrained by the approved plan.
+Both modes share the 6-phase shell. Phase 2 is the only human approval gate; downstream work is constrained by the approved plan.
 
 ```mermaid
 flowchart TD
@@ -48,20 +48,20 @@ flowchart TD
 
 ## Quality policy
 
-**The default is maximum teaching quality.** When a richer medium (manim animation, interactive demo, detailed matplotlib figure) teaches a concept better than a cheaper one, the skill picks the richer medium. Research depth defaults to `full` or `targeted`; the fix loop iterates until the lesson meets the quality bar. Runtime is not the optimization target; student understanding is.
+**The default is maximum teaching quality.** When a richer medium (manim, interactive demo, detailed matplotlib figure) teaches better than a cheaper one, the skill picks the richer medium. Research depth defaults to `full` or `targeted`; the fix loop iterates until the lesson meets the quality bar. Student understanding is the optimization target, not runtime.
 
-If you want a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*, etc. The skill detects the signal and flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research depth capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced during Phase 0 confirmation so you can override it explicitly.
+For a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*. The skill flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced at Phase 0 for explicit override.
 
 ## Key invariants
 
-- **Quality-first default**: `resource_mode: "full"` unless the user explicitly signalled otherwise. See the Quality policy section above.
+- **Quality-first default**: `resource_mode: "full"` unless the user signalled otherwise.
 - **One human gate**, at Phase 2. No exceptions.
-- **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently wherever possible.
-- **Self-contained agents**: all 15 agents are bundled at `agents/` inside the skill. No workspace or machine-global agent directory required.
-- **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code; bugs fixed in `_lesson-core/` propagate to every lesson.
-- **Per-lesson log** at `<lesson_root>/lesson_build.log.md`. Main Claude owns it; update runs append a `## Update YYYY-MM-DD (run-id: <hash>)` section rather than overwriting history.
-- **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, topic-context invariants, template compliance, no inlined chat, no emojis, no direct API calls).
-- **`GRAPH_SCHEMA` is mandatory**: pairs with `DEFAULT_GRAPH_PARAMS` to type-check chatbot `<<EDIT_GRAPH>>` edits. Missing schemas get backfilled in Phase 3.
+- **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently.
+- **Self-contained agents**: all 15 agents bundled at `agents/`. No workspace or machine-global dir required.
+- **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code.
+- **Per-lesson log** at `<lesson_root>/lesson_build.log.md`. Main Claude owns it; updates append rather than overwrite.
+- **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, TOPIC_CONTEXT invariants, template compliance, no inlined chat, no emojis, no direct API calls).
+- **`GRAPH_SCHEMA` is mandatory**: pairs with `DEFAULT_GRAPH_PARAMS` to type-check chatbot `<<EDIT_GRAPH>>` edits. Missing schemas are backfilled in Phase 3.
 
 ## Directory layout
 
@@ -106,6 +106,6 @@ Clone into your Claude Code skills directory:
 git clone https://github.com/ihsan-sa/lesson-builder.git ~/.claude/skills/lesson-builder
 ```
 
-Claude Code auto-discovers skills in that directory. Trigger by asking Claude to create, build, update, revise, or improve a lesson in a workspace that follows the `<workspace_root>/<course>/claude_lessons/<slug>/` layout.
+Claude Code auto-discovers skills there. Trigger by asking Claude to create, build, update, revise, or improve a lesson in a workspace using the `<workspace_root>/<course>/claude_lessons/<slug>/` layout.
 
-The skill assumes a sibling `_lesson-core/` module at the workspace root providing the shared chat, UI primitives, and proxy. Without it the `@core` alias cannot resolve and lessons will not load.
+A sibling `_lesson-core/` module is required at the workspace root; without it the `@core` alias cannot resolve.

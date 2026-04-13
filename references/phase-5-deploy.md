@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Phase 5 is the final phase of the lesson-builder skill. It runs local build verification as a gate, commits the work, pushes to `main` (directly in new mode, via a `--no-ff` merge from the update branch in update mode), logs the deploy metadata, and surfaces the final report to the user. The commit strategy is mode-branched: new-mode commits land directly on `main`, while update-mode commits land on the `lesson-update/<slug>-YYYYMMDD` branch created in Phase 3 and are merged into `main` only after the build verification gate passes. Phase 5 also handles stash recovery for update mode and leaves the branch + stash untouched on any failure so the user can recover manually.
+Phase 5 runs local build verification as a gate, commits, pushes to `main` (directly in new mode, via `--no-ff` merge from the update branch in update mode), logs deploy metadata, and surfaces the final report. Update-mode commits land on `lesson-update/<slug>-YYYYMMDD` and merge only after build verification. Update mode also handles stash recovery; branch + stash stay untouched on any failure.
 
 ## Ordering inside Phase 5
 
@@ -48,11 +48,11 @@ Prefer `@playwright/mcp` if it is available. Otherwise fall back to a Node scrip
 
 ### Failure mode
 
-If `build-all.sh` exits non-zero, or the target `index.html` is missing, or the smoke check finds a failure, Phase 5 halts **before** any `git add`, `git commit`, or `git merge`. The failure is logged as a build blocker with the specific error output (stderr excerpt, stack trace, or console error). The user is told exactly what failed and where. In update mode, the branch and stash stay in place untouched.
+Any failure (`build-all.sh` non-zero, missing `index.html`, smoke-check fail) halts Phase 5 **before** any `git add/commit/merge`. Log the specific error (stderr, stack trace, console). Surface to the user. Update mode: branch and stash stay untouched.
 
 ### Update mode note
 
-In update mode, `build-all.sh` runs against the current branch (`lesson-update/<slug>-YYYYMMDD`), not `main`. This is correct: the update branch has the new lesson code, and the goal is to verify it builds before merging. Do not switch to `main` for the build step.
+`build-all.sh` runs against the update branch (`lesson-update/<slug>-YYYYMMDD`), not `main`. Do not switch to `main` for the build.
 
 ## Step 2a — New-mode deploy
 
@@ -219,9 +219,9 @@ git checkout main
 git merge --no-ff lesson-update/<slug>-YYYYMMDD
 ```
 
-`--no-ff` forces a merge commit even if a fast-forward would be possible. This preserves the update as a visible unit in history so future reviewers can see which commits belonged to a single update run. The merge commit message is the default `Merge branch 'lesson-update/<slug>-YYYYMMDD'`.
+`--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history. Default message: `Merge branch 'lesson-update/<slug>-YYYYMMDD'`.
 
-If the merge produces conflicts (it should not on a clean branch, but defensive): halt immediately, surface the conflict files, and do **not** attempt to auto-resolve. The user must resolve manually. The update branch still exists and the stash is still in place, so nothing is lost.
+On conflict (should not happen from a clean branch): halt, surface conflict files, do not auto-resolve. The user resolves manually. Branch and stash stay intact.
 
 ### 6. Push
 
@@ -279,23 +279,17 @@ In all three cases:
 
 ## Hosted deploy
 
-The workspace's hosting target (Netlify, Vercel, GitHub Pages, Cloudflare Pages, or a custom CI pipeline) is determined by the workspace's deploy config, not by this skill. The typical pattern is "push to `main` triggers an automatic rebuild-and-deploy on the configured host". If the workspace uses a different trigger (manual deploy button, tag-based release, etc.), the skill should follow whatever the workspace's project-level `CLAUDE.md` or deploy docs specify.
+Hosting target (Netlify, Vercel, GitHub Pages, Cloudflare Pages, custom CI) is determined by workspace config, not this skill. Typical pattern: push to `main` → host auto-rebuilds. Follow the workspace's `CLAUDE.md` or deploy docs for other triggers.
 
-The skill's responsibilities stop at the `git push`:
+Skill responsibility stops at `git push`:
 
-- It does not wait for the hosted build to complete.
-- It logs the deploy dashboard URL (if known) so the user can check status.
-- If the workspace exposes a deploy-state MCP or API, the skill may optionally query deploy state, but this is not required.
+- Do not wait for hosted build completion.
+- Log the deploy dashboard URL when known.
+- Deploy-state MCP/API queries are optional, not required.
 
 ### Chatbot in prod
 
-The lesson chatbot is **disabled** in production for static hosts. The header banner (rendered by the lesson template when `import.meta.env.PROD` is true) says so. This is expected and intentional for any host that serves only static files:
-
-- `/chat` routes require the local Express proxy (`_lesson-core/server/proxy.js`).
-- Static hosts do not run the Express proxy.
-- Users run the chatbot locally via `node server/proxy.js` + `npx vite`.
-
-The final report should **not** flag "chatbot disabled in prod" as an issue. It is the designed behavior for static-only deploys. If the workspace uses a deploy target that can run the proxy (e.g., a Node-capable host), this limitation does not apply and the banner can be removed from the template.
+The chatbot is **disabled** in production on static hosts. The `PROD` banner says so. Static hosts cannot run the Express proxy; users run it locally via `node server/proxy.js` + `npx vite`. The final report should not flag this as an issue — it is intentional. On Node-capable hosts, the banner can be removed.
 
 ## Final report format
 

@@ -41,10 +41,10 @@ Prefer primary sources. Corroborate every non-trivial claim with at least 2 inde
 ## Constraints
 
 - Never fabricate citations. If a URL does not load or does not contain the claim, do not cite it.
-- If Exa and WebFetch both return nothing useful, return `verdict: 'unknown'` with an explanation.
-- If Exa tools are not available (headless `claude -p` may not surface them), fall back to WebSearch plus WebFetch only. Note the fallback in `notes`.
-- Do not return `verified` based on a single source unless it is a primary authoritative reference (NIST, CODATA, original paper).
-- Default to citing 3 to 5 items for non-trivial claims. If the caller flagged `resource_mode: "limited"`, 2 authoritative citations are acceptable.
+- If all search returns nothing useful, return `verdict: 'unknown'` with an explanation.
+- If Exa tools are not available (headless `claude -p` may not surface them), fall back to WebSearch + WebFetch. Note in `notes`.
+- Do not return `verified` from a single source unless it is a primary authoritative reference (NIST, CODATA, original paper).
+- Default: 3-5 citations for non-trivial claims. Under `resource_mode: "limited"`, 2 authoritative citations are acceptable.
 
 ## Update mode input
 
@@ -55,9 +55,9 @@ When the caller (content-orchestrator-agent in update mode) passes `mode: "updat
 
 ### Behavior in update mode
 
-- **targeted mode**: research only the named topics with narrow queries keyed to their equations and concepts. Return findings scoped to those topics only.
-- **full mode**: run your usual topic-area sweep, but cross-reference against `existing_lesson_baseline` at the end. Flag drift explicitly in the return.
-- **light mode**: the orchestrator typically does NOT spawn research-agent in light mode. If you are spawned in light mode anyway, treat it like targeted with a single narrow topic.
+- **targeted**: research only the named topics with narrow queries keyed to their equations and concepts.
+- **full**: usual topic-area sweep; cross-reference against `existing_lesson_baseline` at the end. Flag drift explicitly.
+- **light**: the orchestrator typically does NOT spawn research-agent in light mode. If spawned anyway, treat it like targeted with a single narrow topic.
 
 ### Return format (update mode addition)
 
@@ -68,4 +68,4 @@ drift_notes: [
 ]
 ```
 
-If `existing_lesson_baseline` matches current sources, return `drift_notes: []` and note "no drift detected" — re-verification without new information adds no signal. Do not skip verification if the user flagged the topic as a concern or new materials are available: those warrant a fresh look even when the old content matches a stale source.
+If `existing_lesson_baseline` matches current sources, return `drift_notes: []` with "no drift detected". Do not skip verification when the user flagged the topic or new materials are available; those warrant a fresh look.

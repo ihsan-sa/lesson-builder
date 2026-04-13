@@ -4,21 +4,19 @@ Reference for main Claude when writing the per-lesson build trail during lesson-
 
 ## Purpose
 
-`lesson_build.log.md` lives in the lesson root at `<course>/claude_lessons/<slug>/lesson_build.log.md`. Main Claude writes to it throughout every run. New-mode runs create it; update-mode runs append to it. It is the canonical build/update trail for a lesson and is surfaced to the user at the end of each run. The log persists across runs, so a lesson that has been built once and updated three times will have four stacked sections in the same file: one original build and three updates.
+`lesson_build.log.md` lives at `<lesson_root>/lesson_build.log.md`. The canonical build/update trail, surfaced to the user at end of each run. New mode creates it; update mode appends. A lesson built once and updated three times has four stacked sections in the same file.
 
 ## File location
-
-Absolute path pattern:
 
 ```
 <workspace_root>/<course>/claude_lessons/<slug>/lesson_build.log.md
 ```
 
-This is per-lesson, not global. There is no shared log across lessons.
+Per-lesson. No shared log.
 
 ## Ownership
 
-Main Claude owns this file. Subagents and specialists do not write to it directly. They return findings, diffs, test results, and QA reports to main Claude, and main Claude logs them. This keeps the log coherent (single writer, single voice, consistent formatting) and avoids concurrent-write races when multiple agents run in parallel.
+Main Claude owns the file. Subagents return findings to main Claude; main Claude logs. Single writer avoids concurrent-write races and keeps formatting consistent.
 
 ## New-mode skeleton
 
@@ -124,17 +122,17 @@ Stash recovery: auto-popped | manual | none
 
 ## Log-writing conventions
 
-- Use ISO timestamps: `YYYY-MM-DDTHH:MM:SSZ` (UTC) or local equivalent with offset (`YYYY-MM-DDTHH:MM:SS-04:00`).
-- Keep entries concise but informative. One line per event is fine; multi-line is appropriate for structured data (change-lists, Lesson Plans, file lists).
-- Agent findings go in bulleted lists under the relevant phase heading. Attribute findings to the agent that produced them when useful (e.g., `- [code-reviewer] unused import in src/<slug>.jsx:14`).
-- For long artifacts (full Lesson Plans, large change-lists, compiled research packages), embed them inline in the log. This is the source of truth for the build trail, so do not truncate. If an artifact is exceptionally long (thousands of lines), link to a sibling file under the lesson root and note the path in the log.
-- Errors and unresolved items go in a clearly-marked subsection (`### UNRESOLVED` in new mode, `Regression watch: [...]` in update mode) so they are easy to surface at the end of the run.
+- ISO timestamps: `YYYY-MM-DDTHH:MM:SSZ` or local with offset (`YYYY-MM-DDTHH:MM:SS-04:00`).
+- Concise but informative. One line per event; multi-line for structured data (change-lists, plans, file lists).
+- Agent findings in bulleted lists under the phase heading. Attribute when useful: `- [code-reviewer] unused import in src/<slug>.jsx:14`.
+- Embed long artifacts inline. For thousands of lines, link to a sibling file and note the path.
+- Errors/unresolved go in a marked subsection (`### UNRESOLVED` or `Regression watch: [...]`) for end-of-run surfacing.
 
 ## Surfacing to the user
 
-- At the end of Phase 5, main Claude reads the `### UNRESOLVED`, `Regression watch`, and `Final Report` sections from the log and composes the user-facing final report.
-- The full log file stays on disk. The user can read it at any time for the complete build trail.
-- The final report shown in the chat is brief (20-50 lines): deploy confirmation, commit SHA, deploy dashboard URL, and any unresolved or regression items. The log file is the full audit trail.
+- At end of Phase 5, main Claude composes the final report from `### UNRESOLVED`, `Regression watch`, and `Final Report` sections.
+- The log stays on disk. Users can read it any time.
+- Final report in chat is brief (20-50 lines): deploy confirmation, commit SHA, dashboard URL, unresolved/regression items. The log is the full audit trail.
 
 ## Worked example
 

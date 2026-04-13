@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Phase 2 is the planning phase of the lesson-builder pipeline. Main Claude drives it directly (no sub-orchestrator) and produces a single artifact: the **Lesson Plan**. This phase runs the single mandatory human approval gate for the entire pipeline. No other phase has one. All medium specialist work that follows in Phase 3 is constrained by the approved plan, so the decisions made here set the cost, shape, and pedagogical quality of the final lesson. Phase 2 also drives the mode-branched selection of medium specialists (graphics, manim, interactive-demo, web-image, or inline prose) and seeds their execution briefs, meaning the plan is not just a document but a spawn manifest for Phase 3.
+Phase 2 is the planning phase. Main Claude drives it directly and produces the **Lesson Plan** artifact. This phase runs the pipeline's single mandatory human approval gate; all Phase 3 specialist work is constrained by the approved plan. Phase 2 also selects medium specialists (graphics, manim, interactive-demo, web-image, inline prose) and seeds their briefs — the plan doubles as a spawn manifest for Phase 3.
 
 ## Inputs
 
@@ -90,20 +90,17 @@ gaps: [ { concept, reason_existing_media_insufficient, orchestrator_preverdict: 
 user_media_hints: [ { concept, hint } ]
 ```
 
-**5-way taxonomy (pedagogical-quality first)**:
+**5-way taxonomy** (see `references/update-mode.md` §4 for full details):
 
-> The agent emits a **5-way verdict** per existing medium plus per gap. Decide by what maximizes teaching quality of the finished lesson:
-> 1. **keep**: medium type is right, content is accurate, and it teaches the concept well as-is. Do not pick `keep` just because it's zero work — if the content is stale or a richer medium would teach noticeably better, pick `refine` or `replace` even though they cost more.
-> 2. **refine**: medium type right but content stale (wrong equation, outdated constant, bad scale, lower-quality asset). Function name / asset filename preserved.
-> 3. **replace**: a different medium type would meaningfully improve the teaching (e.g., static graph → interactive demo when parameter sensitivity is the teaching point; matplotlib RefImg → manim animation when the temporal arc matters).
-> 4. **remove**: concept removed from lesson, user flagged for cut, or the medium is a true low-value pattern (decorative animation, slider that just shifts an axis, toggle that hides what the legend already shows).
-> 5. **add**: used only for gaps — new media for concepts that need visualization.
->
-> User hints override only when they don't violate scientific accuracy or pedagogical correctness. Example: user hints "refine" but content-orchestrator says the concept was removed — decider emits `remove` with a note.
+1. **keep**: type right, content accurate, teaches well as-is.
+2. **refine**: type right but content stale. Function name / asset filename preserved.
+3. **replace**: a different medium type serves better.
+4. **remove**: concept cut, user-flagged, or low-value.
+5. **add**: gaps only.
 
-**Tie-break rule**: when two verdicts are genuinely tied on pedagogical quality, prefer the less invasive one (`keep` > `refine` > `replace` > `remove`) to avoid churn in already-correct work. `add` sits outside the tie-break; it applies only to gaps. **This is about keeping correct work correct, not about saving effort** — never pick `keep` over `refine` when the content is actually stale, or `refine` over `replace` when the medium type is genuinely wrong for the concept.
+User hints override only when they do not violate scientific accuracy or pedagogical correctness. Conflict with orchestrator pre-verdict → safer action with a note.
 
-When `resource_mode: "limited"` is threaded through from Phase 0, the tie-break extends to break genuine ties in favor of the cheaper action even when quality is slightly higher on the more expensive side. Default (`resource_mode: "full"`) keeps quality ahead of cost.
+**Tie-break**: on genuine ties, less invasive wins (`keep` > `refine` > `replace` > `remove`); `add` sits outside (gaps only). Tie-break protects correct work, not effort. Under `resource_mode: "limited"`, extends to cheaper actions on near-ties.
 
 **Return format** (the agent's response contract):
 
@@ -122,33 +119,25 @@ Main Claude aggregates verdicts across all topics. The `specialist` field routes
 
 ## Medium selection criteria
 
-Preserved from `jsx-lesson/SKILL.md:160-185` and used by `medium-decider-agent` to rank options. Every interactive demo must answer: "what does the student learn by manipulating this that they could not learn from a static figure?" If the answer is nothing, the decider picks a static graph.
+`medium-decider-agent` uses these to rank options. Every interactive demo must answer: "what does the student learn by manipulating this that they could not from a static figure?" Nothing → static graph.
 
-**High-value interactive patterns — use these**:
-- **Convergence visualization** (numerical methods): iterative algorithms converge step by step. Let the user step through iterations or adjust initial conditions to see how convergence speed and stability change.
-- **Parameter sensitivity** (circuits, controls): let the user adjust physical properties and watch I-V curves, frequency responses, or transfer functions reshape in real time.
-- **Phase evolution**: animations showing how a system evolves over time when the temporal dimension is essential.
-- **Threshold/boundary exploration**: graphs where a critical transition happens and the user can drag a parameter across that boundary to feel the discontinuity.
+**High-value interactive patterns**:
+- **Convergence**: iterative algorithms; let the user step through or adjust initial conditions.
+- **Parameter sensitivity**: physical properties reshape I-V curves, frequency responses, transfer functions in real time.
+- **Phase evolution**: animations when the temporal dimension is essential.
+- **Threshold/boundary**: user drags a parameter across a critical transition.
 
-**Low-value patterns — avoid these**:
-- Sliders that just scale an axis or shift a curve without revealing new behavior.
-- Interactivity on graphs where the relationship is obvious from the equation (e.g., linear V = IR).
-- Animated decorations that do not encode information.
-- Toggles that hide/show curves the student could just read from a legend.
+**Low-value patterns — avoid**:
+- Sliders that just scale an axis or shift a curve.
+- Interactivity on obvious relationships (V = IR).
+- Animated decorations.
+- Toggles that hide/show what the legend already shows.
 
-**When Manim is the right choice**:
-- The visualization involves smooth geometric transformations, vector field flows, or 3D rotations that SVG cannot represent well.
-- A step-by-step animated proof or derivation would be clearer than a static sequence of equations.
-- The animation is a one-time asset, not parameterized at runtime by the user.
+**Manim** is right when: smooth geometric transformations, vector field flows, or 3D rotations that SVG cannot represent; step-by-step animated proofs; one-time assets, not runtime-parameterized.
 
-**When static SVG is the right choice**:
-- The visual must be runtime-parameterized (slider-driven, toggle-driven) and thus can't be pre-rendered.
-- The geometry is simple enough that inline SVG paths beat the load cost of a raster or video asset.
-- The relationship being shown is a simple curve (exponential, sinusoid, linear) that benefits from crisp vector rendering.
+**Static SVG** is right when: runtime-parameterized (slider, toggle); simple geometry where inline paths beat raster load cost; simple curves (exponential, sinusoid, linear) that benefit from crisp vector rendering.
 
-**When matplotlib `RefImg` supplements SVG**:
-- The figure needs a scientifically accurate reference rendering (textbook-style plot, validated axis labels, gridlines) that the SVG version approximates. The `RefImg` base64 constant lives next to the SVG component as a ground-truth comparator, used in visual-QA and sometimes embedded alongside the interactive SVG for student reference.
-- The figure is complex enough that matplotlib's plotting primitives win over hand-authored SVG paths.
+**Matplotlib `RefImg`** supplements SVG when: the figure needs scientifically accurate reference rendering (validated axis labels, gridlines); the figure is complex enough that matplotlib primitives win over hand-authored SVG.
 
 ## Lesson Plan artifact formats
 
@@ -227,14 +216,14 @@ If the existing lesson **lacks** `GRAPH_SCHEMA` (predates the graph-schema featu
 
 ## Human approval gate
 
-Single mandatory gate. No exceptions. Phase 3 does not start without explicit approval. This is the only place in the pipeline where a human veto is enforced, so it must be accurate and actionable.
+Single mandatory gate. No exceptions. Phase 3 does not start without explicit approval.
 
 ### Mechanics
 
 Main Claude uses `AskUserQuestion` with three options: **approve**, **request changes**, **abort**.
 
-- **New mode**: if the full plan fits in the AskUserQuestion body, inline it. If it doesn't, write the full plan to the log first, then present a condensed summary in the body pointing at `<lesson_root>/lesson_build.log.md` as source of truth.
-- **Update mode**: the AskUserQuestion body surfaces only the **change-list** (not the full plan). For long change-lists, main Claude writes the full artifact to the log first and presents a condensed summary in the body pointing at the log. This avoids truncation in the AskUserQuestion response surface.
+- **New mode**: inline the plan if it fits; otherwise write to the log and present a condensed summary pointing at the log.
+- **Update mode**: surface only the **change-list** (not the full plan). Long change-lists go to the log; present a condensed summary pointing at the log.
 
 ### AskUserQuestion phrasing examples
 

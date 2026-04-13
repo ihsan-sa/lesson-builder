@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This doc defines the project-file templates that turn a lesson directory into a runnable Vite project: `package.json`, `vite.config.js`, `server/proxy.js` shim, `index.html`, `src/main.jsx`, `test_lesson.cjs`, and a lesson-level `CLAUDE.md`. These are the infrastructure files the lesson content JSX sits on top of. The **new-mode Phase 3** assembly step writes all of them from these templates. **Update mode** normally does NOT touch any of these files. The only exceptions are when one is explicitly broken (e.g., missing dep, invalid JSON, wrong alias) or materially stale (e.g., core API rename the lesson can no longer load against). When in doubt, diff against any previously-built lesson in the same workspace.
+Project-file templates that make a lesson directory a runnable Vite project: `package.json`, `vite.config.js`, `server/proxy.js` shim, `index.html`, `src/main.jsx`, `test_lesson.cjs`, `CLAUDE.md`. New-mode Phase 3 writes these; update mode leaves them untouched unless explicitly broken (missing dep, invalid JSON, wrong alias) or materially stale (core API rename). When in doubt, diff against a previously-built lesson.
 
 ## Directory layout
 
@@ -175,29 +175,9 @@ The lesson content file must default-export a component called `LessonApp`; this
 
 ## `test_lesson.cjs` (17-test validation suite)
 
-Run as `node test_lesson.cjs src/<slug_underscored>.jsx`. The script reads the lesson JSX file and runs 17 structural / content checks against it. Tests:
+Run as `node test_lesson.cjs src/<slug_underscored>.jsx`. Runs 17 structural / content checks. Full list in `references/checklists.md` → "17-test suite summary".
 
-| # | Name | Check |
-|---|------|-------|
-| T1 | JSX Babel parse | `@babel/parser` parses the file with `jsx` plugin enabled. Catches syntax errors. |
-| T2 | KaTeX safety | No bare `<` characters inside KaTeX string expressions (regex `{"..<.."}`), except allow-listed sequences `\\lt`, `\\leq`, `\\left`, `\\ll`, `\\lambda`, `\\langle`, `\\ldots`. Bare `<` crashes KaTeX. |
-| T3 | Heading bracket safety | No bare `<` / `>` inside `<h2>`, `<h3>`, `<h4>` text nodes (JSX parse error). |
-| T4 | Export default | File contains `export default`. |
-| T5 | `TOPICS` defined | `const TOPICS = [` declaration present. |
-| T6 | `TOPIC_CONTEXT` defined | `const TOPIC_CONTEXT = {` declaration present. |
-| T7 | `LESSON_CONTEXT` defined | `const LESSON_CONTEXT =` declaration present. |
-| T8 | Imports from `@core` | File imports from `"@core"` and references `Chatbot`. |
-| T9 | Theme className | Uses `className="theme-dark"` or `className="theme-light"` (maps the gold accent via CSS vars in `@core`). |
-| T10 | IBM Plex | File mentions `'IBM Plex'` somewhere (inline monospace label styles). |
-| T11 | Core CSS classes | Imports `Eq`, `KeyConcept`, and `Chatbot` from `@core` (these apply `.eq-block`, `.key-concept`, `.chat-panel`). |
-| T12 | No browser storage | No `localStorage` usage (sessionStorage alias `_ss` is intentionally allowed). |
-| T13 | No emojis | Unicode emoji regex finds nothing. |
-| T14 | `TOPIC_CONTEXT` keys match `TOPICS` ids | Babel AST walk: every `{id: "..."}` entry in `TOPICS` has a matching key in `TOPIC_CONTEXT`. Replaces a buggy regex-based check. |
-| T15 | `useKatex` hook | Imports `useKatex` from `@core`. |
-| T16 | `<Chatbot>` render | File renders `<Chatbot>` with a `courseCode=` prop. |
-| T17 | No direct API | Imports `Chatbot` from `@core` (not a local copy) and does NOT contain `api.anthropic.com` (all chat routed through the local proxy). |
-
-Reference implementation: copy verbatim from any previously-built lesson in the workspace. The test file is content-agnostic and works on every lesson.
+Reference implementation: copy verbatim from any previously-built lesson. The test file is content-agnostic and works on every lesson.
 
 ## `CLAUDE.md` (lesson-level project notes)
 
@@ -260,16 +240,16 @@ Open the URL Vite prints (defaults to `http://localhost:5173`; increments to 517
 
 ## Update-mode behavior
 
-Update mode (Phase 3 of the update pipeline) leaves every file in this doc **untouched by default**. Rationale: these files rarely change, and rewriting them risks clobbering per-lesson customizations (analytics tags, extra scripts, hand-edited test thresholds, curated CLAUDE.md notes).
+Update mode leaves these files untouched by default. Rewriting risks clobbering per-lesson customizations (analytics, extra scripts, curated CLAUDE.md notes).
 
-Edit them only when:
-- `package.json` is missing a dep the updated lesson actually needs, or pin versions are materially broken;
-- `vite.config.js` has the wrong `@core` alias depth (only ever happens if the lesson was moved) or is missing `server.fs.allow`;
-- `server/proxy.js` has stale shim path (wrong depth);
+Edit only when:
+- `package.json` is missing a dep the update needs, or pin versions are materially broken;
+- `vite.config.js` has wrong `@core` alias depth (only if lesson was moved) or is missing `server.fs.allow`;
+- `server/proxy.js` has stale shim path;
 - `index.html` is missing `#root` or the main.jsx script tag;
 - `src/main.jsx` references the wrong lesson file name;
-- `test_lesson.cjs` is missing (copy from any sibling lesson in the workspace) or is pre-refactor and still checks for bespoke inlined chat code.
+- `test_lesson.cjs` is missing or pre-refactor.
 
-For `CLAUDE.md` updates, use a **preserving edit**: replace only the `## Lesson App` section (from that heading up to the next top-level heading or EOF), keeping all other content verbatim. Do not `Write` the whole file. Typical mechanism: Grep for `## Lesson App`, read the surrounding bytes, use `Edit` with the existing section as `old_string` and the new section as `new_string`.
+For `CLAUDE.md`, use a **preserving edit**: replace only `## Lesson App` (from heading to next top-level heading or EOF). Do not `Write` the whole file. Grep for `## Lesson App`, then `Edit` with existing section as `old_string`.
 
-When in doubt, diff against any previously-built lesson in the workspace and only touch what is actually different-in-a-bad-way. A cosmetic difference (comment wording, key ordering) is not a reason to rewrite.
+When in doubt, diff against a previously-built lesson; touch only what is actually broken. Cosmetic differences (comment wording, key ordering) are not reasons to rewrite.

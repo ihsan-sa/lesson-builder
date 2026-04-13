@@ -2,29 +2,12 @@
 
 ## 1. Purpose
 
-`GRAPH_SCHEMA` is a per-lesson export that pairs with `DEFAULT_GRAPH_PARAMS`
-to give the chatbot runtime type and range information for every tunable
-graph parameter. When the LLM emits an `<<EDIT_GRAPH>>` block, the chat
-pipeline calls `validateEdit(edits, GRAPH_SCHEMA)` from
-`<workspace_root>/_lesson-core/chat/graphSchema.js`. Entries that fail
-type, range, or enum checks are rejected and the LLM receives an
-`edit-rejection` observation explaining why; valid entries are forwarded
-through `onEditGraph` and applied to `graphParams` state. A lesson without
-`GRAPH_SCHEMA` silently bypasses validation (the helper early-returns when
-`schema` is falsy), which means any malformed LLM edit goes straight into
-React state and crashes the graph.
+`GRAPH_SCHEMA` pairs with `DEFAULT_GRAPH_PARAMS` to give the chatbot runtime type and range info for every tunable parameter. When the LLM emits `<<EDIT_GRAPH>>`, `validateEdit(edits, GRAPH_SCHEMA)` from `_lesson-core/chat/graphSchema.js` rejects type/range/enum violations (LLM gets an `edit-rejection` observation), forwards valid entries through `onEditGraph` into `graphParams` state. A lesson without `GRAPH_SCHEMA` silently bypasses validation — any malformed LLM edit lands in React state and crashes the graph.
 
-This guide applies in two places in the lesson-builder pipeline:
+Used in two places:
 
-- **New mode — Phase 3 Step 4**: main Claude writes `GRAPH_SCHEMA` from
-  scratch immediately after `DEFAULT_GRAPH_PARAMS` during assembly.
-- **Update mode — Phase 3 Step 4.7 (backfill)**: main Claude generates
-  `GRAPH_SCHEMA` for a pre-existing lesson that predates the graph-schema
-  feature. Detection and the approval-gate wording are set up in
-  `references/phase-2-plan.md`. See `references/phase-3-execution.md`
-  section 4.7 for where the backfill fires in the splice algorithm, and
-  section 4.6 check 4 for the post-splice sanity pass that enforces the
-  key-set invariant.
+- **New mode — Phase 3 Step 4**: write from scratch after `DEFAULT_GRAPH_PARAMS`.
+- **Update mode — Phase 3 Step 4.7 (backfill)**: generate for lessons predating the feature. Detection at Phase 2; key-set invariant enforced by post-splice sanity pass (section 4.6 check 4).
 
 ## 2. Canonical shape
 
@@ -47,30 +30,18 @@ type ParamSpec =
   | { type: "string" }
 ```
 
-Notes on what the validator actually checks:
+Validator behavior:
 
-- `int`: `Number.isInteger(value)` AND `min <= value <= max`. Non-integer
-  numerics are rejected.
-- `float`: `typeof value === "number"` AND `min <= value <= max`. No
-  integer coercion.
+- `int`: `Number.isInteger(value)` AND `min <= value <= max`. Non-integers rejected.
+- `float`: `typeof value === "number"` AND `min <= value <= max`. No integer coercion.
 - `bool`: `typeof value === "boolean"`.
-- `enum`: membership in `spec.values`. The key is literally `values` (not
-  `enum`) — using `enum` silently fails because the helper treats the
-  spec as having no allowed values.
-- `string`: `typeof value === "string"` only, no pattern matching.
-- `min` and `max` are both optional. Omit them only when the parameter is
-  truly unbounded (rare in practice).
+- `enum`: membership in `spec.values`. Key is literally `values` (not `enum`) — `enum` silently fails.
+- `string`: `typeof value === "string"`, no patterns.
+- `min`/`max` optional. Omit only when truly unbounded.
 
-The validator ignores unknown fields on a `ParamSpec`, so it is safe to
-attach `label` / `description` / `step` metadata, but none of the deployed
-lessons carry those fields today. Keep new schemas lean so they match the
-corpus and diff reviews stay readable.
+The validator ignores unknown fields, so `label`/`description`/`step` metadata is safe but not used in deployed lessons. Keep schemas lean.
 
-> **Validator ground truth**: `_lesson-core/chat/graphSchema.js` is the
-> single source of truth for the type vocabulary. It accepts only
-> `int | float | bool | enum | string`. Anything else (e.g. `"number"`,
-> `"boolean"`, `"number[]"`) fails at runtime with `"unknown schema type"`.
-> Enum specs use `values: [...]`, not `enum: [...]`.
+Valid types: `int | float | bool | enum | string`. `"number"`, `"boolean"`, `"number[]"` fail with `"unknown schema type"`.
 
 ### Worked example
 
@@ -106,12 +77,7 @@ rejection instead of a silently-clamped value.
 
 ### 3.1 Key correspondence (hard invariant)
 
-Every `DEFAULT_GRAPH_PARAMS[graphKey][paramKey]` **must** have a matching
-`GRAPH_SCHEMA[graphKey][paramKey]`, and nothing else. The Phase 3
-post-splice sanity pass (`references/phase-3-execution.md` section 4.6)
-enforces this by diffing the top-level key sets. The 17-test suite does
-NOT currently enforce schema-key alignment; main Claude must rely on the
-sanity pass. Adding a dedicated test is tracked as a follow-up.
+Every `DEFAULT_GRAPH_PARAMS[graphKey][paramKey]` **must** have a matching `GRAPH_SCHEMA[graphKey][paramKey]`, and nothing else. Enforced by the Phase 3 post-splice sanity pass (section 4.6). The 17-test suite does not currently enforce this; the sanity pass is the backstop.
 
 ### 3.2 Type inference from the default value
 
@@ -235,11 +201,7 @@ ignores `description`.
 
 ## 5. Validation
 
-After writing `GRAPH_SCHEMA`, main Claude runs the following checks.
-All are part of the Phase 3 post-splice sanity pass
-(`references/phase-3-execution.md` section 4.6). The 17-test suite does
-NOT currently enforce schema-key alignment; the sanity pass is the
-backstop.
+After writing `GRAPH_SCHEMA`, main Claude runs these checks as part of the Phase 3 post-splice sanity pass (section 4.6):
 
 1. **Top-level key count**:
    `Object.keys(GRAPH_SCHEMA).length === Object.keys(DEFAULT_GRAPH_PARAMS).length`.
@@ -318,7 +280,4 @@ The wiring path, end to end:
    it into the `graphParams` state via `setGraphParams`, and the graph
    re-renders with the new values.
 
-A missing `GRAPH_SCHEMA` short-circuits this entire chain at step 4 —
-`validateEdit` returns `{ validValue: edits, errors: [] }` without
-checking anything, meaning arbitrary LLM output lands in React state.
-That is the failure mode this guide exists to prevent.
+A missing `GRAPH_SCHEMA` short-circuits step 4 — `validateEdit` returns `{ validValue: edits, errors: [] }` unchecked, and arbitrary LLM output lands in React state. This guide exists to prevent that.

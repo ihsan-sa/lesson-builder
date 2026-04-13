@@ -1,18 +1,16 @@
 # Lesson Skeleton Template
 
-This is the lesson skeleton, a commented code template showing the per-lesson JSX structure with placeholders. New-mode Phase 3 assembly uses this as its starting point. Main Claude copies this skeleton into `src/<slug>.jsx`, then fills in the `// TODO:` markers with lesson-specific content produced by the content + graph agents. Update-mode does NOT use this file; update-mode edits an existing lesson in place.
+New-mode Phase 3 starting point. Main Claude copies this skeleton into `src/<slug>.jsx` and fills `// TODO:` markers with content from specialists. Update mode does NOT use this file.
 
 ## What's per-lesson vs from @core
 
-The skeleton only contains what is unique per lesson. Everything else is imported from `@core` (Vite alias → `_lesson-core/`).
-
-- **Per-lesson (in the skeleton)**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph SVG components, `TOPICS` array, `LessonApp` composition, header title/subtitle.
-- **From @core**: `Chatbot` (full chat system: ChatBubble, ThreadPanel, processResponse, buildSystemPrompt, chatState), `STYLES` (chat CSS), UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`), `useKatex` hook.
-- **External**: `server/proxy.js` is a 1-line shim that imports from `_lesson-core/server/proxy.js`. Not in the skeleton, added by the file-scaffolding step.
+- **Per-lesson**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph components, `TOPICS`, `LessonApp`, header.
+- **From @core**: `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`), `useKatex`.
+- **External**: `server/proxy.js` is a 1-line shim, added by the file-scaffolding step.
 
 ## GRAPH_SCHEMA requirement
 
-`GRAPH_SCHEMA` is mandatory. It is a client-side validation map used by the chatbot's `<<EDIT_GRAPH>>` pipeline to reject invalid parameter edits before they reach the graph components. Keys must match `DEFAULT_GRAPH_PARAMS` exactly. See `references/graph-schema-guide.md` for the full spec (type tags, ranges, enums, clamp-matching rules).
+Mandatory. Client-side validation map for `<<EDIT_GRAPH>>`; rejects invalid parameter edits before they reach graph components. Keys must match `DEFAULT_GRAPH_PARAMS` exactly. See `references/graph-schema-guide.md`.
 
 ## Skeleton
 
@@ -453,12 +451,12 @@ export default LessonApp;
 
 ## Notes for assembly agents
 
-- **Do not inline `Chatbot`, `STYLES`, or UI primitives.** Everything listed in `_lesson-core/index.js` is available from `@core`. Adding local copies creates drift and will fail review.
-- **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over the binding; `LessonApp` reassigns it each render. Using `const` breaks the theme toggle.
-- **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 review verifies this. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.
-- **`TOPIC_CONTEXT` keys must equal `TOPICS[i].id` values.** `test_lesson.cjs` enforces this.
-- **The `graph-preview` tab is mandatory.** It renders every graph once for screenshot-based review.
-- **KaTeX escaping**: inside any string that becomes a KaTeX source, use `\\lt` and `\\gt`, never bare `<` or `>`. Test T2 rejects bare angle brackets.
-- **No hardcoded hex colors** in lesson CSS or inline styles outside of what already exists here. Route through CSS variables defined in `_lesson-core/chat/chat.css.js` (`var(--bg-main)`, `var(--text-primary)`, `var(--accent)`, etc.).
-- **No emojis** anywhere in lesson content.
-- **See also**: `references/phase-3-execution.md` for assembly tactics, `references/graph-schema-guide.md` for schema details, `references/phase-4-review.md` for the validation checklist the lesson must pass.
+- **Do not inline `Chatbot`, `STYLES`, or UI primitives.** Everything in `_lesson-core/index.js` comes from `@core`. Local copies drift and fail review.
+- **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it; `LessonApp` reassigns per render. `const` breaks the theme toggle.
+- **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 verifies. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.
+- **`TOPIC_CONTEXT` keys must equal `TOPICS[i].id` values.** T14 enforces.
+- **The `graph-preview` tab is mandatory.** Renders every graph for screenshot review.
+- **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
+- **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
+- **No emojis** anywhere.
+- **See also**: `references/phase-3-execution.md`, `references/graph-schema-guide.md`, `references/phase-4-review.md`.
