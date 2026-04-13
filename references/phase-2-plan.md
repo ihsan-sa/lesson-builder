@@ -1,0 +1,389 @@
+# Phase 2: Plan
+
+## Purpose
+
+Phase 2 is the planning phase of the lesson-builder pipeline. Main Claude drives it directly (no sub-orchestrator) and produces a single artifact: the **Lesson Plan**. This phase runs the single mandatory human approval gate for the entire pipeline. No other phase has one. All medium specialist work that follows in Phase 3 is constrained by the approved plan, so the decisions made here set the cost, shape, and pedagogical quality of the final lesson. Phase 2 also drives the mode-branched selection of medium specialists (graphics, manim, interactive-demo, web-image, or inline prose) and seeds their execution briefs, meaning the plan is not just a document but a spawn manifest for Phase 3.
+
+## Inputs
+
+Phase 2 consumes:
+
+- **Scoping artifact** from Phase 0: `mode`, `course`, `slug`, `audience_level`, `pedagogical_goal`, `scope_of_lesson`, and mode-specific fields (`provided_materials` / `new_lesson_context` for new mode, or `existing_lesson_root`, `research_depth`, `scope_of_change`, `media_hints`, `working_tree_state` for update mode).
+- **Compiled content package** from Phase 1:
+  - **New mode**: the full compiled package with topics, equations, concepts, constants, `graphs_needed`, `manim_opportunities`, `interactive_opportunities`, per-topic context strings, `LESSON_CONTEXT`, `SOURCES_CONSULTED`, `GAPS_REMAINING`.
+  - **Update mode**: the **update package** that extends the new-mode schema with per-topic `action` verdicts (`keep | modify | remove | reorder:<N> | add`), per-existing-medium `preverdicts` (`keep | refine | replace | remove`), drift incidents, and the existing-media inventory compiled by main Claude prior to Phase 1.
+
+## Procedure
+
+### Step 1: Split compiled content into logical topic units
+
+Main Claude reads the compiled content package and partitions it into topics matching the user's scope from Phase 0. One topic per tab in the final lesson. In update mode, topic boundaries are already determined by the Phase 1 verdicts (`keep`, `modify`, `add`, `remove`, `reorder`), so Step 1 reconciles them against the scoping artifact's `scope_of_change` — if the user asked for "specific topics", topics outside that list default to `keep` regardless of drift unless the drift is severe enough to block the lesson.
+
+### Step 2: Spawn medium-decider-agent in parallel
+
+One spawn per topic. All spawns fire in a single message to maximize parallelism. The inputs and outputs branch on mode; see the "medium-decider-agent driving" section below for the full contract.
+
+### Step 3: Spawn medium specialists in parallel to draft execution plans
+
+Important: Phase 2 specialists draft **execution plans**, not final artifacts. They return structured briefs that describe what they would build in Phase 3. Nothing is rendered, written to disk, or compiled into the lesson yet.
+
+Parallelism pattern: one specialist per topic per medium verdict, all spawned concurrently. Main Claude waits for all to return before proceeding to Step 4.
+
+Per-specialist draft plan contents:
+
+- **`graphics-agent`** — returns an SVG component sketch (function name, props list, expected data flow, rough geometric outline) plus matplotlib reference image parameters (any `RefImg` base64 constants that should be pre-rendered, the `.py` script shape, expected colour and axis scheme). In update mode, also returns a diff against the existing component it is refining or replacing.
+- **`manim-agent`** — returns a scene outline (which objects appear, how they transform, what the camera does), an expected render time estimate (so main Claude can flag long renders at the approval gate), and the asset filename that will land under `<lesson_root>/public/videos/<filename>.mp4`. In update mode, notes whether an existing `.py` script is being overwritten or a new filename is introduced.
+- **`interactive-demo-agent`** — returns the list of primitives it will use (from `@core/ui` or composed locally), the state wiring plan (which `useState` hooks, which derived values), and the expected user-visible behavior (what the student does, what changes in response). In update mode, returns whether the outer `<InteractiveDemo title>` stays the same (required for refine).
+- **`web-image-agent`** — returns draft search queries, candidate URLs (image URL plus source page URL), license requirements (the agent must only return images with explicit license compatibility), and the target path under `<lesson_root>/public/images/<filename>`. License compliance is blocking: an image with unclear provenance must not advance past this step.
+- **Main Claude direct draft** — no specialist spawn. Main Claude writes inline prose snippets, KaTeX equation blocks, and key-concept bullets directly into the draft plan. These are fast and don't benefit from delegation.
+
+### Step 4: Main Claude compiles the Lesson Plan artifact
+
+Main Claude merges all draft execution plans into a single Lesson Plan artifact using the format appropriate to the mode (see "Lesson Plan artifact formats" below). Compilation includes:
+
+- Deduplicating shared components (e.g., a helper SVG graph referenced by two topics appears once in the plan with both topic references).
+- Reconciling the `GRAPH_SCHEMA` draft so every interactive graph has a schema entry with matching keys to its `DEFAULT_GRAPH_PARAMS`.
+- Tallying change-list counts (update mode) so the approval-gate summary can show honest `keep/refine/replace/remove/add` totals.
+- Flagging any internal inconsistencies (e.g., a topic marked `add` that depends on an equation marked `remove`).
+- **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
+
+### Step 5: Write to lesson_build.log.md
+
+Main Claude writes the full Lesson Plan artifact to `<lesson_root>/lesson_build.log.md` under the appropriate heading:
+
+- **New mode**: `## Phase 2 — Plan` section with `Plan artifact: [...]` and an `Approval:` line that starts `PENDING` and flips to `APPROVED by user at <timestamp>` on gate pass.
+- **Update mode**: `### Phase 2 — Plan (update)` nested under the day's `## Update YYYY-MM-DD (run-id: <short-hash>)` heading. Contains both `Change-list view: [...]` and `Full Lesson Plan: [...]`.
+
+The log is source of truth. Long change-lists go into the log first, then the approval gate points at the log. This avoids AskUserQuestion body truncation.
+
+### Step 6: Human approval gate via AskUserQuestion
+
+Main Claude presents the Lesson Plan with three options: approve, request changes, abort. See the "Human approval gate" section below for full details including phrasing examples and the request-changes loop.
+
+## medium-decider-agent driving
+
+### New mode
+
+**Inputs passed to each spawn**:
+- Topic content (id, title, equations, key concepts, context string)
+- User media preferences from the Phase 0 scoping artifact (e.g., "prefer interactive where possible", "avoid manim, slow to render", "no web images")
+
+**Return**: a ranked recommendation across the full medium space (inline prose, SVG graph, matplotlib reference, manim animation, interactive demo, web image) with a written rationale per rank. Main Claude uses the top-ranked medium per topic but can fall back to lower ranks if a specialist's draft plan in Step 3 reveals the top choice isn't viable (e.g., manim render time estimate is prohibitive).
+
+### Update mode
+
+**Extra inputs** (passed in addition to topic content and user preferences):
+
+```
+mode: "update"
+topic: { id, title, content_preview, equations, key_concepts, pedagogical_goal }
+existing_media: [
+  {
+    kind: "svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo",
+    name: <function name | asset filename | demo title>,
+    current_purpose, current_parameters, source_file, line_range,
+    rendered_preview: null | <base64 snapshot from graph-preview tab>,
+    content_orchestrator_preverdict
+  }
+]
+gaps: [ { concept, reason_existing_media_insufficient, orchestrator_preverdict: "add" } ]
+user_media_hints: [ { concept, hint } ]
+```
+
+**5-way taxonomy with priority order** (quoted verbatim from `lesson-builder.md`):
+
+> The agent emits a **5-way verdict** per existing medium plus per gap. Priority order (tie-break prefers cheaper actions: `keep > refine > replace > remove > add`):
+> 1. **keep**: medium type right, content still in lesson, no drift. Default when uncertain on a passing asset.
+> 2. **refine**: medium type right but content stale (wrong equation, outdated constant, bad scale, lower-quality asset). Function name / asset filename preserved.
+> 3. **replace**: a different medium type better serves the concept (static graph → interactive demo; matplotlib RefImg → manim animation).
+> 4. **remove**: concept removed from lesson, or user flagged for cut, or violates low-value patterns from `jsx-lesson/SKILL.md:170-174`.
+> 5. **add**: used only for gaps — new media for concepts that need visualization.
+>
+> User hints override only when they don't violate scientific accuracy. Example: user hints "refine" but content-orchestrator says the concept was removed — decider emits `remove` with a note.
+
+**Tie-break rule**: when two verdicts score evenly, prefer the cheaper action. The cost order `keep > refine > replace > remove > add` reflects both engineering effort and risk: `keep` is free, `refine` edits an existing asset in place, `replace` switches medium types (call-site changes), `remove` deletes a component, `add` spawns a new specialist build. User hints can override the tie-break only when they do not violate scientific accuracy, as noted in the quoted procedure above.
+
+**Return format** (the agent's response contract):
+
+```
+{
+  "existing_verdicts": [
+    { medium_name, kind, action, rationale, specialist, refine_brief | replace_brief | null }
+  ],
+  "gap_verdicts": [
+    { concept, action: "add", rationale, specialist, add_brief }
+  ]
+}
+```
+
+Main Claude aggregates verdicts across all topics. The `specialist` field routes each verdict to the right specialist in Step 3: `graphics-agent` for svg-graph and matplotlib-ref, `manim-agent` for manim-video, `interactive-demo-agent` for interactive-demo, `web-image-agent` for static-image. `keep` verdicts bypass Step 3 entirely (nothing to draft). `remove` verdicts also bypass Step 3; main Claude records them for the Phase 3 assembly phase.
+
+## Medium selection criteria
+
+Preserved from `jsx-lesson/SKILL.md:160-185` and used by `medium-decider-agent` to rank options. Every interactive demo must answer: "what does the student learn by manipulating this that they could not learn from a static figure?" If the answer is nothing, the decider picks a static graph.
+
+**High-value interactive patterns — use these**:
+- **Convergence visualization** (numerical methods): iterative algorithms converge step by step. Let the user step through iterations or adjust initial conditions to see how convergence speed and stability change.
+- **Parameter sensitivity** (circuits, controls): let the user adjust physical properties and watch I-V curves, frequency responses, or transfer functions reshape in real time.
+- **Phase evolution**: animations showing how a system evolves over time when the temporal dimension is essential.
+- **Threshold/boundary exploration**: graphs where a critical transition happens and the user can drag a parameter across that boundary to feel the discontinuity.
+
+**Low-value patterns — avoid these**:
+- Sliders that just scale an axis or shift a curve without revealing new behavior.
+- Interactivity on graphs where the relationship is obvious from the equation (e.g., linear V = IR).
+- Animated decorations that do not encode information.
+- Toggles that hide/show curves the student could just read from a legend.
+
+**When Manim is the right choice**:
+- The visualization involves smooth geometric transformations, vector field flows, or 3D rotations that SVG cannot represent well.
+- A step-by-step animated proof or derivation would be clearer than a static sequence of equations.
+- The animation is a one-time asset, not parameterized at runtime by the user.
+
+**When static SVG is the right choice**:
+- The visual must be runtime-parameterized (slider-driven, toggle-driven) and thus can't be pre-rendered.
+- The geometry is simple enough that inline SVG paths beat the load cost of a raster or video asset.
+- The relationship being shown is a simple curve (exponential, sinusoid, linear) that benefits from crisp vector rendering.
+
+**When matplotlib `RefImg` supplements SVG**:
+- The figure needs a scientifically accurate reference rendering (textbook-style plot, validated axis labels, gridlines) that the SVG version approximates. The `RefImg` base64 constant lives next to the SVG component as a ground-truth comparator, used in visual-QA and sometimes embedded alongside the interactive SVG for student reference.
+- The figure is complex enough that matplotlib's plotting primitives win over hand-authored SVG paths.
+
+## Lesson Plan artifact formats
+
+### New mode — full Lesson Plan
+
+Quoted verbatim from `lesson-builder.md` Phase 2, new mode:
+
+```
+LESSON PLAN
+Course/Slug: ...
+Topics:
+  - id, title, subtitle, tab label
+  - media: [{ type, specialist, execution_plan_summary }]
+  - equations, key concepts
+Graph schema draft:
+  - graphKey: { param: { type, min, max } } per interactive graph
+Overall structure: tab order, approximate lesson length, expected complexity
+```
+
+### Update mode — change-list format
+
+Quoted verbatim from `lesson-builder.md` Phase 2, update mode:
+
+```
+LESSON UPDATE PLAN — <Course>/<slug>
+Research mode: light | targeted | full
+Branch: lesson-update/<slug>-YYYYMMDD
+
+TOPICS CHANGING:
+  [ADD]     topic-N "Title" — why / media items count
+  [MODIFY]  topic-1 "Title" — equations changed N, concepts added N,
+            content removed N, media actions (keep/refine/replace/remove/add counts)
+  [REMOVE]  topic-4 "Title" — why / media affected
+  [REORDER] topics-2,3,5 → new order — why
+
+TOPICS UNCHANGED: [KEEP] ...
+
+MEDIA ACTIONS (across all topics):
+  KEEP (N):    name, kind, topic
+  REFINE (N):  name, kind, topic — brief rationale / specialist
+  REPLACE (N): name, kind → new-kind, topic — rationale / specialist
+  REMOVE (N):  name, kind, topic — rationale
+  ADD (N):     concept, kind, topic — rationale / specialist
+
+ORPHAN ASSETS (files on disk, no JSX reference):
+  [pre-verdict] path — size — why-orphan — suggested action
+  [keep]        public/images/unused-diagram.png — 142 KB — never referenced — keep (may be WIP)
+  [remove]      public/videos/old-backup.mp4     — 8.2 MB — filename contains "old" — remove
+
+STRUCTURAL DRIFT REPAIRS:
+  - GRAPH_SCHEMA backfill: needed / not needed
+  - Chatbot props reconcile: <delta or "none">
+
+ROLLBACK:
+  - Branch: lesson-update/<slug>-YYYYMMDD
+  - Stash: <ref> | none
+  - Merge to main only on success
+
+APPROVE? [approve / request changes / abort]
+```
+
+**Orphan asset action semantics**:
+- `keep` — no-op in Phase 3. File stays on disk. Use when the file is work-in-progress, a reference asset the user may want to wire up later, or a legal/provenance artifact.
+- `remove` — Phase 3 deletes the file from disk during the orphan-asset-cleanup drift repair (`phase-3-execution.md` step 4.9 / drift repair category 3). The removal is logged and shows up in the Phase 3 summary line.
+- The pre-verdict shown in the change-list is advisory. The user can override either way at the approval gate via the request-changes loop.
+- If the orphan list is empty, omit the `ORPHAN ASSETS` section entirely to keep the change-list compact. Do not render an empty "ORPHAN ASSETS: none" line; silence is the signal.
+
+### Graph schema handling in update mode
+
+If the existing lesson has `GRAPH_SCHEMA`, the plan shows:
+- **preserved** keys: graphs kept unchanged; their schema entries carry forward.
+- **modified** keys: graphs being refined where the schema `param` ranges or types change.
+- **added** keys: new graphs from `add` verdicts; new schema entries land alongside.
+
+If the existing lesson **lacks** `GRAPH_SCHEMA` (predates the graph-schema feature in `_lesson-core/chat/graphSchema.js`), the plan emits a `STRUCTURAL DRIFT REPAIRS: GRAPH_SCHEMA backfill: needed` item. The user sees this explicitly at the approval gate; the backfill is performed in Phase 3 Step 7 by generating a fresh `GRAPH_SCHEMA` export from the current `DEFAULT_GRAPH_PARAMS` per `references/graph-schema-guide.md`.
+
+## Human approval gate
+
+Single mandatory gate. No exceptions. Phase 3 does not start without explicit approval. This is the only place in the pipeline where a human veto is enforced, so it must be accurate and actionable.
+
+### Mechanics
+
+Main Claude uses `AskUserQuestion` with three options: **approve**, **request changes**, **abort**.
+
+- **New mode**: if the full plan fits in the AskUserQuestion body, inline it. If it doesn't, write the full plan to the log first, then present a condensed summary in the body pointing at `<lesson_root>/lesson_build.log.md` as source of truth.
+- **Update mode**: the AskUserQuestion body surfaces only the **change-list** (not the full plan). For long change-lists, main Claude writes the full artifact to the log first and presents a condensed summary in the body pointing at the log. This avoids truncation in the AskUserQuestion response surface.
+
+### AskUserQuestion phrasing examples
+
+**New mode, short plan fits inline**:
+
+```
+Question: Approve this Lesson Plan for <course> / <slug>?
+
+Body:
+LESSON PLAN
+Course/Slug: <course> / <slug>
+Topics:
+  1. "Topic A" — inline prose + 1 SVG graph
+  2. "Topic B" — interactive demo (parameter slider) + manim animation
+  3. "Topic C" — SVG plot + matplotlib RefImg
+Graph schema draft:
+  firstGraph:  { param1: { type: "float", min: 0.1, max: 10 } }
+  secondGraph: { param2: { type: "float", min: 1,   max: 1000 } }
+Overall structure: 3 tabs, medium lesson, expected complexity moderate.
+
+Options: [approve] [request changes] [abort]
+```
+
+**New mode, long plan**:
+
+```
+Question: Approve this Lesson Plan for <course> / <slug>?
+
+Body:
+Lesson Plan written to:
+  <workspace_root>/<course>/claude_lessons/<slug>/lesson_build.log.md
+  (see "## Phase 2 — Plan")
+
+Condensed summary:
+  7 topics, 12 media items total
+  Media mix: 5 SVG graphs, 3 interactive demos, 2 manim videos, 2 matplotlib RefImgs
+  Estimated Phase 3 time: ~8 min (2 manim renders dominate)
+  Largest topic: "<topic title>" (3 media items)
+
+Review the full plan in the log file before approving.
+
+Options: [approve] [request changes] [abort]
+```
+
+**Update mode, short change-list inline**:
+
+```
+Question: Approve this Lesson Update Plan for <course> / <slug>?
+
+Body:
+LESSON UPDATE PLAN — <course> / <slug>
+Research mode: light
+Branch: lesson-update/<slug>-YYYYMMDD
+
+TOPICS CHANGING:
+  [MODIFY]  topic-2 "<topic title>" — equations changed 1, concepts added 0,
+            content removed 0, media actions (keep=1, refine=1, replace=0, remove=0, add=0)
+
+TOPICS UNCHANGED: [KEEP] topic-1, topic-3, topic-4, topic-5
+
+MEDIA ACTIONS:
+  KEEP (4):     graphA, demoB, animC, imgD
+  REFINE (1):   graphE, svg-graph, topic-2 — <rationale> / graphics-agent
+
+STRUCTURAL DRIFT REPAIRS:
+  - GRAPH_SCHEMA backfill: not needed
+  - Chatbot props reconcile: none
+
+ROLLBACK:
+  - Branch: lesson-update/<slug>-YYYYMMDD
+  - Stash: none (working tree clean)
+  - Merge to main only on success
+
+APPROVE? [approve / request changes / abort]
+
+Options: [approve] [request changes] [abort]
+```
+
+**Update mode, long change-list, log pointer**:
+
+```
+Question: Approve this Lesson Update Plan for <course> / <slug>?
+
+Body:
+Full Update Plan written to:
+  <workspace_root>/<course>/claude_lessons/<slug>/lesson_build.log.md
+  (see "## Update YYYY-MM-DD > ### Phase 2 — Plan (update)")
+
+Condensed summary:
+  Research mode: targeted (named topics re-researched)
+  Branch: lesson-update/<slug>-YYYYMMDD
+
+  Topics:  2 modify, 1 add, 0 remove, 0 reorder, 4 keep
+  Media:   keep=8, refine=3, replace=1, remove=2, add=4 (18 total media actions)
+  Orphans: 3 files (2 keep pre-verdict, 1 remove pre-verdict) — see log for paths
+
+  Structural drift repairs: GRAPH_SCHEMA backfill NEEDED (lesson predates the graph-schema feature)
+  Rollback: branch + stash (stash-ref: stash@{0})
+
+  Review the full change-list in the log before approving.
+
+Options: [approve] [request changes] [abort]
+```
+
+When orphan count is > 0 and any pre-verdict is `remove`, the condensed summary **must** call out the orphan line so the user sees that files will be deleted from disk before they approve. When all pre-verdicts are `keep` or the orphan list is empty, omit the orphan line to keep the summary compact.
+
+### Request-changes loop
+
+If the user selects **request changes**, main Claude fires a follow-up `AskUserQuestion` asking which items to revise. Example:
+
+```
+Question: Which items need revision?
+
+Options:
+  [Topic-2 content] — re-run content-orchestrator-agent on topic-2
+  [Topic-2 media]   — re-run medium-decider-agent on topic-2 only
+  [Global media mix] — re-run medium-decider-agent on all topics
+  [Structural drift items] — adjust GRAPH_SCHEMA backfill plan
+  [Orphan assets] — flip keep/remove pre-verdicts on one or more orphans
+  [Other — describe]
+```
+
+Routing:
+- **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, then re-run the affected `medium-decider-agent` spawn.
+- **Media-only changes** (medium type wrong, specialist brief wrong): loop back through `medium-decider-agent` for the affected topic only. Cheaper than re-running content orchestration.
+- **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
+
+In both cases, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same AskUserQuestion pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
+
+### Abort path
+
+If the user selects **abort**, main Claude:
+1. Writes `Approval: ABORTED by user at <timestamp>` to `lesson_build.log.md`.
+2. Leaves the log intact (does not delete the Phase 1 or Phase 2 artifacts; they remain for reference).
+3. **Does not** proceed to Phase 3. No specialist spawns fire. No files are written to `<lesson_root>/src/`.
+4. In update mode, does **not** perform the Phase 3 pre-execution git setup (no branch created, no stash popped). The working tree state from Phase 0 is preserved.
+5. Reports the abort to the user with a brief confirmation.
+
+## Handoff to Phase 3
+
+On approval, main Claude has:
+
+1. An **approved Lesson Plan artifact** written to `<lesson_root>/lesson_build.log.md` with an `Approval: APPROVED by user at <timestamp>` line.
+2. A **per-topic medium-decider verdict list** aggregated across all Step 2 spawns. Each verdict carries its `specialist` routing field so Phase 3 knows which agent to spawn.
+3. **Draft execution plans** from each specialist spawn in Step 3. These become the starting inputs for Phase 3 specialist builds; a specialist spawned in Phase 3 receives its own Phase 2 draft plan plus any refinements from the approval loop.
+4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create and what stash ref (if any) to honor. Phase 3 Step 1 runs `git checkout -b <branch>` before any specialist spawns.
+5. **(Update mode only) An orphan asset verdict list**: the approved `ORPHAN ASSETS` block (if non-empty) hands Phase 3 a concrete `keep | remove` decision per file. Phase 3's orphan-asset-cleanup drift repair (`phase-3-execution.md` drift repair category 3) reads this list — files marked `remove` get deleted, files marked `keep` are left alone and logged as "kept orphans". No orphans list means nothing to do; an all-`keep` list means the cleanup step is a no-op and still logs the skipped category for trace.
+
+Phase 3 branches on mode:
+
+- **New mode**: assembles from scratch. Specialists write to `<lesson_root>/.build-scratch/<topic>-<medium>.jsx`, main Claude assembles final `src/<slug>.jsx` from the scratch outputs plus the skeleton from `references/template.md`.
+- **Update mode**: splices into the existing `src/<slug>.jsx`. Specialists write to `<lesson_root>/.build-scratch/{add,refine,replace}/<topic>-<medium>.jsx`. Main Claude performs splice edits against the lesson file in place, walks the verdict list, and runs the post-splice sanity pass.
+
+Phase 2 ends the moment the approval gate clears. Everything downstream operates under the constraint that the plan is the contract and any deviation requires a new approval gate (in practice, Phase 3 and Phase 4 only log deviations; they don't re-prompt the user unless a fundamental flaw surfaces in the fix loop).
