@@ -46,10 +46,18 @@ flowchart TD
 | 4 — Review + Fix | Parallel code / content / test / visual-QA reviewers. Progress-aware fix loop with hard stop rules. | Same mechanism. Two extra rules: **no-grandfathering** (every final medium runs through visual-QA, including `keep`) and **regression-watch** (halt a fix thread if a refine regresses a previously-clean `keep` medium). |
 | 5 — Deploy | `build-all.sh` + headless Playwright smoke check, commit to `main`, push. | Same build gate, commit to update branch, `git merge --no-ff` to `main`, push, stash recovery prompt. Branch and stash are preserved on any failure. |
 
+## Quality policy
+
+**The default is maximum teaching quality.** When a richer medium (manim animation, interactive demo, detailed matplotlib figure) teaches a concept better than a cheaper one, the skill picks the richer medium. Research depth defaults to `full` or `targeted`; the fix loop iterates until the lesson meets the quality bar. Runtime is not the optimization target; student understanding is.
+
+If you want a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*, etc. The skill detects the signal and flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research depth capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced during Phase 0 confirmation so you can override it explicitly.
+
 ## Key invariants
 
+- **Quality-first default**: `resource_mode: "full"` unless the user explicitly signalled otherwise. See the Quality policy section above.
 - **One human gate**, at Phase 2. No exceptions.
 - **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently wherever possible.
+- **Self-contained agents**: all 15 agents are bundled at `agents/` inside the skill. No workspace or machine-global agent directory required.
 - **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code; bugs fixed in `_lesson-core/` propagate to every lesson.
 - **Per-lesson log** at `<lesson_root>/lesson_build.log.md`. Main Claude owns it; update runs append a `## Update YYYY-MM-DD (run-id: <hash>)` section rather than overwriting history.
 - **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, topic-context invariants, template compliance, no inlined chat, no emojis, no direct API calls).
@@ -58,10 +66,26 @@ flowchart TD
 ## Directory layout
 
 ```
-SKILL.md                       Entry point — mode detection + phase shell + agent team
+SKILL.md                       Entry point — quality policy, mode detection, phase shell, agent team
+agents/                        Bundled agent definitions (15 agents, self-contained)
+  content-orchestrator-agent.md
+  content-review-agent.md
+  research-agent.md
+  medium-decider-agent.md
+  graphics-agent.md
+  manim-agent.md
+  interactive-demo-agent.md
+  web-image-agent.md
+  code-review-agent.md
+  geometry-agent.md
+  colour-agent.md
+  readability-agent.md
+  scientific-accuracy-agent.md
+  motion-timing-agent.md
+  interaction-agent.md
 references/
   update-mode.md               Update-mode orientation (read first if mode=update)
-  phase-0-scoping.md           Scoping interview + scoping artifact format
+  phase-0-scoping.md           Scoping interview + scoping artifact format + resource-mode detection
   phase-1-content.md           Content orchestration + existing-media inventory pre-scan
   phase-2-plan.md              Plan compilation + 5-way media taxonomy + approval gate
   phase-3-execution.md         New-mode assembly + update-mode splice algorithm

@@ -21,6 +21,18 @@ Main Claude writes the detection result as the first line under `## Phase 0 — 
 - Update mode (resolved): `Detected mode: update (candidate: <workspace_root>/<course>/claude_lessons/<slug>/)`
 - Update mode (unresolved): `Detected mode: update (candidate: null — will ask)`
 
+### Resource-mode detection
+
+Alongside mode detection, main Claude scans the user's initial message for signals that they want a resource-conscious pass rather than the default maximum-quality pass. Trigger phrases: `quick`, `fast`, `cheap`, `minor`, `light pass`, `don't spend too much time`, `quick pass`, `keep it simple`, `avoid manim`, `skip research`, and similar. See `SKILL.md` → "Quality policy" for the full directive.
+
+- No trigger phrases → `resource_mode: "full"` (default, maximum quality).
+- Trigger phrase present → `resource_mode: "limited"`.
+
+`resource_mode` threads through every downstream phase and every specialist spawn. Main Claude surfaces the detected value during Phase 0 confirmation so the user can override it explicitly. Log format:
+
+- `Resource mode: full` or `Resource mode: limited`
+- On ambiguity, default to `full` and note the ambiguity for the user to confirm.
+
 ## Question taxonomy — new mode
 
 New mode asks a fixed set of **always-asked** questions, plus one branch of **conditional** questions depending on whether the user already provided source material (textbook chapter, slide deck, problem set, lecture notes) or nothing at all.
@@ -69,7 +81,7 @@ If the `@core` check passes, proceed with the normal question 1 option set.
 
 2. **Working-tree check** — only surfaced if `git status --short <lesson_root>` returned non-empty. "Your working tree has uncommitted changes in `<lesson_root>`. How should I proceed?" Options: `Stash them and continue (I'll record the stash ref for recovery)`, `Abort — I'll commit first and rerun`, `Discard them (destructive, requires explicit confirm)`. If clean, skip the question entirely and log `Working tree: clean`.
 
-3. **Research depth** — "How deep should the research re-sweep be?" Options: `Light (default — work from existing content, your concerns, and any new materials)`, `Targeted (re-research specific topics you name)`, `Full (treat like a new lesson — 5-10x slower than light, used rarely)`. Default is `light` when the user gives a casual request (see aggressive-defaults policy below).
+3. **Research depth** — "How deep should the research re-sweep be?" Options: `Full (comprehensive re-research — treats the lesson like a new build; default when resource_mode is full and quality is the priority)`, `Targeted (re-research specific topics you name — good balance when only part of the lesson needs a fresh look)`, `Light (minimal re-research — work from existing content, your concerns, and any new materials; default when resource_mode is limited)`. Default is `full` when `resource_mode: "full"` and the update scope is broad; `targeted` when the scope is narrow; `light` only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
 
 4. **Scope of change** — "Which topics or sections need work?" Options: `Any topic (open-ended review — the orchestrator picks)`, `Specific topics (free-text list of topic ids or titles)`, `Replace whole lesson structure (warning: this is close to a rewrite — consider new mode instead)`. If the user picks the third option, warn and offer to switch to new mode before proceeding.
 
@@ -95,6 +107,7 @@ Phase 0 output is a structured artifact written to the log and passed to Phase 1
 
 ```
 mode: "new" | "update"
+resource_mode: "full" | "limited"   # default "full"; "limited" only if user explicitly signalled a quick pass
 course: "<course display code>"
 course_dir: "<course>"
 slug: "<slug>"
@@ -172,7 +185,7 @@ working_tree_state: "clean"
 
 ## Aggressive-defaults policy for casual one-liners
 
-If the user's initial request is a terse one-liner (e.g. "fix the `<component-name>` in `<slug>`", "update the `<slug>` lesson"), skip the 5-question gauntlet and instead present **one condensed confirmation** bundling the assumed defaults. This reduces friction for quick turnaround work.
+If the user's initial request is a terse one-liner (e.g. "fix the `<component-name>` in `<slug>`", "update the `<slug>` lesson"), skip the 5-question gauntlet and instead present **one condensed confirmation** bundling the assumed defaults. The defaults are picked from `resource_mode`, which main Claude detected earlier — see "Resource-mode detection" above.
 
 **Trigger conditions** (all must hold):
 
@@ -181,16 +194,22 @@ If the user's initial request is a terse one-liner (e.g. "fix the `<component-na
 - User request is under ~20 words and uses an update verb.
 - No explicit scope flags (no mention of "full rewrite", "deep research", "rework everything").
 
-**When triggered**, assume:
+**When triggered and `resource_mode: "full"` (the default)**, assume:
 
-- `research_depth: "light"`
-- `scope_of_change: "any"` (or `"specific"` if the user named a topic in the one-liner)
-- `media_hints: []` (or a single-item list if the user named a medium in the one-liner)
+- `research_depth: "targeted"` if the one-liner named a specific topic or component, else `"full"`. Do not default to `light` — the user did not ask for a cheap pass.
+- `scope_of_change: "specific"` if the user named a topic, else `"any"`.
+- `media_hints: []` (or a single-item list if the user named a medium in the one-liner).
 - Audience / pedagogical goal / single-vs-multi: carry forward from the existing lesson's `lesson_build.log.md` if present, otherwise the safest defaults for the detected course directory (`working`, `single`, audience inferred from any previously-built lesson under the same course directory, else ask).
 
-**Confirmation phrasing**: "Here's what I'm assuming for this update — change anything before I start?" followed by a compact bullet list of the assumed fields. The user gets one AskUserQuestion with options `Looks good, proceed`, `Change some fields (specify)`, `Actually run the full 5-question interview`.
+**When triggered and `resource_mode: "limited"`** (user said "quick pass" or similar), assume:
 
-If the user picks "change some fields", fall back to asking only the fields they flagged. If they pick "full interview", run the standard 5-question flow. Aggressive defaults never apply in new mode — new lessons always get the full scoping interview.
+- `research_depth: "light"`.
+- `scope_of_change: "specific"` if the user named a topic, else `"any"`.
+- Everything else as above.
+
+**Confirmation phrasing**: "Here's what I'm assuming for this update — change anything before I start?" followed by a compact bullet list of the assumed fields **including the detected `resource_mode`**. The user gets one AskUserQuestion with options `Looks good, proceed`, `Change some fields (specify)`, `Actually run the full 5-question interview`.
+
+If the user picks "change some fields", fall back to asking only the fields they flagged (including `resource_mode` if they want to flip it). If they pick "full interview", run the standard 5-question flow. Aggressive defaults never apply in new mode — new lessons always get the full scoping interview.
 
 ## Output
 

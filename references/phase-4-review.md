@@ -165,7 +165,9 @@ The compiled issue list is the input to the fix loop. It is also written to the 
 
 ## Progress-aware fix loop
 
-The loop combines hard metric signals and LLM self-assessment. The guiding principle is **bias toward stopping early** over churning. A fix loop that burns iterations without converging is worse than logging a known issue and moving on, because churning risks regressing already-correct work.
+The loop combines hard metric signals and LLM self-assessment. The guiding principle is **iterate until the lesson meets the quality bar, and only halt when further iteration is demonstrably regressing the work** (the stop rules below). Under `resource_mode: "full"` (default), main Claude is patient — burn extra iterations rather than ship a lesson with known blockers or major defects. Under `resource_mode: "limited"`, tighten the stop rules aggressively so the loop converges faster at the cost of leaving some minor issues open.
+
+What the loop never does: grind through the same failure mode twice in a row without making progress. Churning that regresses already-correct work is worse than logging a known issue and moving on. The stop rules are the backstop against that specific failure, not a general bias toward stopping early.
 
 Fixes are applied by the same medium specialist that created the artifact originally: code issues go to `code-review-agent` (which has edit authority in this phase, unlike its read-only Phase 3 role), SVG graph issues go to `graphics-agent`, Manim issues to `manim-agent`, interactive demo issues to `interactive-demo-agent`, content drift issues to `content-review-agent` (with edit authority). Main Claude is the dispatcher; it does not apply fixes directly.
 

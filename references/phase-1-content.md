@@ -214,9 +214,11 @@ Main Claude passes:
 
 ### Procedure branched on `research_depth`
 
-- **light** (default, fastest). No `research-agent` spawns. Orchestrator reads the existing JSX end-to-end, cross-references the inventory, and spawns `content-review-agent` once with user concerns + new materials as criteria. Approximately 1-2 agent rounds total.
-- **targeted**. Same as light, plus one `research-agent` per user-named topic with a narrow equation/concept brief. Spawns scale with the number of named topics.
-- **full**. Runs the complete new-mode Phase 1 flow — deep-review teams per provided resource, `research-agent` per topic, content-dialogue loop — but seeds every agent with the existing content as a baseline so they identify drift rather than start from zero. **5-10x slower than light**. The orchestrator warns about this in its opening prompt so main Claude can confirm with the user if runtime budget matters.
+Quality-first defaults: when `resource_mode: "full"` (the default, see `SKILL.md` → "Quality policy"), Phase 0 picks `targeted` or `full` for most updates. `light` is reserved for `resource_mode: "limited"` or explicit user request. The orchestrator never downgrades the depth below what Phase 0 selected.
+
+- **full**. Runs the complete new-mode Phase 1 flow — deep-review teams per provided resource, `research-agent` per topic, content-dialogue loop — but seeds every agent with the existing content as a baseline so they identify drift rather than start from zero. This is the quality-first default for broad-scope updates. It does take longer than `targeted` or `light` because it re-runs the new-mode research procedure; the orchestrator notes the runtime implication in its return so main Claude can surface it if the user has asked about runtime.
+- **targeted**. Same as light, plus one `research-agent` per user-named topic with a narrow equation/concept brief. Spawns scale with the number of named topics. Good balance when only part of the lesson needs a fresh look.
+- **light**. No `research-agent` spawns. Orchestrator reads the existing JSX end-to-end, cross-references the inventory, and spawns `content-review-agent` once with user concerns + new materials as criteria. Approximately 1-2 agent rounds total. Used only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
 
 ### Drift / gap / redundancy / reorganization classification
 

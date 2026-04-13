@@ -74,7 +74,7 @@ User message
 
 ## 4. The 5 media actions
 
-`medium-decider-agent` emits one verdict per existing medium plus one `add` verdict per gap. Tie-break priority favors cheaper actions: `keep > refine > replace > remove > add`.
+`medium-decider-agent` emits one verdict per existing medium plus one `add` verdict per gap. Decide by what maximizes pedagogical quality; only when two actions are genuinely tied on quality does the less-invasive action win (`keep > refine > replace > remove` — `add` sits outside the tie-break since it only applies to gaps). **The tie-break exists to avoid churn in already-correct work, not to save effort** — never pick `keep` over `refine` when the content is stale, or `refine` over `replace` when the medium type is genuinely wrong for the concept. When `resource_mode: "limited"` is set, the tie-break extends to genuine near-ties in favor of the cheaper action; when `resource_mode: "full"` (default), quality leads.
 
 ### keep
 
@@ -194,7 +194,7 @@ The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<
 - **Missing `GRAPH_SCHEMA`**: lessons predating the graph-schema feature lack the `GRAPH_SCHEMA` export. Phase 3 backfills from current `DEFAULT_GRAPH_PARAMS` per `references/graph-schema-guide.md`. Surface it in the Phase 2 approval gate under "structural drift repairs" so the user sees the backfill coming.
 - **Dirty working tree**: Phase 0's working-tree check asks before proceeding. Either stash or abort; the skill never proceeds through dirt silently.
 - **Splice-heavy editing risk**: real lessons can be long (a few thousand lines is common). Babel parse catches syntax but not semantic drift. The post-splice sanity pass in Phase 3 step 4.6 is the backstop — do not skip it.
-- **Casual one-liner requests**: Phase 0 can balloon to ~5 update-specific questions. For a one-liner like "fix the wave-packet graph in <slug>", prefer aggressive defaults (`light`, `specific: [<named-component>]`, no media hints) and present one condensed "here's what I'm assuming, change anything?" AskUserQuestion instead of 5 separate questions.
+- **Casual one-liner requests**: Phase 0 can balloon to ~5 update-specific questions. For a one-liner like "fix the wave-packet graph in <slug>", use the aggressive-defaults policy from `references/phase-0-scoping.md`: under `resource_mode: "full"` (the default) assume `targeted` research with the named component as scope; under `resource_mode: "limited"` assume `light`. Either way present one condensed "here's what I'm assuming, change anything?" AskUserQuestion instead of 5 separate questions.
 
 ## 10. Phase-by-phase cross-reference
 

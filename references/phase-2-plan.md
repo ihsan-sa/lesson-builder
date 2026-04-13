@@ -90,18 +90,20 @@ gaps: [ { concept, reason_existing_media_insufficient, orchestrator_preverdict: 
 user_media_hints: [ { concept, hint } ]
 ```
 
-**5-way taxonomy with priority order** (quoted verbatim from `lesson-builder.md`):
+**5-way taxonomy (pedagogical-quality first)**:
 
-> The agent emits a **5-way verdict** per existing medium plus per gap. Priority order (tie-break prefers cheaper actions: `keep > refine > replace > remove > add`):
-> 1. **keep**: medium type right, content still in lesson, no drift. Default when uncertain on a passing asset.
+> The agent emits a **5-way verdict** per existing medium plus per gap. Decide by what maximizes teaching quality of the finished lesson:
+> 1. **keep**: medium type is right, content is accurate, and it teaches the concept well as-is. Do not pick `keep` just because it's zero work — if the content is stale or a richer medium would teach noticeably better, pick `refine` or `replace` even though they cost more.
 > 2. **refine**: medium type right but content stale (wrong equation, outdated constant, bad scale, lower-quality asset). Function name / asset filename preserved.
-> 3. **replace**: a different medium type better serves the concept (static graph → interactive demo; matplotlib RefImg → manim animation).
-> 4. **remove**: concept removed from lesson, or user flagged for cut, or violates low-value patterns from `jsx-lesson/SKILL.md:170-174`.
+> 3. **replace**: a different medium type would meaningfully improve the teaching (e.g., static graph → interactive demo when parameter sensitivity is the teaching point; matplotlib RefImg → manim animation when the temporal arc matters).
+> 4. **remove**: concept removed from lesson, user flagged for cut, or the medium is a true low-value pattern (decorative animation, slider that just shifts an axis, toggle that hides what the legend already shows).
 > 5. **add**: used only for gaps — new media for concepts that need visualization.
 >
-> User hints override only when they don't violate scientific accuracy. Example: user hints "refine" but content-orchestrator says the concept was removed — decider emits `remove` with a note.
+> User hints override only when they don't violate scientific accuracy or pedagogical correctness. Example: user hints "refine" but content-orchestrator says the concept was removed — decider emits `remove` with a note.
 
-**Tie-break rule**: when two verdicts score evenly, prefer the cheaper action. The cost order `keep > refine > replace > remove > add` reflects both engineering effort and risk: `keep` is free, `refine` edits an existing asset in place, `replace` switches medium types (call-site changes), `remove` deletes a component, `add` spawns a new specialist build. User hints can override the tie-break only when they do not violate scientific accuracy, as noted in the quoted procedure above.
+**Tie-break rule**: when two verdicts are genuinely tied on pedagogical quality, prefer the less invasive one (`keep` > `refine` > `replace` > `remove`) to avoid churn in already-correct work. `add` sits outside the tie-break; it applies only to gaps. **This is about keeping correct work correct, not about saving effort** — never pick `keep` over `refine` when the content is actually stale, or `refine` over `replace` when the medium type is genuinely wrong for the concept.
+
+When `resource_mode: "limited"` is threaded through from Phase 0, the tie-break extends to break genuine ties in favor of the cheaper action even when quality is slightly higher on the more expensive side. Default (`resource_mode: "full"`) keeps quality ahead of cost.
 
 **Return format** (the agent's response contract):
 

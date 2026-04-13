@@ -16,6 +16,14 @@ Build interactive React lesson apps (.jsx) with tabbed topics, LaTeX equations, 
 - `references/graph-schema-guide.md` — derive `GRAPH_SCHEMA` from `DEFAULT_GRAPH_PARAMS`; also used for update-mode backfill.
 - `references/log-template.md` — `lesson_build.log.md` skeleton and update-mode append format.
 
+## Quality policy
+
+**The default is maximum teaching quality.** When choosing between a richer medium (interactive demo, manim animation, detailed matplotlib figure, full research sweep) and a cheaper one, pick the richer medium whenever it teaches the concept better. Do not drop ideas, graphics, derivations, or visualization opportunities because they take longer to produce or cost more specialist runtime. Runtime is not the optimization target; student understanding is.
+
+If the user explicitly flags limited resources — phrases like "quick pass", "keep it cheap", "use less demanding media", "fast update" — the skill flips to a resource-conscious mode: prefer prose and static SVG over manim/interactive, cap research depth at `light` or `targeted`, and break ties toward cheaper actions. Main Claude detects the flag from the initial user message and threads `resource_mode: "full" | "limited"` through the scoping artifact into every phase and every specialist brief. Surface the switch in the log (`Resource mode: limited` or `Resource mode: full`) so the decision is traceable.
+
+When `resource_mode` is `"full"` (the default) main Claude and spawned agents must not silently downgrade media richness, research depth, fix-loop iterations, or visual-QA coverage to save time. If the user wants a cheaper run, they will say so explicitly.
+
 ## Mode detection
 
 Before the scoping interview fires, run regex + Glob detection on the user's initial message to assign `mode ∈ {new, update}` plus, for update mode, a candidate `<lesson_root>`.
@@ -96,28 +104,34 @@ Browser (Vite dev server :5173)
 
 ## Agent team
 
-Lesson-builder coordinates an agent team at `<workspace_root>/.claude/agents/`. New agents created by this skill:
+All agents are bundled with the skill at `agents/` — the skill is self-contained and does not depend on any workspace-level or machine-global agent directory. On first use, Claude Code reads agent definitions directly from `agents/*.md` inside the skill folder.
+
+**Orchestration and content**:
 - `content-orchestrator-agent` — Phase 1 sub-orchestrator (new-mode research coordinator; update-mode diff driver)
 - `content-review-agent` — pedagogical content review (Phase 1 + Phase 4; update-mode awareness)
+- `research-agent` — topic-area research with source reliability judgment
 
-Existing agents reused (extended with update-mode input sections where noted):
-- `research-agent` — topic-area research
+**Media planning and production**:
 - `medium-decider-agent` — ranked media recommendations (new-mode); 5-way taxonomy (update-mode)
 - `graphics-agent` — SVG graphs + matplotlib references (update-mode: preserve function name on refine)
 - `manim-agent` — animations (update-mode: overwrite .py/.mp4 at same paths on refine)
 - `interactive-demo-agent` — interactive demos (update-mode: preserve `<InteractiveDemo title>` on refine)
 - `web-image-agent` — web-sourced images
+
+**Review**:
 - `code-review-agent` — template compliance, KaTeX safety, Babel parse
 - Visual-QA specialists: `geometry-agent`, `colour-agent`, `readability-agent`, `scientific-accuracy-agent`, `motion-timing-agent`, `interaction-agent` (agnostic of mode)
 
 Visual-QA specialists receive the **original stated intent** in update mode (as captured by content-orchestrator), not the user's most recent concerns — so refined media gets evaluated against what it was always supposed to show.
+
+Every agent respects `resource_mode: "full" | "limited"`. `"full"` is the default; agents treat any absent field as `"full"` and bias toward pedagogical quality.
 
 ## Execution guidance
 
 - **Launch specialists in parallel** wherever possible (user preference: aggressive parallel delegation, ~8 agents per message for bulk similar work).
 - **One AskUserQuestion approval gate** at the end of Phase 2. No exceptions.
 - **Log every phase transition** to `lesson_build.log.md`. Update mode appends, never overwrites.
-- **Honor the progress-aware fix loop stop rules** — bias toward stopping early over churning.
+- **Iterate the progress-aware fix loop until the lesson meets the quality bar** under `resource_mode: "full"`. The stop rules halt only on demonstrable regression or stall, not on iteration count. Under `resource_mode: "limited"`, tighten the stop rules aggressively.
 - **Update mode: always create a branch** before Phase 3 work. Never splice directly on main.
 - **Never skip the post-splice sanity pass** in update mode Phase 3 step 4.6. Semantic corruption is cheap to cause and expensive to catch later.
 
