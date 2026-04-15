@@ -47,16 +47,27 @@ See `references/update-mode.md` for the full decision tree and edge cases.
 
 ```
 Phase 0 — Scoping            AskUserQuestion interview. Mode-branched questions.
+                              Captures materials_scope (course-only/fill-gaps/extensions),
+                              deploy_action (push-to-github/push-to-custom/commit-only/skip),
+                              and deploy_service.
 Phase 1 — Content Analysis   content-orchestrator-agent (new: research + deep-review;
-                              update: read existing, diff, content-review)
+                              update: read existing, diff, content-review). Honors
+                              materials_scope to cap or broaden research.
 Phase 2 — Plan               medium-decider-agent (new: ranked media; update: 5-way
                               keep/refine/replace/remove/add). Human approval gate.
+                              Deploy intent surfaced in the plan's DEPLOY: block.
 Phase 3 — Execution          Parallel specialists. New: assemble from scratch.
                               Update: git branch + splice assembly.
+                              Both: write/update private-by-default .gitignore
+                              covering materials/, source/, notes/, *.local, .env*.
 Phase 4 — Review + Fix       Parallel code/content/test/visual-QA. Progress-aware fix loop.
                               Update: no-grandfathering + regression-watch stop rule.
-Phase 5 — Deploy             Local build verify. New: commit + push to main.
-                              Update: commit to branch, merge --no-ff, stash recovery.
+Phase 5 — Deploy             Branches on deploy_action. Build verify runs under every
+                              action (sanity check). Gitignore-override question
+                              (default: no override — nothing private gets published).
+                              New: commit + push per deploy_action.
+                              Update: commit to branch, merge --no-ff (unless commit-only),
+                              push per deploy_action, stash recovery.
 ```
 
 **One mandatory human approval gate** at Phase 2, regardless of mode. Execution starts only after the user approves the Lesson Plan artifact (new mode: full plan; update mode: change-list summary).

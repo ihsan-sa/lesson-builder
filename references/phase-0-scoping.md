@@ -42,12 +42,25 @@ New mode asks a fixed set of **always-asked** questions, plus one branch of **co
 4. **Pedagogical goal** — "How deep should this lesson go?" Options: `Survey (broad tour, minimal derivations)`, `Working knowledge (standard course coverage)`, `Mastery (derivations, edge cases, exam-level)`.
 5. **Single vs multi-lesson** — "Is this one lesson or a multi-lesson unit?" Options: `Single lesson`, `Multi-lesson unit (specify count)`.
 6. **Deploy target** — "Is this a brand-new lesson, or replacing an existing one at the same slug?" Options: `Brand-new lesson`, `Replacing existing lesson at <course>/<slug>`.
+7. **Deploy destination** — "When the lesson is ready, how should it go live?" Options:
+   - `Push to GitHub (default)` — commits + `git push origin main`; workspace's hosted deploy (Netlify / Vercel / Cloudflare Pages per workspace config) auto-triggers.
+   - `Push to a different git remote` — commits + pushes to a user-specified remote URL.
+   - `Run a custom deploy CLI` — commits, then runs a user-specified command (e.g. `netlify deploy --prod --dir=dist`) from `<workspace_root>`.
+   - `Commit only, no push` — commits to `main` (new mode) or the update branch (update mode). Nothing leaves the machine.
+   - `Skip deploy entirely` — no commit, no push. Files stay in the working tree (new mode) or on the update branch (update mode).
+
+   Branching rules:
+   - "Push to a different git remote" → follow-up free-text for the remote URL. Store as `deploy_action: "push-to-custom"`, `deploy_service_kind: "git-remote"`, `deploy_service: "<url>"`.
+   - "Run a custom deploy CLI" → follow-up free-text for the exact command. Store as `deploy_action: "push-to-custom"`, `deploy_service_kind: "cli"`, `deploy_service: "<command>"`.
+   - All other options leave `deploy_service_kind: null` and `deploy_service: null`.
+
+   This answer drives Phase 5 branching.
 
 ### Conditional — material provided
 
 If the user attached or linked source material (textbook pages, slide deck, PDF, lecture notes, problem set), ask:
 
-- **Augment style** — "How should the research agents use the material you provided?" Options: `Stick close (the material is the spine, research fills gaps only)`, `Augment with additional research (use as anchor, broaden where useful)`, `Cross-reference (treat as one source among several, verify against other references)`.
+- **Materials scope** — "How should this lesson relate to the course materials you provided?" Options: `Course materials only (stay strictly within the provided materials; no outside research except prerequisites the material itself clearly assumes a student already knows)`, `Fill gaps with research (materials are the spine; use research to fill in background, prerequisites, and missing derivations the materials gloss over, but don't broaden the topic)`, `Add extensions (materials are a starting point; broaden with related topics, deeper treatment, modern context, or applications beyond what the materials cover)`. This answer governs how the research agents treat the material in Phase 1: `course-only` caps research sharply; `fill-gaps` allows targeted supplementary research; `extensions` permits broadening sweeps. When `resource_mode: "limited"`, `extensions` is still available but the research cap applies regardless.
 
 ### Conditional — no material
 
@@ -87,6 +100,7 @@ Pre-checks run first:
 - Audience level (may have shifted from original build)
 - Pedagogical goal (may have shifted)
 - Single vs multi-lesson (unlikely to change, but cheap to confirm)
+- **Deploy destination** (same phrasing as new-mode Q7 above). The default is pulled from the most recent non-`skip` Phase 5 entry in `lesson_build.log.md` when one exists (parse `Deploy action:`, `Deploy service kind:`, `Deploy service:` fields), else `Push to GitHub`. If the user attached fresh materials alongside this update request — detected by scanning the initial message for uploaded file paths or URLs, not by parsing Q5 (which is free-text media advice, not a materials field) — populate `provided_materials` from those attachments and `materials_scope` will be asked as well; the Phase 5 materials-in-commit question then surfaces automatically.
 
 ### Auto-populated from `candidate_root` (not asked)
 
@@ -109,15 +123,22 @@ slug: "<slug>"
 audience_level: "..."
 pedagogical_goal: "survey" | "working" | "mastery"
 scope_of_lesson: "single" | "multi (count: N)"
+provided_materials:                # possibly empty in either mode; update mode captures newly attached materials
+  - type: "textbook chapter" | "slides" | "problem set" | "notes" | "none"
+    path_or_ref: "..."
+materials_scope: "course-only" | "fill-gaps" | "extensions" | null   # null iff provided_materials is empty
+deploy_action: "push-to-github" | "push-to-custom" | "commit-only" | "skip"
+deploy_service_kind: "git-remote" | "cli" | null   # null unless deploy_action == "push-to-custom"
+deploy_service: "<remote URL>" | "<CLI command>" | null   # populated iff deploy_action == "push-to-custom"
 ```
+
+`deploy_action`, `deploy_service_kind`, and `deploy_service` flow into Phase 2's plan artifact (surfaced at the approval gate so the user confirms deploy intent alongside the content plan) and into Phase 5 (which branches its commit/push logic on `deploy_action` and its push mechanics on `deploy_service_kind`).
+
+**Privacy posture is private-by-default.** Phase 3 writes `<lesson_root>/.gitignore` with entries for `materials/`, `source/`, `notes/`, `*.local`, `.env*`, and any in-lesson `provided_materials` paths, so a plain `git add` cannot stage them. At Phase 5 the user is asked whether to **override** the gitignore for the current commit (default: do not override). Nothing private reaches a commit without an explicit override answer. See `references/phase-3-execution.md` (Private-by-default `.gitignore`) and `references/phase-5-deploy.md` (Step 1.5) for mechanics. Because the baseline is protective, `gitignore_override` (Phase 5) is NOT asked at Phase 0 and is NOT a scoping-artifact field — it is collected only at the moment of commit.
 
 ### New-mode fields
 
 ```
-provided_materials:
-  - type: "textbook chapter" | "slides" | "problem set" | "notes" | "none"
-    path_or_ref: "..."
-augment_style: "stick-close" | "augment" | "cross-reference" | null
 research_depth: "rough-sweep-first" | "direct-deep" | "textbook-parallel" | null
 new_lesson_context:
   rough_topics: [...]
@@ -126,6 +147,8 @@ new_lesson_context:
   model_after: "<course>/<slug>" | null
 deploy_target: "new" | "replacing: <course>/<slug>"
 ```
+
+`provided_materials` and `materials_scope` live in the common fields block because update mode can also attach fresh materials (e.g., a new textbook chapter alongside the update request).
 
 ### Update-mode fields
 
@@ -151,13 +174,16 @@ scope_of_lesson: "single"
 provided_materials:
   - type: "textbook chapter"
     path_or_ref: "<path to uploaded file>"
-augment_style: "augment"
+materials_scope: "fill-gaps"
 new_lesson_context:
   rough_topics: ["topic-a", "topic-b", "topic-c"]
   length_target: "5-6 topics"
   media_preferences: "prefer interactive demos over static plots where the parameter sensitivity is the teaching point"
   model_after: "<sibling course>/<sibling slug>"
 deploy_target: "new"
+deploy_action: "push-to-github"
+deploy_service_kind: null
+deploy_service: null
 ```
 
 ### Example — update mode
@@ -176,6 +202,9 @@ scope_of_change: "specific"
 scope_topics: ["topic-a", "topic-b"]
 media_hints: ["refine the group-velocity graph", "replace the static uncertainty image with an interactive demo"]
 working_tree_state: "clean"
+deploy_action: "push-to-github"
+deploy_service_kind: null
+deploy_service: null
 ```
 
 ## Aggressive-defaults policy for casual one-liners
@@ -189,9 +218,9 @@ For terse one-liners (e.g. "fix the `<component>` in `<slug>`", "update the `<sl
 - Request under ~20 words with an update verb.
 - No explicit scope flags ("full rewrite", "deep research", "rework everything").
 
-**Under `resource_mode: "full"`** (default): assume `research_depth: "targeted"` if the one-liner named a topic/component, else `"full"`. Never default to `light`. `scope_of_change: "specific"` if a topic was named, else `"any"`. `media_hints: []` (or single item if a medium was named). Carry audience / pedagogical goal / single-vs-multi from the existing `lesson_build.log.md`; fall back to `working`, `single`, inferred audience, or ask.
+**Under `resource_mode: "full"`** (default): assume `research_depth: "targeted"` if the one-liner named a topic/component, else `"full"`. Never default to `light`. `scope_of_change: "specific"` if a topic was named, else `"any"`. `media_hints: []` (or single item if a medium was named). Carry audience / pedagogical goal / single-vs-multi from the existing `lesson_build.log.md`; fall back to `working`, `single`, inferred audience, or ask. Carry `deploy_action` / `deploy_service_kind` / `deploy_service` from the most recent non-`skip` Phase 5 log entry (field names: `Deploy action:`, `Deploy service kind:`, `Deploy service:`); fall back to `push-to-github` / `null` / `null` if no prior deploy was recorded or every prior entry was `skip`. If the one-liner attached fresh materials, default `materials_scope: "fill-gaps"` (middle-ground default — safe when the user hasn't signalled intent either way); surface this in the confirmation so the user can flip to `course-only` or `extensions` if they want.
 
-**Under `resource_mode: "limited"`**: `research_depth: "light"`. Otherwise as above.
+**Under `resource_mode: "limited"`**: `research_depth: "light"`. Otherwise as above. `materials_scope` default stays `fill-gaps` since `course-only` is already fairly cap-heavy and `extensions` would violate the cheap-pass signal.
 
 **Confirmation**: "Here's what I'm assuming for this update — change anything?" with a compact bullet list including `resource_mode`. Options: `Looks good, proceed`, `Change some fields`, `Run the full 5-question interview`. On partial change, ask only the flagged fields. Aggressive defaults never apply in new mode.
 

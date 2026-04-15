@@ -45,6 +45,7 @@ Main Claude merges all draft execution plans into a single Lesson Plan artifact 
 - Reconciling the `GRAPH_SCHEMA` draft so every interactive graph has a schema entry with matching keys to its `DEFAULT_GRAPH_PARAMS`.
 - Tallying change-list counts (update mode) so the approval-gate summary can show honest `keep/refine/replace/remove/add` totals.
 - Flagging any internal inconsistencies (e.g., a topic marked `add` that depends on an equation marked `remove`).
+- **Forwarding deploy intent from the scoping artifact** into a `DEPLOY:` section of the plan. Every Lesson Plan (both modes) includes `Action: <deploy_action>`, `Service: <deploy_service>` (or "GitHub → workspace-configured host auto-deploy" when `deploy_action == "push-to-github"`), and `Course materials in commit: asked at Phase 5` (or "N/A — no materials provided" when `provided_materials` is empty). The user sees deploy intent at the approval gate alongside the content plan so approval covers both.
 - **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
 
 ### Step 5: Write to lesson_build.log.md
@@ -159,7 +160,22 @@ Topics:
 Graph schema draft:
   - graphKey: { param: { type, min, max } } per interactive graph
 Overall structure: tab order, approximate lesson length, expected complexity
+Deploy:
+  Action:  push-to-github | push-to-custom | commit-only | skip
+  Service: <remote URL / CLI / service name, or "GitHub → workspace-configured host">
+  Private paths (gitignored by default): <materials/, source/, notes/, *.local, .env* and any loose provided_materials>
+  Gitignore override: asked at Phase 5 (default: no override — nothing private gets published) | N/A (no gitignored candidates) | N/A (deploy skipped) | N/A (deploy skipped)
 ```
+
+Rendering rules for the `Gitignore override:` line:
+
+- `deploy_action == "skip"` → `N/A (deploy skipped)`.
+- Nothing under `<lesson_root>/materials/`, `<lesson_root>/source/`, `<lesson_root>/notes/` AND `provided_materials` empty → `N/A (no gitignored candidates)`.
+- Otherwise → `asked at Phase 5 (default: no override — nothing private gets published)`.
+
+The `Private paths` line lists the gitignore categories that will exist after Phase 3 runs. When `provided_materials` contains paths under `<lesson_root>/` that aren't covered by the default category directories, list them explicitly in that line so the user sees exactly what's being protected.
+
+The `Service:` line renders `GitHub → workspace-configured host auto-deploy` when `deploy_action == "push-to-github"` (the concrete host depends on `netlify.toml` / `vercel.json` / CI config in the workspace; the skill does not try to infer). For `push-to-custom`, render the verbatim `deploy_service` value, prefixed with `git-remote: ` or `cli: ` per `deploy_service_kind`. For `commit-only` and `skip`, render `null` (nothing is going out).
 
 ### Update mode — change-list format
 
@@ -199,6 +215,12 @@ ROLLBACK:
   - Branch: lesson-update/<slug>-YYYYMMDD
   - Stash: <ref> | none
   - Merge to main only on success
+
+DEPLOY:
+  Action:  push-to-github | push-to-custom | commit-only | skip
+  Service: <remote URL / CLI / service name, or "GitHub → workspace-configured host">
+  Private paths (gitignored by default): <materials/, source/, notes/, *.local, .env* and any loose provided_materials>
+  Gitignore override: asked at Phase 5 (default: no override — nothing private gets published) | N/A (no gitignored candidates) | N/A (deploy skipped)
 
 APPROVE? [approve / request changes / abort]
 ```
@@ -247,6 +269,10 @@ Graph schema draft:
   firstGraph:  { param1: { type: "float", min: 0.1, max: 10 } }
   secondGraph: { param2: { type: "float", min: 1,   max: 1000 } }
 Overall structure: 3 tabs, medium lesson, expected complexity moderate.
+Deploy:
+  Action:  push-to-github
+  Service: GitHub → workspace-configured host auto-deploy
+  Course materials in commit: asked at Phase 5
 
 Options: [approve] [request changes] [abort]
 ```
@@ -301,6 +327,11 @@ ROLLBACK:
   - Stash: none (working tree clean)
   - Merge to main only on success
 
+DEPLOY:
+  Action:  push-to-github
+  Service: GitHub → workspace-configured host auto-deploy
+  Course materials in commit: N/A (no materials provided)
+
 APPROVE? [approve / request changes / abort]
 
 Options: [approve] [request changes] [abort]
@@ -347,6 +378,7 @@ Options:
   [Global media mix] — re-run medium-decider-agent on all topics
   [Structural drift items] — adjust GRAPH_SCHEMA backfill plan
   [Orphan assets] — flip keep/remove pre-verdicts on one or more orphans
+  [Deploy preferences] — change deploy action / service / materials-in-commit default
   [Other — describe]
 ```
 
@@ -354,6 +386,7 @@ Routing:
 - **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, then re-run the affected `medium-decider-agent` spawn.
 - **Media-only changes** (medium type wrong, specialist brief wrong): loop back through `medium-decider-agent` for the affected topic only. Cheaper than re-running content orchestration.
 - **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
+- **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 Q7 deploy-destination question (and its custom-service follow-up when applicable), updates `deploy_action` / `deploy_service` on the scoping artifact in place, rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
 
 In both cases, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same AskUserQuestion pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
 
@@ -375,6 +408,7 @@ On approval, main Claude has:
 3. **Draft execution plans** from each specialist spawn in Step 3. These become the starting inputs for Phase 3 specialist builds; a specialist spawned in Phase 3 receives its own Phase 2 draft plan plus any refinements from the approval loop.
 4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create and what stash ref (if any) to honor. Phase 3 Step 1 runs `git checkout -b <branch>` before any specialist spawns.
 5. **(Update mode only) An orphan asset verdict list**: the approved `ORPHAN ASSETS` block (if non-empty) hands Phase 3 a concrete `keep | remove` decision per file. Phase 3's orphan-asset-cleanup drift repair (`phase-3-execution.md` drift repair category 3) reads this list — files marked `remove` get deleted, files marked `keep` are left alone and logged as "kept orphans". No orphans list means nothing to do; an all-`keep` list means the cleanup step is a no-op and still logs the skipped category for trace.
+6. **Approved deploy intent**: the `DEPLOY:` block's `Action` and `Service` fields are binding for Phase 5. Phase 5 reads them from the plan (not by re-asking) and branches its commit/push logic accordingly. If the user wants to change deploy intent after approval, they interrupt during Phase 3 or 4 and main Claude reopens Phase 2 rather than mutating the contract silently.
 
 Phase 3 branches on mode:
 

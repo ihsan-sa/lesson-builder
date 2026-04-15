@@ -6,13 +6,19 @@ Phase 5 runs local build verification as a gate, commits, pushes to `main` (dire
 
 ## Ordering inside Phase 5
 
-1. Local build verification (hard gate — halt the phase on failure)
-2. Mode-branched commit + push (new mode: direct to main; update mode: branch commit → merge → push)
-3. Stash recovery prompt (update mode only, if Phase 3 stashed)
+0. **Read deploy intent from the approved plan** (`deploy_action`, `deploy_service`, `deploy_service_kind`). Branch on `deploy_action`:
+   - `skip`: run step 1 (build verification, as a sanity check so the user knows whether their lesson builds) and step 3 (stash recovery, because the stash is user data that predates this run — not a deploy step). Skip step 1.5 (no commit happening), step 2 (commit + push), step 4's deploy-metadata fields, and reduce step 5 to a short "skipped" report. New-mode files remain uncommitted under the lesson root; update-mode branch + stash remain as Phase 3 left them (minus any popped stash).
+   - `commit-only`: run steps 1, 1.5, 2 (commit, no push), 3, 4, 5.
+   - `push-to-github`: run the full pipeline unchanged (steps 1, 1.5, 2, 3, 4, 5).
+   - `push-to-custom`: same as `push-to-github` but step 2's push targets the remote/service recorded in `deploy_service` according to `deploy_service_kind` (see step 2).
+1. Local build verification (hard gate — halt the phase on failure; runs under every `deploy_action` including `skip` as a lesson-works sanity check)
+1.5 Materials-in-commit question (conditional — only when `provided_materials` is non-empty AND `deploy_action ∈ {"push-to-github", "push-to-custom", "commit-only"}`; captures `include_materials_in_commit: true | false | "custom:<list>"`)
+2. Mode-branched commit + push (new mode: direct to main; update mode: branch commit → merge → push; entirely skipped when `deploy_action == "skip"`)
+3. Stash recovery prompt (update mode only, if Phase 3 stashed — runs under every `deploy_action` because the stash is user data, not a deploy artifact)
 4. Log append
 5. Final report to user
 
-Steps 2 through 5 are skipped entirely if step 1 fails.
+Build verification failure halts steps 1.5 through 3 regardless of `deploy_action` — if the lesson doesn't build, committing or pushing is unsafe. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Stash recovery always runs in update mode (even after a build failure) so the user's uncommitted work doesn't get stranded.
 
 ## Step 1 — Local build verification (gate)
 
@@ -53,6 +59,47 @@ Any failure (`build-all.sh` non-zero, missing `index.html`, smoke-check fail) ha
 ### Update mode note
 
 `build-all.sh` runs against the update branch (`lesson-update/<slug>-YYYYMMDD`), not `main`. Do not switch to `main` for the build.
+
+## Step 1.5 — Gitignore-override question (conditional)
+
+**Deploy-safety is the baseline, not an opt-in.** Phase 3 wrote `<lesson_root>/.gitignore` with defaults covering `materials/`, `source/`, `notes/`, `*.local`, `.env*`, `.build-scratch/`, and any loose `provided_materials` paths. A plain `git add` cannot stage these files. This step exists so the user can **override the gitignore** for a specific commit when they deliberately want a private path published — not to decide whether to include materials (that decision was already made in favor of exclusion).
+
+Skip this step when any of the following hold:
+
+- `deploy_action == "skip"` (no commit, so nothing to stage).
+- `<lesson_root>/materials/`, `<lesson_root>/source/`, and `<lesson_root>/notes/` are all empty or absent AND `provided_materials` is empty. Nothing gitignored worth overriding.
+
+Before firing the question, compile two awareness lists. These surface prior-state risk, not block the decision:
+
+- **Already-tracked private paths** — run `git ls-files -- <candidate gitignored paths>`. Any file committed in a prior run (before the gitignore was added, or under a prior override) is still in history and still public if the repo is public. Display with a one-line warning: "These files are already in git history. A 'no override' answer here does NOT unpublish them — use `git filter-repo` or equivalent if removal is required, or `git rm --cached <path>` to drop them from the next commit while keeping the working copy."
+- **Out-of-scope materials** — paths in `provided_materials` that live outside `<lesson_root>/`. These can't be staged directly regardless of gitignore; surface count + paths so the user knows.
+
+Then fire a single `AskUserQuestion`:
+
+> "The lesson's `.gitignore` currently excludes these private paths from commits by default:
+>
+> - `<path1>` — `<size>`
+> - `<path2>` — `<size>`
+> - ... (up to ~10 shown; full list in the log)
+>
+> Total: `<N>` files, `<total size>`. Override the gitignore for this commit?
+>
+> Already tracked (override does not unpublish): `<list, or "none">`.
+> Out-of-scope (can't be staged): `<count>`."
+
+Options (default is the first):
+
+- `Keep the default — do not override (recommended; protects against accidental publish of copyright or private material)`
+- `Override for everything listed above (force-stage all gitignored private paths this commit; the gitignore entries stay in place so the next run is protected again)`
+- `Override for specific files — let me pick` (follow up with a multi-select `AskUserQuestion` listing each gitignored candidate; selected files are force-staged via `git add -f`)
+
+Record the answer as `gitignore_override: "none" | "all" | "custom:<explicit file list>"`. Back-compat: also record `include_materials_in_commit: false | true | "custom:<list>"` for log consistency (legacy field; same information, different framing). Log `Gitignore override: <verdict>` under the Phase 5 log section so the per-lesson log preserves exactly what private material was published.
+
+**Invariant — the gitignore itself is never relaxed.** Override uses `git add -f` on specific files. It does not edit `<lesson_root>/.gitignore`. Future Phase 5 runs re-ask the question from the same private-by-default baseline. If the user wants a path permanently public, they edit `.gitignore` themselves — the skill will not do that for them, because "permanently public" is not reversible for copyright material.
+
+**Why ask here and not at Phase 0 / Phase 2**: at Phase 0 the user hasn't seen the actual file list (they just gave us a folder or a link); by Phase 5 the gitignore is in place and we can show concrete paths, sizes, and history state. Asking with real data prevents surprise-publishes. The Phase 2 plan records `Course materials in commit: asked at Phase 5` rather than forcing an early answer.
+
+**Default selection rule for non-interactive runs** (rare — the skill normally runs with a user present): default to `none` (no override, keep everything gitignored). Never auto-override without an explicit user answer, because anything gitignored is gitignored for a reason and auto-publishing is irreversible.
 
 ## Step 2a — New-mode deploy
 
@@ -108,6 +155,33 @@ git add <workspace_root>/build-all.sh
 git add <workspace_root>/<deploy-config-file>
 ```
 
+Always stage the lesson's `.gitignore` alongside the code so the privacy baseline persists in the repo:
+
+```bash
+git add <lesson_root>/.gitignore
+```
+
+**Gitignore override staging** (conditional on Step 1.5's `gitignore_override`):
+
+- `"none"` (default): do nothing extra. Every private path the `.gitignore` covers stays out of the commit. `git add <lesson_root>/materials/` would silently no-op anyway; the gitignore does the work. If any of those files were already tracked from a pre-gitignore commit, they remain tracked (the current run does not `rm --cached` them automatically — that's destructive and belongs in a separate user-initiated cleanup).
+- `"all"`: force-stage every candidate from Step 1.5 using `git add -f`:
+  ```bash
+  git add -f <lesson_root>/materials/    # if present
+  git add -f <lesson_root>/source/       # if present
+  git add -f <lesson_root>/notes/        # if present
+  git add -f <each in-lesson provided_materials path>
+  ```
+- `"custom:<file list>"`: force-stage exactly the files the user selected:
+  ```bash
+  git add -f <path-1>
+  git add -f <path-2>
+  ...
+  ```
+
+`-f` is required because the files are gitignored; without it git silently no-ops. The gitignore entries themselves are never edited here — overrides are per-commit, not structural.
+
+Never shell-expand `provided_materials` paths that resolve outside `<lesson_root>/` — those were already flagged in Step 1.5 as out-of-scope. If the user wanted them in the repo, they should copy them into the lesson root and rerun (the new copy will be gitignored by default and the user can override it then if intended).
+
 ### 4. Commit
 
 Honor pre-commit hooks. No `--no-verify`. Use a HEREDOC so the body is preserved.
@@ -125,11 +199,21 @@ EOF
 
 If a pre-commit hook fails, the commit did not happen. Fix the underlying issue, re-stage, and create a **new** commit. Do not `--amend` — the previous commit on `main` is not yours and amending would destroy history.
 
-### 5. Push
+### 5. Push (conditional on `deploy_action` + `deploy_service_kind`)
 
-```bash
-git push origin main
-```
+- `push-to-github`:
+  ```bash
+  git push origin main
+  ```
+- `push-to-custom` with `deploy_service_kind == "git-remote"`: add the remote if it's not already present, then push:
+  ```bash
+  git remote | grep -qx custom-deploy || git remote add custom-deploy <deploy_service>
+  git push custom-deploy main
+  ```
+  Name the remote `custom-deploy` by convention so repeated runs reuse it. Non-zero exit from `git push` is a failure; log and surface stderr.
+- `push-to-custom` with `deploy_service_kind == "cli"`: run `deploy_service` as a shell command from `<workspace_root>` after the commit. Surface stdout/stderr back to the user; non-zero exit is a failure for reporting purposes but does not roll back the commit (the user can inspect, fix, and re-run the CLI manually). No remote is added.
+- `commit-only`: skip the push. Log `Push: skipped (deploy_action=commit-only)` and continue to step 6.
+- `skip` never reaches this step — Step 0 diverted the flow.
 
 ### 6. Log deploy metadata
 
@@ -197,6 +281,20 @@ Manim source scripts (`.py`) live at the lesson root, not in a `src/manim/` subd
 
 Do not stage `lesson_build.log.md` unless the user explicitly requested tracking it in git (by default the log doc stays untracked).
 
+Always stage `<lesson_root>/.gitignore` so any newly appended entries (e.g., for freshly attached materials) persist in the repo:
+
+```bash
+git add <lesson_root>/.gitignore
+```
+
+**Gitignore override staging** (same semantics as new mode Step 2a.3):
+
+- `"none"` (default): no additional staging. Gitignored private paths stay out.
+- `"all"`: force-stage every candidate from Step 1.5 with `git add -f`.
+- `"custom:<file list>"`: force-stage only the user-selected paths with `git add -f`.
+
+If the update run wrote a new materials file and the user kept the default (no override), the file stays on disk and gitignored. Log it under `Gitignored and on disk, not staged: <path>` so the user knows it exists but isn't published.
+
 ### 4. Commit to branch
 
 ```bash
@@ -212,22 +310,26 @@ EOF
 
 This commit lands on `lesson-update/<slug>-YYYYMMDD`, not `main`. Pre-commit hooks still apply; same rules as new mode (no `--no-verify`, no `--amend`, re-stage and create a new commit on hook failure).
 
-### 5. Merge to main
+### 5. Merge to main (conditional on `deploy_action`)
 
-```bash
-git checkout main
-git merge --no-ff lesson-update/<slug>-YYYYMMDD
-```
-
-`--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history. Default message: `Merge branch 'lesson-update/<slug>-YYYYMMDD'`.
+- `push-to-github` or `push-to-custom`:
+  ```bash
+  git checkout main
+  git merge --no-ff lesson-update/<slug>-YYYYMMDD
+  ```
+  `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history. Default message: `Merge branch 'lesson-update/<slug>-YYYYMMDD'`.
+- `commit-only`: skip the merge. The commit stays on the update branch; `main` is not touched. Log `Merge: skipped (deploy_action=commit-only) — branch: lesson-update/<slug>-YYYYMMDD` so the user can merge manually later.
 
 On conflict (should not happen from a clean branch): halt, surface conflict files, do not auto-resolve. The user resolves manually. Branch and stash stay intact.
 
-### 6. Push
+### 6. Push (conditional on `deploy_action`)
 
-```bash
-git push origin main
-```
+- `push-to-github`:
+  ```bash
+  git push origin main
+  ```
+- `push-to-custom`: branch on `deploy_service_kind` — `"git-remote"` uses `git push custom-deploy main` (after `git remote add` if needed); `"cli"` runs `deploy_service` from `<workspace_root>`. Same rules as new-mode Step 2a.5.
+- `commit-only`: skip. Log `Push: skipped (deploy_action=commit-only)`.
 
 ### 7. Stash recovery
 
@@ -301,7 +403,11 @@ The final report is surfaced to the user as the last action of Phase 5 (after al
 ## What shipped
 - Mode: new | update
 - Lesson: <course> / <slug>
-- Commit SHA: <sha>            (update mode: merge commit SHA)
+- Deploy action: push-to-github | push-to-custom | commit-only | skip
+- Deploy service: <remote or CLI, or "GitHub → workspace-configured host">
+- Gitignore override: none (all private paths kept out) | all forced | custom subset | N/A (nothing gitignored to override)
+- Materials in commit: excluded (default — gitignored) | forced via override | custom subset | N/A (no materials)
+- Commit SHA: <sha>            (update mode: merge commit SHA; "skipped" for deploy_action=skip)
 - Update branch: <name>        (update mode only)
 - Deploy dashboard: <host-specific URL or "see workspace deploy docs">
 - Live URL (after hosted build finishes): <host-specific URL>
@@ -339,11 +445,16 @@ Append under `## Phase 5 — Deploy`:
 
 ```
 ## Phase 5 — Deploy
+Deploy action: push-to-github | push-to-custom | commit-only | skip
+Deploy service kind: git-remote | cli | null
+Deploy service: <remote URL / CLI / null>
 Build verification: PASS
 Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, tabs OK, graph preview OK, console clean
+Gitignore override: none | all | "custom:<list>" | N/A
+Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
 Commit SHA: <sha>
-Push result: ok (origin main)
+Push result: ok (origin main) | ok (<custom-remote>) | skipped
 Deploy dashboard URL: <host-specific>
 Live URL: <host-specific>
 
@@ -351,19 +462,26 @@ Live URL: <host-specific>
 <items from UNRESOLVED>
 ```
 
+When `deploy_action == "skip"`, the log section is written but most fields are replaced by `Halted: no build or commit (user requested skip)`; only `Deploy action: skip` and the final report are recorded.
+
 ### Update mode
 
 Append under the current `## Update YYYY-MM-DD (run-id: <hash>)` section as `### Phase 5 — Deploy (update)`:
 
 ```
 ### Phase 5 — Deploy (update)
+Deploy action: push-to-github | push-to-custom | commit-only | skip
+Deploy service kind: git-remote | cli | null
+Deploy service: <remote URL / CLI / null>
 Build verification: PASS
 Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, tabs OK, graph preview OK, console clean
+Gitignore override: none | all | "custom:<list>" | N/A
+Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
 Update branch: lesson-update/<slug>-YYYYMMDD
 Branch commit SHA: <sha>
-Merge commit SHA: <sha>
-Push result: ok (origin main)
+Merge commit SHA: <sha | skipped>
+Push result: ok (origin main) | ok (<custom-remote>) | skipped
 Stash ref: <ref or "none">
 Stash recovery: auto-popped | manual | conflict (manual) | none
 Deploy dashboard URL: <host-specific>

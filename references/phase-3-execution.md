@@ -10,6 +10,41 @@ Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project fi
 
 All specialist work lands under `<lesson_root>/.build-scratch/`. Gitignored (add `**/.build-scratch/` to workspace `.gitignore` if missing). Deleted after successful assembly; left in place on failure for inspection. One file per specialist output.
 
+### Private-by-default `.gitignore`
+
+The skill treats anything critical or private as **gitignored by default** so deploy-safety is the baseline, not an opt-in. Before handing off to Phase 4, main Claude ensures `<lesson_root>/.gitignore` exists and contains at minimum:
+
+```
+# lesson-builder — private by default; override per commit at Phase 5
+.build-scratch/
+.scratch/
+notes/
+materials/
+source/
+*.local
+.env
+.env.*
+lesson_build.log.md
+```
+
+Semantics:
+
+- `materials/`, `source/`, `notes/` — user-provided course materials and private notes. Gitignored because these often carry copyright or draft-state risk.
+- `.env`, `.env.*`, `*.local` — credentials. Never deploy these.
+- `.build-scratch/`, `.scratch/` — specialist scratch output and ad-hoc work.
+- `lesson_build.log.md` — per the skill's existing convention (Phase 5 doc), the log stays untracked unless the user opts in.
+
+Management rules:
+
+- If `<lesson_root>/.gitignore` is missing, create it with the full block above.
+- If it exists, append any missing entries. Never remove existing entries — the user may have added project-specific patterns.
+- Add any `provided_materials` path that sits under `<lesson_root>/` but outside the default-gitignored directories (e.g., a loose PDF at `<lesson_root>/chapter3.pdf`) as an explicit entry so it's gitignored without moving it.
+- Stage `<lesson_root>/.gitignore` at Phase 5 as part of the deploy-safe file set, so the protection persists in the repo.
+
+Override path: if the user wants to force-include a gitignored file in a specific commit, Phase 5's Step 1.5 offers the override prompt, and staging uses `git add -f` — the gitignore entry stays in place so the next run is still protected by default.
+
+Both new and update mode run this step near the tail of Phase 3 (see Step 6.5 new mode; Step 4.7 update mode).
+
 ### Log discipline
 
 Write milestones to `lesson_build.log.md` under `## Phase 3 — Execution` (new) or `### Phase 3 — Execution (update)` nested under `## Update YYYY-MM-DD`. Entries: specialists spawned, files written/spliced, splice counts (update), GRAPH_SCHEMA backfill status (update), drift repairs.
@@ -105,6 +140,10 @@ Main Claude writes the per-lesson project files using the canonical content in `
 - **`.env.local`** — only when the approved plan includes a `<DesmosGraph>` embed. Write `VITE_DESMOS_KEY=<key>` by copying from the repo root's `.env.local` (which the user maintains, gitignored). If the key is not available, main Claude notes the gap in the log and the Desmos embed renders a red "key not configured" fallback until the user supplies one. Do NOT check `.env.local` into git. Before hand-authoring the embed's `state` object, read `references/desmos-schema.md` — `setState` crashes silently on numeric values where Desmos expects LaTeX strings (`sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds), and the only way to catch it without the reference is the blank-canvas-plus-console-error symptom.
 
 None of these files reference `@core` internals beyond the alias; they are stable scaffolding.
+
+### Step 6.5: ensure private-by-default `.gitignore`
+
+Apply the "Private-by-default `.gitignore`" shared convention above. For a brand-new lesson this means writing `<lesson_root>/.gitignore` with the full default block, plus any lesson-specific entries for loose materials files that landed under `<lesson_root>/`. Log the file and the entry count under `Phase 3 — Execution`.
 
 ### Step 7: tactical wins to preserve from jsx-lesson
 
@@ -409,7 +448,13 @@ Orphan cleanup: removed=R, kept=K (or "none" if orphans list was empty)
 Drift repairs: GRAPH_SCHEMA backfill | Chatbot props reconcile | orphan asset cleanup | none
 ```
 
-#### 4.11 Clean up .build-scratch/
+#### 4.11 Ensure private-by-default `.gitignore`
+
+Apply the "Private-by-default `.gitignore`" shared convention from the top of this document. Append any missing default entries to `<lesson_root>/.gitignore`; create it if absent. Also append an explicit entry for any newly attached `provided_materials` path that sits under `<lesson_root>/` but isn't already matched by a default directory entry. Never remove existing entries — the user may have added project-specific patterns.
+
+Log `.gitignore updated: <N entries appended>` or `.gitignore already covers all private paths` under drift-repairs for trace.
+
+#### 4.12 Clean up .build-scratch/
 
 Delete `<lesson_root>/.build-scratch/` recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing).
 

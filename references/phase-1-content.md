@@ -16,6 +16,7 @@ Main Claude passes the following from the scoping artifact:
 - `course`, `slug`
 - `audience_level`, `pedagogical_goal`, `scope_of_lesson`
 - `provided_materials`: list of file paths (PDFs, ZIPs, slides, problem sets, lecture notes) or `null`
+- `materials_scope: "course-only" | "fill-gaps" | "extensions" | null` — load-bearing when materials are provided; main Claude must forward it verbatim. `course-only` caps the orchestrator's research to prerequisite lookups the materials clearly assume; `fill-gaps` lets research fill background and missing derivations but not broaden the topic; `extensions` permits broadening to related topics, deeper treatment, and applications beyond the materials. Pure-research runs (no materials) ignore it.
 - `new_lesson_context`: any research scope directives the user gave (rough topic list, textbook to parallel, research depth, number of topics target)
 
 ### Procedure

@@ -39,12 +39,12 @@ flowchart TD
 
 | Phase | New mode | Update mode |
 |---|---|---|
-| 0 — Scoping | AskUserQuestion interview: course, slug, audience, depth, materials. | Confirm detected lesson, working-tree check, research-depth, scope-of-change, media hints. |
-| 1 — Content Analysis | `content-orchestrator-agent` runs per-resource deep-review teams + topic-area research + gap-fill. | Pre-scan existing media inventory (Grep/Glob), diff against user concerns, classify drift / gaps / redundancies. |
-| 2 — Plan | Compile a Lesson Plan with ranked media per topic. | Emit a 5-way change-list: `keep / refine / replace / remove / add`, plus structural drift repairs (GRAPH_SCHEMA backfill, chatbot props reconcile, orphan assets). |
-| 3 — Execution | Parallel specialists write to `.build-scratch/`; main Claude assembles `src/<slug>.jsx` from the skeleton. | Create `lesson-update/<slug>-YYYYMMDD` branch + optional stash, splice specialist outputs into the existing JSX using pattern anchors, run post-splice sanity pass. |
+| 0 — Scoping | AskUserQuestion interview: course, slug, audience, depth, materials, **materials scope** (course-only / fill-gaps / extensions), **deploy destination** (GitHub / custom service / commit-only / skip). | Confirm detected lesson, working-tree check, research-depth, scope-of-change, media hints, deploy destination (defaults to last recorded). |
+| 1 — Content Analysis | `content-orchestrator-agent` runs per-resource deep-review teams + topic-area research + gap-fill, capped by `materials_scope`. | Pre-scan existing media inventory (Grep/Glob), diff against user concerns, classify drift / gaps / redundancies. |
+| 2 — Plan | Compile a Lesson Plan with ranked media per topic; plan surfaces a `DEPLOY:` block (action / service / materials-in-commit). | Emit a 5-way change-list: `keep / refine / replace / remove / add`, plus structural drift repairs and the `DEPLOY:` block. |
+| 3 — Execution | Parallel specialists write to `.build-scratch/`; main Claude assembles `src/<slug>.jsx` from the skeleton. Writes private-by-default `.gitignore` covering `materials/`, `source/`, `notes/`, `*.local`, `.env*`. | Create `lesson-update/<slug>-YYYYMMDD` branch + optional stash, splice specialist outputs into the existing JSX using pattern anchors, run post-splice sanity pass. Ensures the lesson `.gitignore` covers any newly attached private paths. |
 | 4 — Review + Fix | Parallel code / content / test / visual-QA reviewers. Progress-aware fix loop with hard stop rules. | Same mechanism. Two extra rules: **no-grandfathering** (every final medium runs through visual-QA, including `keep`) and **regression-watch** (halt a fix thread if a refine regresses a previously-clean `keep` medium). |
-| 5 — Deploy | `build-all.sh` + headless Playwright smoke check, commit to `main`, push. | Same build gate, commit to update branch, `git merge --no-ff` to `main`, push, stash recovery prompt. Branch and stash are preserved on any failure. |
+| 5 — Deploy | Branches on `deploy_action`. `build-all.sh` + headless Playwright smoke check always runs (sanity check). Ask **override the gitignore for this commit?** (default: no — private paths stay out). Commit, then push-to-github / push-to-custom / commit-only per plan. | Same build gate, commit to update branch, `git merge --no-ff` to `main` (skipped under `commit-only`), push per `deploy_action`, stash recovery prompt. Branch and stash are preserved on any failure. |
 
 ## Quality policy
 

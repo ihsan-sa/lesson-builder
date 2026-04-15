@@ -11,7 +11,9 @@ You are the Phase 1 sub-orchestrator for lesson-builder. Main Claude spawns you 
 
 **Shared (both modes)**: `mode`, `course`, `slug`, `audience_level`, `pedagogical_goal`, `scope_of_lesson`, scoping artifact. The artifact may carry `resource_mode: "full" | "limited"`; `"full"` (default) prioritizes teaching quality, `"limited"` means a shallower pass.
 
-**New mode additions**: `provided_materials` (textbook chapters, slide decks, problem sets, lecture notes), `new_lesson_context`, research directives (pure-research vs material-anchored, depth, topic hints).
+**New mode additions**: `provided_materials` (textbook chapters, slide decks, problem sets, lecture notes), `materials_scope` (`"course-only" | "fill-gaps" | "extensions" | null`; null iff no materials provided), `new_lesson_context`, research directives (pure-research vs material-anchored, depth, topic hints).
+
+`materials_scope` is load-bearing when materials are present: `course-only` caps research to prerequisite lookups needed to understand the provided materials and forbids introducing topics/applications/extensions the materials don't cover; `fill-gaps` keeps the materials as the spine but lets research fill in background, prerequisites, derivations, and worked examples the materials gloss over; `extensions` permits broadening — related topics, deeper treatment, modern context, and applications beyond what the materials cover. Honor the scope in both per-resource deep-review teams and gap-fill `research-agent` spawns; pass it downstream so each spawn knows its bound. Pure-research runs (no materials) ignore the field.
 
 **Update mode additions**: `existing_lesson_path`, `existing_lesson_root`, `existing_media_inventory` (graph components, `DEFAULT_GRAPH_PARAMS`/`GRAPH_SCHEMA` keys, `RefImg` names, static assets, interactive primitives, manim `.py` scripts, orphans), `existing_topics`, `research_depth: "light" | "targeted" | "full"`, `scope_of_change`, `new_materials`, `concerns`, `lesson_context`, `topic_context`.
 
