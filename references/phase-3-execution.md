@@ -102,7 +102,7 @@ Main Claude writes the per-lesson project files using the canonical content in `
 - **`server/proxy.js`** — one-line shim: `import "../../../../_lesson-core/server/proxy.js";`
 - **`test_lesson.cjs`** — 17-test QA suite (template compliance, KaTeX safety, Babel parse, etc.)
 - **`CLAUDE.md`** — with a `## Lesson App` heading summarizing the lesson's scope, topics, and medium inventory
-- **`.env.local`** — only when the approved plan includes a `<DesmosGraph>` embed. Write `VITE_DESMOS_KEY=<key>` by copying from the repo root's `.env.local` (which the user maintains, gitignored). If the key is not available, main Claude notes the gap in the log and the Desmos embed renders a red "key not configured" fallback until the user supplies one. Do NOT check `.env.local` into git.
+- **`.env.local`** — only when the approved plan includes a `<DesmosGraph>` embed. Write `VITE_DESMOS_KEY=<key>` by copying from the repo root's `.env.local` (which the user maintains, gitignored). If the key is not available, main Claude notes the gap in the log and the Desmos embed renders a red "key not configured" fallback until the user supplies one. Do NOT check `.env.local` into git. Before hand-authoring the embed's `state` object, read `references/desmos-schema.md` — `setState` crashes silently on numeric values where Desmos expects LaTeX strings (`sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds), and the only way to catch it without the reference is the blank-canvas-plus-console-error symptom.
 
 None of these files reference `@core` internals beyond the alias; they are stable scaffolding.
 

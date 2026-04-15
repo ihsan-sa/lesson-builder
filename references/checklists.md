@@ -111,23 +111,54 @@ Prevents the "all curves crammed together" failure that dominates visual-QA revi
 
 ## Desmos embed checklist
 
-Only applies to lessons that import `DesmosGraph` from `@core/ui/DesmosGraph` or that the chatbot will drive with `<<DESMOS>>` during the session.
+Applies to lessons that import `DesmosGraph` from `@core/ui/DesmosGraph` or that the chatbot will drive with `<<DESMOS>>` during the session. **Read `references/desmos-schema.md` in parallel** — this checklist assumes familiarity with the state shape.
 
-- [ ] `.env.local` exists at the lesson root with `VITE_DESMOS_KEY=<key>`. Obtain a key at https://www.desmos.com/api (free for educational use). Register the allowed origins (`http://localhost:*` for dev; the deploy domain for prod) in the Desmos dashboard.
+**String-vs-number footgun (highest priority):** Desmos `setState` crashes silently (blank canvas, `"parse can only be called with strings, got <n> of type number"` in console, nothing on screen) when certain fields arrive as JS numbers instead of JSON/LaTeX strings. The chat-path validator catches this and returns an `[OBSERVATION]`; lesson-author embeds bypass that, so authors must check themselves.
+
+- [ ] `sliderBounds.min`, `sliderBounds.max`, `sliderBounds.step` are strings like `"0.1"`, not numbers.
+- [ ] `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity` are strings.
+- [ ] `parametricDomain.{min,max}`, `polarDomain.{min,max}` are strings.
+- [ ] `graph.viewport.{xmin,xmax,ymin,ymax}` are numbers (the one exception).
+- [ ] `color` is a hex string (`"#c8a45a"`); `lineStyle` is `"SOLID"`, `"DASHED"`, or `"DOTTED"`.
+- [ ] `latex` backslashes doubled for JSON source (`\\\\sin`); single-escaped (`\\sin`) in a raw JS object literal.
+
+**Infrastructure and lifecycle:**
+
+- [ ] `.env.local` exists at the lesson root with `VITE_DESMOS_KEY=<key>`. Obtain at https://www.desmos.com/api (free for educational use); register the allowed origins in the Desmos dashboard (`http://localhost:*` dev, deploy domain prod).
 - [ ] `.env.local` is gitignored at the repo root. Never commit the key.
 - [ ] The `state` prop passed to `<DesmosGraph>` is stable across renders. If it's built from component state, wrap in `useMemo` so the calculator does not remount every render.
-- [ ] Do NOT pass `isPlaying: true` in the state. The component strips it; sliders get a student-driven play button automatically.
-- [ ] `height` prop is set (default 400px). Avoid `100%` unless the parent has a fixed height.
-- [ ] Cap at 3 Desmos embeds per visible topic. Each additional embed is free after the first (bundle already loaded) but visual density still matters.
+- [ ] Do NOT pass `isPlaying: true` in the state. The component strips it. Animation is always student-initiated: `DesmosGraph` (lesson path) renders a top-right Play overlay AND Desmos's native per-slider Play button is visible when `expressionsCollapsed: false`; `ChatBubble` (chat path) shows no overlay and the student taps the native Play button after expanding the (initially collapsed) expression panel.
+- [ ] `height` prop is set (default 400 px). Avoid `100%` unless the parent has a fixed height.
+- [ ] Cap at 3 Desmos embeds per visible topic. Subsequent embeds on the same page are free (CDN bundle already loaded) but visual density still matters.
 - [ ] For lessons NOT using Desmos: the key check does nothing; the hook is a no-op until a component calls it with `{ enabled: true }` (the chat path gates on the presence of a `.chat-desmos-block`).
 
 ---
 
 ## Chat reinforcement-learning awareness
 
-The chatbot emits `<<REINFORCE>>` when it detects a positive signal (praise, breakthrough, a student engaging with a Desmos slider, iterating on a visual). The client merges these into a per-tab list and injects them back via `[REINFORCED BEHAVIORS]` in ACTIVE CONTEXT. The system prompt treats this block as the highest-priority media-selection heuristic for the rest of the session.
+The chatbot emits `<<REINFORCE>>text<<END_REINFORCE>>` to capture durable heuristics about this student. Three first-class trigger categories, not just media:
 
-Lesson builders do **not** need to do anything to opt in — the machinery lives entirely in `_lesson-core/chat/`. The only planning implication: topics with a diverse media mix (prose + SVG + interactive + Desmos where appropriate) give the reinforcement loop more to learn from than monoculture topics. Avoid authoring every topic with the same medium "just to be consistent" — variety is the teaching asset.
+1. **MEDIA signals** — which medium clicked (explicit praise, student unstuck, iteration on a visual, slider engagement on a Desmos graph).
+2. **STATED PREFERENCES** — tone, register, analogy use, explanation depth, format, or specific medium (`"just draw it"`, `"keep it technical"`, `"less analogies"`, `"more equations"`, `"skip the intuition, give me the math"`).
+3. **CORRECTIONS** — the student flags that a previous approach missed. The heuristic records the CORRECTED behavior, not the failure.
+
+The client merges all three into a per-tab list persisted to `sessionStorage` as `chatReinf_<sid>` and injected back via `[REINFORCED BEHAVIORS]` in every subsequent ACTIVE CONTEXT. The system prompt treats this block as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response — not only media selection.
+
+Lesson-planning implication: topics with a diverse media mix give the MEDIA arm something to learn from, but the PREFERENCES and CORRECTIONS arms work regardless of how the lesson was authored. Avoid authoring every topic with the same medium "just to be consistent" — variety is the teaching asset, and the reinforcement loop will converge on what actually works for each student.
+
+---
+
+## Ctrl+Click context gate (client UX)
+
+Clicking a lesson content block or chat reply block to add it to chat context now requires the **Ctrl** key to be held. Implemented in `_lesson-core/chat/Chatbot.jsx`:
+
+- A global `keydown` / `keyup` / `blur` / `visibilitychange` listener toggles `body.ctx-ctrl-held` while Ctrl is down.
+- CSS in `_lesson-core/chat/chat.css.js` gates the pointer cursor and hover-outline on that class — transitions stay outside the gate so the fade-in feels smooth the moment Ctrl is pressed.
+- A capture-phase `document` click listener `stopPropagation()`s on lesson content blocks when `!ctrlKey`, which means none of the 39 per-lesson `handleContentClick` copies need editing.
+- `ChatBubble.handleBlockClick` early-returns on `!e.ctrlKey`.
+- Text-selection-then-mouseup adding a selection to context is unchanged (different gesture).
+
+**Call this out in the lesson's `CLAUDE.md`** when a human tester is likely to QA the lesson. Without the note they will wonder why plain clicks stopped adding context to chat.
 
 ---
 

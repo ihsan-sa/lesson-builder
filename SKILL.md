@@ -14,6 +14,7 @@ Build interactive React lesson apps (.jsx) with tabbed topics, LaTeX equations, 
 - `references/server-template.md` — Vite config, proxy shim, package.json.
 - `references/checklists.md` — KaTeX safety, template compliance, 17-test suite, splice checklists.
 - `references/graph-schema-guide.md` — `GRAPH_SCHEMA` derivation and update-mode backfill.
+- `references/desmos-schema.md` — Desmos state schema for `<DesmosGraph>` and `<<DESMOS>>`. Read before authoring either; covers the string-vs-number footgun that crashes `setState` silently.
 - `references/log-template.md` — `lesson_build.log.md` format.
 
 ## Quality policy
@@ -96,8 +97,10 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 **Chat protocols the bot can emit (already implemented in `_lesson-core/chat/`)** — useful when planning which media to author into the lesson vs. leave for the chatbot to produce live:
 
 - `<<EDIT_GRAPH>>`, `<<DEMO>>` (inline SVG), `<<SUGGEST>>` (lesson augmentation), `<<SOURCES>>`, `<<COMMIT_SUGGEST>>`.
-- `<<DESMOS>>` — bot emits a Desmos state JSON; client hydrates a live calculator with a manual play button for any slider. Requires `VITE_DESMOS_KEY` in `.env.local`; fails loud if missing. Authors can also embed `<DesmosGraph state={...}/>` directly in lesson JSX for pre-authored interactive graphs.
-- `<<REINFORCE>>` — bot records a concrete heuristic when a medium produces a positive signal (praise, breakthrough, slider engagement). The client accumulates these into `[REINFORCED BEHAVIORS]` injected back via ACTIVE CONTEXT and the system prompt treats them as the highest-priority media-selection rule for the rest of the session. Lesson planning does not need to do anything special — but seeding each topic with a diverse media mix gives the reinforcement loop something to learn from.
+- `<<DESMOS>>` — bot emits a Desmos state JSON; client validates + hydrates a live calculator. Animation control is Desmos's own per-slider Play button inside the expression panel; `isPlaying:true` is stripped upstream so only the student initiates animation. Requires `VITE_DESMOS_KEY` in `.env.local`; fails loud if missing. Authors embed `<DesmosGraph state={...}/>` directly in lesson JSX for pre-authored interactive graphs. State schema is error-prone — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain.{min,max}`, `polarDomain.{min,max}` must be JSON strings, not numbers, or `setState` crashes silently. Read `references/desmos-schema.md` before authoring either surface.
+- `<<REINFORCE>>` — bot records a durable heuristic about the student, covering three first-class trigger categories: (1) MEDIA signals, (2) STATED PREFERENCES on tone/register/analogy use/explanation depth/format, (3) CORRECTIONS of a prior approach. The client accumulates entries into `[REINFORCED BEHAVIORS]` injected back via ACTIVE CONTEXT and the system prompt treats them as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response, not just media choices. Lesson planning implication: seed each topic with a diverse media mix so the media-signal arm has something to learn from; the preference and correction arms work regardless.
+
+**Ctrl+Click context gate** (client-side UX, added late in the dev loop): clicking a lesson content block or chat reply block to add it to chat context now requires the Ctrl key to be held. `body.ctx-ctrl-held` gates hover highlights and the pointer cursor; a capture-phase document click listener stops non-Ctrl clicks before they reach the per-lesson `handleContentClick`. Author-testing note: mention this in lesson-level CLAUDE.md if a human tester will QA the lesson — they will otherwise wonder why plain clicks stopped adding context.
 
 Runtime architecture:
 ```
