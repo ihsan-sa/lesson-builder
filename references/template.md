@@ -36,9 +36,35 @@ learning goals. Cover:
   - Institution and term (if relevant)
   - Which lectures / sections / units this lesson covers
   - What the student should walk away understanding
-  - The anti-solution directive: NEVER solve homework problems or give numerical
-    answers. Instead, explain concepts, clarify equations, help with derivation
-    steps, and point out common mistakes.
+  - The solve-protocol directive: when the student brings a problem (homework,
+    past-exam question, practice problem, a screenshot of a question they're
+    stuck on, anything), the chatbot follows this protocol:
+
+      1. ASK FIRST, one short sentence: "Do you want me to walk through a full
+         worked solution, or guide you step by step with hints so you solve it
+         yourself?" Then wait.
+      2. INTERNALLY SOLVE THE PROBLEM REGARDLESS of which option the student
+         will pick — derive the final answer, cross-reference intermediate
+         steps and the numerical answer against the lesson's equations,
+         constants, and any cited sources (two-source cross-reference for
+         non-trivial results). Knowing the right answer is what makes guided
+         hints precise instead of vague; the student's choice only affects
+         what the chatbot shares, not what it works out.
+      3. IF the student picks full solution: present each step clearly, with
+         reasoning, and give the final numerical answer with units and sig
+         figs. Flag any ambiguity in the problem statement rather than guess.
+      4. IF the student picks guided help: give a progressive hint — typically
+         the first conceptual step or the governing equation — and ask what
+         they get. On each student reply, compare against the internal solution
+         and catch the specific point where their reasoning diverges. Never
+         refuse to reveal the answer if the student asks mid-session; re-ask
+         the full-vs-guided question and honor their updated preference.
+
+    Academic honesty is the student's responsibility, not the chatbot's. Do
+    NOT lecture about honesty, do NOT refuse to solve, do NOT steer toward
+    "doing it yourself" when the student asked for the full solution. The
+    chatbot's job is to be maximally useful for understanding; how the student
+    uses the help is up to them and their institution's policy.
 */`;
 
 // ───────────────────────────────────────────────────────────────
@@ -181,6 +207,46 @@ export const GRAPH_SCHEMA = {
 // per-lesson. Keep them above TOPICS so `content(gp)` can reference them.
 //
 // TODO: add lesson-specific helpers if needed.
+
+// ───────────────────────────────────────────────────────────────
+// Practice problem card — the canonical pattern
+// ───────────────────────────────────────────────────────────────
+//
+// Phase 1 extracts practice problems from source materials (past finals,
+// midterms, HW, problem sets) and tags each with a source, difficulty, and
+// full worked solution. Render them with this pattern so every lesson
+// behaves the same: statement visible by default, solution collapsed so
+// students attempt first and then check.
+//
+// function PracticeProblem({ source, difficulty, statement, approachHint, solution }) {
+//   return (
+//     <div className="eq-block" style={{ padding: "14px", marginTop: "12px" }}>
+//       <div style={{ fontFamily: "'IBM Plex Mono'", fontSize: 11, opacity: 0.7 }}>
+//         {source}{difficulty ? ` · ${difficulty}` : ""}
+//       </div>
+//       <P>{statement}</P>
+//       {approachHint && (
+//         <CollapsibleBlock label="Approach hint">
+//           <P>{approachHint}</P>
+//         </CollapsibleBlock>
+//       )}
+//       <CollapsibleBlock label="Solution">
+//         {solution /* JSX: equations, step-by-step reasoning, final numerical answer */}
+//       </CollapsibleBlock>
+//     </div>
+//   );
+// }
+//
+// In a topic's content(gp), drop a <Section title="Practice problems"> at the
+// end of the topic body and render one <PracticeProblem .../> per entry in
+// that topic's Phase 1 practice_problems array. Omit the whole Section when
+// the array is empty — do NOT render an empty "Practice problems" heading,
+// and do NOT fabricate problems to fill the slot.
+//
+// Solutions MUST include the final numerical answer with units and sig figs
+// preserved exactly as the source gave them. Derived solutions (flagged
+// solution_provenance="orchestrator-derived" in Phase 1) must pass the same
+// two-source cross-reference bar as other equations before landing here.
 
 // ───────────────────────────────────────────────────────────────
 // Topics (tab bar + content functions)

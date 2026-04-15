@@ -1,0 +1,8 @@
+[build]
+  publish = "dist"
+  command = "bash build-all.sh"
+
+[build.environment]
+  # Vite 6 requires Node 18+. Pin to 20 for consistency with local dev and
+  # Netlify's current LTS default.
+  NODE_VERSION = "20"

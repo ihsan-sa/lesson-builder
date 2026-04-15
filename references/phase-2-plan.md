@@ -157,8 +157,15 @@ Topics:
   - id, title, subtitle, tab label
   - media: [{ type, specialist, execution_plan_summary }]
   - equations, key concepts
+  - practice_problems: N (sources: "Final 2024 — Q3", "PS4 — Q2", ...) | none (no matching problems in materials)
 Graph schema draft:
   - graphKey: { param: { type, min, max } } per interactive graph
+Practice problems index:
+  - topic-1: N problems (Final 2024 ×2, PS3 ×1, HW2 ×1)
+  - topic-2: N problems (Final 2023 ×1)
+  - topic-3: none
+  - ...
+  Total: M problems across K topics. Solutions: <from-source: X, orchestrator-derived: Y>.
 Overall structure: tab order, approximate lesson length, expected complexity
 Deploy:
   Action:  push-to-github | push-to-custom | commit-only | skip

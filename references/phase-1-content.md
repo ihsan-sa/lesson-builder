@@ -39,6 +39,21 @@ Apply inside per-resource deep-review teams and gap-fill `research-agent` spawns
 4. Scanned PDFs: view page images directly (`/tmp/extract/<name>/N.jpeg`).
 5. Text-extractable PDFs: `pdftotext` or `pypdf`.
 
+**Practice-problem extraction**: alongside equations and concepts, each per-resource deep-review team **must** scan for practice problems — past finals, past midterms, homework questions, problem-set questions, worked examples, in-lecture practice prompts. These are the highest-value calibration content the lesson can offer because they are the actual questions the student will be graded on; no research-fabricated problem can match that signal. For each problem found, extract:
+- **statement**: the question verbatim (preserve LaTeX / figures / any given values).
+- **source**: provenance tag in `"<Exam or Set> <Year> — Q<N>"` form (e.g., `"Final 2024 — Q3"`, `"PS4 — Q2"`, `"Midterm 2023 — Q5b"`). If the source is ambiguous in the material, log it as `"<filename> p.<page>"` so the student can trace it.
+- **topic-tag**: which lesson topic the problem belongs to (map by concept / equation / keyword overlap).
+- **difficulty hint**: `intro | core | stretch` (best-effort; intro = uses one named concept, core = standard application, stretch = multi-concept synthesis). Optional; omit when unclear rather than guessing.
+- **approach note** (optional): a one-sentence "how to attack this" for students who want a nudge before peeking at the full solution.
+- **solution** (required): a full worked solution with each reasoning step shown and the final numerical answer included. Without the solution a practice problem is only half-useful — students need it to check their work and find where their reasoning diverged. Preserve any algebra steps or diagrams the source showed; keep them readable as KaTeX.
+- **solution_provenance**: `"from-source"` when the original material included a solution verbatim (past-final solutions appendix, HW solutions key, textbook worked example); `"orchestrator-derived"` when the orchestrator had to work it out because the source only gave the problem. Derived solutions are held to the same two-source-cross-reference bar as other equations — confirm the key intermediate results against ≥2 independent sources before locking the solution in.
+
+If the source material embeds solutions (e.g., a past-final PDF with a solutions appendix or a HW-with-key file), capture them verbatim — they are the authoritative answers the student will be compared against. Do NOT paraphrase numerical answers; preserve significant figures and units exactly. Log `Solutions included from <source>` for trace.
+
+**Rendering note for downstream phases**: practice-problem solutions are rendered inside a collapsed `<CollapsibleBlock label="Solution">` so students are prompted to attempt the problem first, then expand to check. This is a pedagogical convention, not a compromise on completeness. The solution is always present in the DOM; it's just hidden by default until the student clicks.
+
+**Research-fabricated practice problems are forbidden.** Research agents do not make up new exam questions. They may include *textbook* end-of-chapter problems if the user picked `materials_scope: "extensions"` AND the textbook is clearly cited — treat those as practice problems with source tag `"<Textbook> Ch<N> — P<M>"` and the textbook's published solution (if available) or an orchestrator-derived solution with the `"orchestrator-derived"` provenance tag. Under `course-only` and `fill-gaps`, practice problems come exclusively from the user's provided materials.
+
 **Topic-based research (no files)**:
 1. `project_knowledge_search` first — highest priority.
 2. `web_search` for standard equations, definitions, constants.
@@ -47,7 +62,7 @@ Apply inside per-resource deep-review teams and gap-fill `research-agent` spawns
 **Quality gate**:
 - Every equation has a source (lecture page, textbook section, URL).
 - Every variable defined.
-- No solutions or numerical answers.
+- Worked examples and solutions are welcome wherever they teach something (a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study). Cut any "here's an answer" block that doesn't extend understanding. The chatbot's solve behavior is separately governed by `LESSON_CONTEXT` (ask full-or-guided, solve internally, share per student's choice) and is not a content constraint.
 - Concision: every paragraph teaches something. Cut filler. Prefer an equation or diagram over prose.
 
 ### New-mode compiled content package schema
@@ -62,16 +77,22 @@ TOPIC 1:
   id, tab, title, subtitle
   equations, concepts, constants, comparisons
   graphs_needed, manim_opportunities, interactive_opportunities
+  practice_problems: [
+    { statement, source, difficulty, approach_hint }
+  ]
   context_string
 
 TOPIC 2: ...
 
 LESSON_CONTEXT: "..."
 SOURCES_CONSULTED: [...]
+PRACTICE_PROBLEMS_INDEX: [{ topic_id, count, sources: [...] }]
 GAPS_REMAINING: [...]
 ```
 
 `context_string` per topic is the seed for `TOPIC_CONTEXT` in the final lesson file. `LESSON_CONTEXT` is the seed for the `LESSON_CONTEXT` constant consumed by the embedded chatbot.
+
+`practice_problems` is per-topic; the top-level `PRACTICE_PROBLEMS_INDEX` is a summary main Claude forwards into the Phase 2 plan so the user sees totals without reading every problem body at approval time. Empty arrays are fine (topic has no matching problems in the materials) — absence signals to Phase 2 that a "Practice" section should be skipped for that topic, not that one should be fabricated.
 
 ---
 

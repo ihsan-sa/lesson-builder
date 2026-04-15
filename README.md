@@ -84,6 +84,13 @@ agents/                        Bundled agent definitions (15 agents, self-contai
   motion-timing-agent.md
   interaction-agent.md
 references/
+  bootstrap.md                 Workspace bootstrap procedure (fresh-workspace gate)
+  bootstrap/                   Canonical payload shipped with the skill:
+    _lesson-core/                Drop-in copy of the shared module imported via @core
+    lesson-template/             Skeleton lesson project (package.json, vite.config.js,
+                                 proxy shim, main.jsx, index.html, test_lesson.cjs)
+    workspace-root/              Workspace-level templates (gitignore.template,
+                                 env.local.example, build-all.sh, netlify.toml)
   update-mode.md               Update-mode orientation (read first if mode=update)
   phase-0-scoping.md           Scoping interview + scoping artifact format + resource-mode detection
   phase-1-content.md           Content orchestration + existing-media inventory pre-scan
@@ -94,6 +101,7 @@ references/
   template.md                  Lesson JSX skeleton (new-mode starting point)
   server-template.md           package.json, vite.config.js, proxy shim, test_lesson.cjs
   checklists.md                KaTeX safety, template compliance, splice + post-splice checks
+  desmos-schema.md             Desmos state schema + string-vs-number footguns
   graph-schema-guide.md        GRAPH_SCHEMA derivation + update-mode backfill
   log-template.md              lesson_build.log.md format (new + update append)
 ```
@@ -108,4 +116,4 @@ git clone https://github.com/ihsan-sa/lesson-builder.git ~/.claude/skills/lesson
 
 Claude Code auto-discovers skills there. Trigger by asking Claude to create, build, update, revise, or improve a lesson in a workspace using the `<workspace_root>/<course>/claude_lessons/<slug>/` layout.
 
-A sibling `_lesson-core/` module is required at the workspace root; without it the `@core` alias cannot resolve.
+A sibling `_lesson-core/` module is required at the workspace root. If it does not already exist, the skill installs it from `references/bootstrap/_lesson-core/` before Phase 0 (see `references/bootstrap.md`). `VITE_DESMOS_KEY` in a workspace-root `.env.local` is required for any lesson that embeds `<DesmosGraph/>` or the chatbot `<<DESMOS>>` protocol; obtain a free educational key at https://www.desmos.com/api.

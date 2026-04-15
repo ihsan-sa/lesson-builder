@@ -128,15 +128,18 @@ The remaining props (`topicId`, `topicTitle`, `contextSnippets`, `onClearSnippet
 
 ### Step 6: write project files
 
-Main Claude writes the per-lesson project files using the canonical content in `references/server-template.md`:
+Main Claude writes the per-lesson project files by copying the skeleton at `references/bootstrap/lesson-template/` into `<lesson_root>/` and running placeholder substitutions. See `references/bootstrap.md §Lesson scaffolding (Phase 3 of new mode)` for the exact copy + substitution procedure. `references/server-template.md` is the reference documentation of what each file is for; the canonical content ships in `lesson-template/`.
 
-- **`package.json`** — React, Vite, KaTeX, express dev dep for the shim
-- **`index.html`** — Vite entry, IBM Plex Sans/Mono font links
-- **`src/main.jsx`** — 5-line `ReactDOM.createRoot` entry
-- **`vite.config.js`** — sets `@core` alias to `path.resolve(__dirname, "../../../_lesson-core")`, plus `server.fs.allow` for the parent dirs
-- **`server/proxy.js`** — one-line shim: `import "../../../../_lesson-core/server/proxy.js";`
-- **`test_lesson.cjs`** — 17-test QA suite (template compliance, KaTeX safety, Babel parse, etc.)
-- **`CLAUDE.md`** — with a `## Lesson App` heading summarizing the lesson's scope, topics, and medium inventory
+Files produced (sourced from `lesson-template/` unless noted):
+
+- **`package.json`** — React, Vite, KaTeX, express dev dep for the shim. Substitute `__SLUG__` and `__SLUG_SNAKE__`.
+- **`index.html`** — Vite entry. Substitute `__COURSE_CODE__` and `__LESSON_TITLE__`. Inject any workspace-level analytics tags per existing sibling lessons (optional).
+- **`src/main.jsx`** — 5-line `ReactDOM.createRoot` entry. Substitute `__SLUG_SNAKE__`.
+- **`src/<slug_snake>.jsx`** — lesson content. Phase 3 assembles this from `references/template.md` + specialist outputs. The shipped `lesson-template/src/__SLUG_SNAKE__.jsx` is a minimal placeholder that passes only T1+T4; delete it once the real content is in place.
+- **`vite.config.js`** — copied verbatim; sets `@core` alias to `path.resolve(__dirname, "../../../_lesson-core")`, plus `server.fs.allow` for the parent dirs.
+- **`server/proxy.js`** — copied verbatim; one-line shim: `import "../../../../_lesson-core/server/proxy.js";`.
+- **`test_lesson.cjs`** — copied verbatim; 17-test QA suite (template compliance, KaTeX safety, Babel parse, etc.).
+- **`CLAUDE.md`** — newly authored, with a `## Lesson App` heading summarizing the lesson's scope, topics, and medium inventory.
 - **`.env.local`** — only when the approved plan includes a `<DesmosGraph>` embed. Write `VITE_DESMOS_KEY=<key>` by copying from the repo root's `.env.local` (which the user maintains, gitignored). If the key is not available, main Claude notes the gap in the log and the Desmos embed renders a red "key not configured" fallback until the user supplies one. Do NOT check `.env.local` into git. Before hand-authoring the embed's `state` object, read `references/desmos-schema.md` — `setState` crashes silently on numeric values where Desmos expects LaTeX strings (`sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds), and the only way to catch it without the reference is the blank-canvas-plus-console-error symptom.
 
 None of these files reference `@core` internals beyond the alias; they are stable scaffolding.

@@ -61,7 +61,7 @@ Run against generated or spliced JSX before handing to Phase 4.
 - [ ] `export default` present on the main component (`LessonApp`).
 - [ ] `TOPICS` array is non-empty; every topic `id` has a matching key in `TOPIC_CONTEXT`.
 - [ ] `TOPIC_CONTEXT` keys are one-to-one with `TOPICS` ids — no orphans, no missing entries.
-- [ ] `LESSON_CONTEXT` is non-empty and mentions "NEVER solve" (or equivalent anti-solution instruction).
+- [ ] `LESSON_CONTEXT` is non-empty and includes the **solve-protocol directive**: when a student brings a problem, the chatbot (1) asks "full solution or guided hints?", (2) internally solves the problem with two-source cross-reference regardless of which mode the student picks, (3) presents a full worked solution OR progressive hints per the student's choice, (4) never refuses to solve or lectures about academic honesty. Verbatim wording lives in `references/template.md`'s LESSON_CONTEXT block — lesson authors copy that into their per-lesson LESSON_CONTEXT string. Earlier lessons may still carry the legacy "NEVER solve" wording; on update runs, refresh them to the new protocol.
 - [ ] `MODELS` array is defined with at least one model, using the `model:` field (not `id:`) to avoid T14 false positives.
 - [ ] Header `<h1>` is updated to match the actual lesson topic (not placeholder text from the template).
 - [ ] Every `<Eq>` and `<M>` uses `{"..."}` with double-escaped backslashes.
@@ -262,7 +262,7 @@ Run at the end of Phase 1 before handing to Phase 2.
 
 - [ ] Every equation has a source (lecture page, textbook section, URL). "Standard result" is not acceptable.
 - [ ] Every variable is defined, with units.
-- [ ] No solutions, no numerical answers. The chatbot is a tutor, not an answer key.
+- [ ] Didactic prose earns its space. Worked examples and solutions are welcome wherever they teach something — a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study — but none of it is filler. Cut any "here's an answer" block that doesn't extend understanding. The chatbot has its own solve-protocol (ask full-or-guided, solve internally, share per student's preference) governed by `LESSON_CONTEXT`; lesson content is not constrained by it.
 - [ ] **Concision**: every paragraph teaches something. Cut filler. Prefer an equation or diagram reference over prose describing the same thing.
 
 ---

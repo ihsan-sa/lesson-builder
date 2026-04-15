@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Project-file templates that make a lesson directory a runnable Vite project: `package.json`, `vite.config.js`, `server/proxy.js` shim, `index.html`, `src/main.jsx`, `test_lesson.cjs`, `CLAUDE.md`. New-mode Phase 3 writes these; update mode leaves them untouched unless explicitly broken (missing dep, invalid JSON, wrong alias) or materially stale (core API rename). When in doubt, diff against a previously-built lesson.
+Project-file templates that make a lesson directory a runnable Vite project: `package.json`, `vite.config.js`, `server/proxy.js` shim, `index.html`, `src/main.jsx`, `test_lesson.cjs`, `CLAUDE.md`. New-mode Phase 3 writes these; update mode leaves them untouched unless explicitly broken (missing dep, invalid JSON, wrong alias) or materially stale (core API rename).
+
+The canonical drop-in copies for these files live at `references/bootstrap/lesson-template/` and ship with the skill. Phase 3 should copy from there (substituting the `__SLUG__`, `__SLUG_SNAKE__`, `__COURSE_CODE__`, `__LESSON_TITLE__` placeholders) rather than hand-typing the snippets below. The snippets below stay as documentation of what each file is for and why the specific lines exist; only edit them when behavior needs to change. When in doubt, diff against `references/bootstrap/lesson-template/` — that is the reference implementation.
 
 ## Directory layout
 
@@ -32,7 +34,7 @@ Notes:
 
 ## `package.json`
 
-Copy from any previously-built lesson in the workspace, changing only the `name` and the test script's source path. Canonical contents:
+Canonical form ships at `references/bootstrap/lesson-template/package.json`. Copy it, then replace `__SLUG__` with the lesson slug (dash form) in `name` and `test`, and replace `__SLUG_SNAKE__` with the underscore form in `test`. Contents for reference:
 
 ```json
 {
@@ -71,7 +73,7 @@ Key points:
 
 ## `vite.config.js`
 
-Copy verbatim from any previously-built lesson in the workspace. No per-lesson customization needed:
+Copy verbatim from `references/bootstrap/lesson-template/vite.config.js`. No per-lesson customization needed:
 
 ```js
 import { defineConfig } from "vite";
@@ -177,7 +179,7 @@ The lesson content file must default-export a component called `LessonApp`; this
 
 Run as `node test_lesson.cjs src/<slug_underscored>.jsx`. Runs 17 structural / content checks. Full list in `references/checklists.md` → "17-test suite summary".
 
-Reference implementation: copy verbatim from any previously-built lesson. The test file is content-agnostic and works on every lesson.
+Reference implementation: copy verbatim from `references/bootstrap/lesson-template/test_lesson.cjs`. The test file is content-agnostic and works on every lesson.
 
 ## `CLAUDE.md` (lesson-level project notes)
 
@@ -212,7 +214,7 @@ Only the `## Lesson App` section is owned by the template. Anything else in the 
 
 ## Install + run
 
-One-time after cloning the workspace:
+If the workspace is fresh and `_lesson-core/` does not yet exist, run the bootstrap procedure in `references/bootstrap.md` first (copies canonical payload, installs deps). Then:
 
 ```
 cd <workspace_root>/_lesson-core

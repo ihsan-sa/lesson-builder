@@ -8,6 +8,7 @@ description: "Build or update interactive JSX lesson apps in a workspace that fo
 Build interactive React lesson apps (.jsx) with tabbed topics, LaTeX equations, SVG graphs, animations, and an embedded AI tutor chatbot, OR update existing lessons in place. Each lesson is a Vite project that imports chat + UI infrastructure from `<workspace_root>/_lesson-core/` via the `@core` alias.
 
 **Before starting a run**, read the references relevant to the detected mode:
+- `references/bootstrap.md` — read FIRST on every run. One Glob decides whether the workspace is fresh; if `<workspace_root>/_lesson-core/` is missing, run the bootstrap procedure before Phase 0.
 - `references/update-mode.md` — read FIRST for update mode. Covers mode detection, 5 media actions, branch/stash/merge invariants, no-grandfathering rule.
 - `references/phase-0-scoping.md` through `references/phase-5-deploy.md` — phase procedures for both modes.
 - `references/template.md` — new-mode lesson skeleton.
@@ -24,6 +25,8 @@ Build interactive React lesson apps (.jsx) with tabbed topics, LaTeX equations, 
 If the user flags limited resources — phrases like "quick pass", "keep it cheap", "fast update" — the skill flips to resource-conscious mode: prefer prose and static SVG over manim/interactive, cap research depth at `light` or `targeted`, and break ties toward cheaper actions. Main Claude detects the flag from the initial message and threads `resource_mode: "full" | "limited"` through the scoping artifact into every phase and specialist brief. Log the value (`Resource mode: full|limited`) for traceability.
 
 Under `resource_mode: "full"` (the default) agents must not silently downgrade media richness, research depth, fix-loop iterations, or visual-QA coverage to save time. Cheaper runs require an explicit user signal.
+
+**Practice problems from source materials are gold.** When the user's provided materials contain past finals, past midterms, homework questions, or problem sets, Phase 1 extracts each problem with its source attribution and full worked solution; Phase 2 plans them into a per-topic practice section; Phase 3 renders them via the template's `PracticeProblem` card pattern (statement visible, solution collapsed). These are the highest-value calibration content the lesson can carry — they're the actual questions the student will be graded on. Do NOT fabricate practice problems via research; include only real, attributed ones (course materials, or textbook end-of-chapter problems under `materials_scope: "extensions"`).
 
 ## Mode detection
 
@@ -42,6 +45,17 @@ Before the scoping interview, run regex + Glob detection on the user's initial m
 Phase 0's first question always confirms mode. Detection is a hint; the user has final say.
 
 See `references/update-mode.md` for the full decision tree and edge cases.
+
+## Workspace bootstrap (fresh-workspace gate)
+
+Every run begins with one Glob: does `<workspace_root>/_lesson-core/index.js` exist? `_lesson-core/` is the shared chat + UI + proxy module every lesson imports via the `@core` Vite alias; without it nothing builds, nothing tests, and the chatbot will not start.
+
+- **Exists** → continue directly to Phase 0.
+- **Missing** → run the bootstrap procedure in `references/bootstrap.md` before Phase 0. This is mechanical (copy canonical payload, `npm install`, seed workspace-root files) and needs no approval gate — announce in one sentence and proceed.
+
+The skill ships the canonical payload at `references/bootstrap/`: the full `_lesson-core/` source tree, a placeholder lesson skeleton (`lesson-template/`), and workspace-root templates (`.gitignore`, `.env.local.example`, `build-all.sh`, `netlify.toml`). Bootstrapping from this payload is the only supported way to stand up a fresh workspace; do **not** pull from the legacy `jsx-lesson` skill, whose copies predate the `@core` refactor.
+
+Acceptance criterion: after bootstrap + new-mode Phases 0-4, a skeleton lesson must reach `17/17 passed` on `test_lesson.cjs`, render KaTeX, show the chatbot bubble in dev, respect the Ctrl+Click context gate, and render `<DesmosGraph/>` (when `VITE_DESMOS_KEY` is set). See `references/bootstrap.md` for the full checklist.
 
 ## Pipeline (6 phases)
 
@@ -76,7 +90,7 @@ Phase 5 — Deploy             Branches on deploy_action. Build verify runs unde
 
 ## Infrastructure
 
-Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-core/`. Lessons import via the `@core` Vite alias. **Never inline chat code into a lesson** — fixes and features added in `_lesson-core/` propagate to every lesson.
+Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-core/`. Lessons import via the `@core` Vite alias. **Never inline chat code into a lesson** — fixes and features added in `_lesson-core/` propagate to every lesson. On a fresh workspace this directory is installed from `references/bootstrap/_lesson-core/` per the bootstrap procedure above.
 
 ```
 <workspace_root>/
@@ -86,8 +100,9 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
     ui/                         Eq, M, P, Section, KeyConcept, CollapsibleBlock,
                                 RefImg, DesmosGraph
     constants/                  THEMES_G, MODELS, EFFORT_LEVELS
-    hooks/useKatex.js           KaTeX CDN loader
-    hooks/useDesmos.js          Desmos CDN loader (gated on VITE_DESMOS_KEY)
+    hooks/
+      useKatex.js               KaTeX CDN loader
+      useDesmos.js              Desmos CDN loader (gated on VITE_DESMOS_KEY)
     server/proxy.js             Canonical Express proxy (shim-imported by lessons)
     package.json                Backend deps (express, cors)
     index.js                    Barrel export consumed via @core alias

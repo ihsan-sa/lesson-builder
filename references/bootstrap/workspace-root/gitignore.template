@@ -1,0 +1,73 @@
+# ---------------------------------------------------------------------------
+# Workspace-root .gitignore for a lesson-builder workspace.
+# Copy this to `<workspace_root>/.gitignore` at bootstrap time, then adapt the
+# course-carve-out section at the bottom for your actual course codes.
+# ---------------------------------------------------------------------------
+
+# Dependencies
+node_modules/
+package-lock.json
+
+# Local env (holds VITE_DESMOS_KEY and similar per-developer secrets)
+.env
+.env.local
+.env.*.local
+
+# Build output / cache
+dist/
+.vite/
+__pycache__/
+*.pyc
+
+# Server runtime artifacts
+**/server/.isolated/
+**/server/.uploads/
+**/server/.proxy-port
+**/server/chat.log
+
+# Lesson-builder scratch (Phase 3 specialist outputs before splice assembly)
+**/.build-scratch/
+
+# Course materials (copyrighted lectures, textbooks, private notes)
+**/course_materials/
+**/materials/
+**/source/
+**/notes/
+
+# LaTeX / PDFs (re-allowed selectively below per course)
+*.pdf
+*.tex
+*.aux
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# Claude Code settings
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated media / screenshots
+media/
+screenshots/
+chat_*.png
+
+# ---------------------------------------------------------------------------
+# Course-level carve-outs.
+#
+# Pattern: ignore the whole course directory except its `claude_lessons/` tree,
+# then re-allow specific tracked reference artifacts (formula sheets, guides).
+# Duplicate and adapt per course in the workspace.
+#
+# Example for a course "<COURSE_DIR>":
+#
+#   <COURSE_DIR>/*
+#   !<COURSE_DIR>/claude_lessons/
+#   !<COURSE_DIR>/<COURSE_DIR>_formula_sheet.pdf
+#   !<COURSE_DIR>/<COURSE_DIR>_formula_sheet.tex
+#
+# Replace <COURSE_DIR> with the actual directory name (e.g. `ECE109`, `240`).
+# Without the explicit `!…pdf` re-allow, the `*.pdf` rule above would drop it.
+# ---------------------------------------------------------------------------
