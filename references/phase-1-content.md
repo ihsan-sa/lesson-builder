@@ -21,9 +21,9 @@ Main Claude passes the following from the scoping artifact:
 
 ### Procedure
 
-1. **Initial sweep (pure-research only)**: if `provided_materials` is empty, do a rough sweep, report a draft topic list for scope confirmation, then commit to deep research.
+1. **Initial sweep (pure-research only)**: if `provided_materials` is empty, do a rough sweep, report a draft topic list for scope confirmation, then commit to deep research. This prevents wasted agent time on misaligned scope.
 2. **Per-resource deep-review teams in parallel**: one per resource. Extract equations, concepts, constants, candidate topic groupings.
-3. **Topic-area research via `research-agent`**: parallel with step 2 for topics needing coverage beyond provided materials.
+3. **Topic-area research via `research-agent`**: parallel with step 2 for topics needing coverage beyond provided materials. Each `research-agent` makes its own source reliability judgment.
 4. **Content dialogue loop with `content-review-agent`**: check alignment with scope/goal/audience. Misalignment triggers corrective rounds.
 5. **Gap-fill**: narrow `research-agent` spawns for remaining concepts.
 6. **Compile and return**.
@@ -33,11 +33,19 @@ Main Claude passes the following from the scoping artifact:
 Apply inside per-resource deep-review teams and gap-fill `research-agent` spawns.
 
 **Uploaded PDFs / files**:
-1. `file <path>` to check type; many lecture PDFs are actually ZIPs.
-2. If ZIP: `mkdir -p /tmp/extract/<name> && unzip -o -q <path> -d /tmp/extract/<name>`.
-3. Check `manifest.json` for page list and metadata.
-4. Scanned PDFs: view page images directly (`/tmp/extract/<name>/N.jpeg`).
-5. Text-extractable PDFs: `pdftotext` or `pypdf`.
+
+PDFs are the most error-prone input type in the pipeline. The `Read` tool has native PDF support — it returns rendered pages as multimodal input, so equations, figures, tables, and multi-column layouts survive intact. **Default to `Read`.** `pdftotext` and `pypdf` silently corrupt math (Greek letters, superscripts, subscripts, fractions, matrix alignment) and layout, and are reserved for bulk programmatic mining only.
+
+1. **Check file type first**: on Unix/Git Bash, `file <path>`. On Windows native PowerShell, inspect the extension and the first bytes (`Get-Content <path> -TotalCount 1`). Many course-provided "PDFs" are actually ZIPs of page images (Panopto exports, scanned lecture captures). On ZIP: extract (`mkdir -p /tmp/extract/<name> && unzip -o -q <path> -d /tmp/extract/<name>` on Unix/Git Bash; `Expand-Archive -Path <path> -DestinationPath <dest>` on Windows native), inspect `manifest.json` for the page list, then `Read` each page image.
+
+2. **True PDFs — use `Read`**:
+   - **≤10 pages**: `Read` the file with no `pages` parameter. One call returns all pages.
+   - **>10 pages**: the `pages` parameter is REQUIRED, max 20 pages per call. Omitting it errors out. Get the page count first via `pdfinfo <path> | grep Pages` (poppler-utils) if available, else probe with `pages: "1-20"` and keep advancing (`"21-40"`, `"41-60"`, …) until the range returns empty. Example: `Read(file_path="chapter3.pdf", pages="1-20")`.
+   - Scanned and text-extractable PDFs are handled identically — Claude sees the rendered page image in both cases. No separate OCR step is needed.
+
+3. **`pdftotext` / `pypdf` fallback** — ONLY for programmatic bulk mining (e.g., regex-scanning equation labels across a 200-page reference, or building an index across many chapters where visual review per page is infeasible). Never for math content, figures, tables, or layout-sensitive material. If extracted text looks garbled, discard it and switch to `Read`.
+
+4. **Verification requirement**: any equation or numerical value produced by a text-extractor must be cross-checked against the `Read`-rendered page before it enters the content package. This is non-optional for math and physics lessons — text-extract corruption is silent and frequently survives into the lesson JSX unless caught here.
 
 **Practice-problem extraction**: alongside equations and concepts, each per-resource deep-review team **must** scan for practice problems — past finals, past midterms, homework questions, problem-set questions, worked examples, in-lecture practice prompts. These are the highest-value calibration content the lesson can offer because they are the actual questions the student will be graded on; no research-fabricated problem can match that signal. For each problem found, extract:
 - **statement**: the question verbatim (preserve LaTeX / figures / any given values).
@@ -62,7 +70,7 @@ If the source material embeds solutions (e.g., a past-final PDF with a solutions
 **Quality gate**:
 - Every equation has a source (lecture page, textbook section, URL).
 - Every variable defined.
-- Worked examples and solutions are welcome wherever they teach something (a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study). Cut any "here's an answer" block that doesn't extend understanding. The chatbot's solve behavior is separately governed by `LESSON_CONTEXT` (ask full-or-guided, solve internally, share per student's choice) and is not a content constraint.
+- Worked examples and solutions are welcome wherever they teach something (a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study). Cut any "here's an answer" block that doesn't extend understanding. The chatbot is separately governed by `LESSON_CONTEXT` — it is a tutor, not an answer key — and that pedagogy stance is not a content constraint: practice-problem cards in the lesson may carry worked solutions provided they are collapsed by default, provenance-marked, and sourced rather than fabricated (per the extraction spec above).
 - Concision: every paragraph teaches something. Cut filler. Prefer an equation or diagram over prose.
 
 ### New-mode compiled content package schema
@@ -120,7 +128,7 @@ Then Read the file from that line forward and parse keys until the matching `};`
 ```
 grep -n "const GRAPH_SCHEMA\|export.*GRAPH_SCHEMA" src/<slug>.jsx
 ```
-Then Read forward and parse keys. If this constant is missing, flag `graph_schema_backfill_needed: true` in the inventory — Phase 2's update plan must surface this as a `STRUCTURAL DRIFT REPAIR` item. The backfill depends on the graph-schema feature being present in `_lesson-core/chat/graphSchema.js`; see `graph-schema-guide.md`.
+Then Read forward and parse keys. If this constant is missing, flag `graph_schema_backfill_needed: true` in the inventory — Phase 2's update plan must surface this as a `STRUCTURAL DRIFT REPAIR` item. The backfill depends on the graph-schema feature being present in `_lesson-core/chat/graphSchema.js`; see `references/graph-schema-guide.md`.
 
 **4. `RefImg` base64 constants** — names only (the blobs are huge, never include them in the inventory dict):
 ```
@@ -212,7 +220,7 @@ Cross-reference each filename against the JSX src= hits from steps 5-6 and the m
 
 ### Inventory field conventions
 
-Two contract notes that matter when phase-2-plan.md hands items to `medium-decider-agent`:
+Two contract notes that matter when `references/phase-2-plan.md` hands items to `medium-decider-agent`:
 
 1. **Every media entry carries a `kind` field** matching the `medium-decider-agent` enum: `"svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo"`. Main Claude passes the entries verbatim; no translation step needed.
 2. **Every media entry carries `source_file` and `line_range`**. `source_file` is the absolute path to the JSX file containing the reference (identical to `lesson_file` for all entries in the current single-file lesson architecture, but included per-entry so specialists can extract source without an extra lookup). `line_range` is `[start, end]` — for components (graph_components, interactive_demos) it spans the full definition; for constants (ref_img_constants) it spans the `const IMG_X = "..."` declaration; for JSX-embedded references (static_images, videos) it is `[line, line]` marking the `<img>` / `<video>` tag.
@@ -238,7 +246,7 @@ Main Claude passes:
 
 Under `resource_mode: "full"`, Phase 0 picks `targeted` or `full` for most updates. `light` is reserved for `"limited"` or explicit request. The orchestrator never downgrades below Phase 0's choice.
 
-- **full**: complete new-mode flow — deep-review per resource, `research-agent` per topic, dialogue loop — seeded with existing content as baseline. Longer than `targeted`/`light`; runtime noted in the return.
+- **full**: complete new-mode flow — deep-review per resource, `research-agent` per topic, dialogue loop — seeded with existing content as baseline. Roughly 5-10x slower than `light`; the orchestrator warns about runtime in its opening prompt so main Claude can confirm with the user if runtime budget matters, and notes actual runtime in the return.
 - **targeted**: same as light plus one `research-agent` per user-named topic with narrow brief.
 - **light**: no `research-agent` spawns. Orchestrator reads JSX end-to-end, cross-references the inventory, spawns `content-review-agent` once with concerns + new materials. ~1-2 rounds.
 
@@ -338,4 +346,4 @@ Each iteration is a fresh spawn with updated inputs. The orchestrator does not m
 
 ## Handoff to Phase 2
 
-The returned compiled package (new-mode) or update package (update-mode) is the input to Phase 2's medium-decider spawns and Lesson Plan drafting. Phase 2 reads `TOPICS`, `equations`, `concepts`, `graphs_needed`, `manim_opportunities`, `interactive_opportunities`, and (in update mode) the per-topic `action` and per-medium `media_preverdicts` to seed the parallel `medium-decider-agent` spawns. See `phase-2-plan.md` for the handoff details.
+The returned compiled package (new-mode) or update package (update-mode) is the input to Phase 2's medium-decider spawns and Lesson Plan drafting. Phase 2 reads `TOPICS`, `equations`, `concepts`, `graphs_needed`, `manim_opportunities`, `interactive_opportunities`, `practice_problems`, and (in update mode) the per-topic `action` and per-medium `media_preverdicts` to seed the parallel `medium-decider-agent` spawns. See `references/phase-2-plan.md` for the handoff details.

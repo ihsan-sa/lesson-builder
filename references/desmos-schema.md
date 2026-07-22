@@ -100,3 +100,4 @@ Symptom → likely cause:
 - **Calculator remounts on every parent render** → `state` prop is a fresh object literal every render. Wrap in `useMemo` or hoist outside the component.
 - **Slider does not animate on click** → `isPlaying` was stripped upstream (correct) and the student has not clicked the native Play button. The bot is forbidden from auto-starting animation.
 - **Red "Desmos key not configured" box** → `VITE_DESMOS_KEY` missing from the lesson's `.env.local`. See `references/phase-3-execution.md` step 6.
+

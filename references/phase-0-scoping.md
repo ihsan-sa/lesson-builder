@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short AskUserQuestion interview whose questions adapt to the detected mode and to whatever materials the user provided. Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes.
+Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short AskUserQuestion interview whose questions adapt to the detected mode and to whatever materials the user provided. Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes. Phase 0 assumes the fresh-workspace bootstrap gate has already run — if `<workspace_root>/_lesson-core/` is missing, the bootstrap procedure in `references/bootstrap.md` installs it before any Phase 0 question fires (see `SKILL.md`).
 
 ## Mode detection recap
 
@@ -13,7 +13,7 @@ Detection fires before the scoping interview. Best-effort; Phase 0's first quest
 - **Candidate resolution**: full path → use directly; course + slug → resolve to `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob; use if exactly one match.
 - **Mode assignment**: verb + resolved → `update`; verb + unresolved → `update` with `candidate_root=null`; no verb → `new`; verb + new-sounding intent → `new` with logged ambiguity.
 
-Full decision tree in `references/update-mode.md`.
+Full decision tree, edge cases, and the update-verb table live in `references/update-mode.md`; a high-level summary lives in `SKILL.md`. Do not duplicate that detail here — cross-link it.
 
 Main Claude writes the detection result as the first line under `## Phase 0 — Scoping` in the log doc:
 
@@ -75,13 +75,15 @@ Update mode asks **5 questions**. Course code, slug, and deploy target are auto-
 
 Pre-checks run first:
 
-1. **Working-tree**: `git status --short <lesson_root>`. Empty stdout → clean; skip question 2.
+1. **Working-tree**: `git status --short <lesson_root>` (run from the repo root). Empty stdout → clean; skip question 2.
 
 2. **`@core`**: Grep `src/<slug>.jsx` for `from "@core"`. If absent, the lesson predates the `_lesson-core/` migration and inlines old chat code. Update is a default no-go because `code-review-agent` will block at Phase 4. Replace question 1 options:
    - `Yes, update that lesson (migration required first — switch to new mode)` (default)
-   - `Update without migration (bypass @core check; I accept the risk)`
+   - `Update without migration (bypass @core check; I accept the risk)` (narrow escape hatch; warn in the log)
    - `Different lesson`
    - `Actually a brand-new lesson`
+
+   If the `@core` check passes, proceed with the normal question 1 option set.
 
 ### The 5 update-mode questions
 
@@ -226,7 +228,7 @@ For terse one-liners (e.g. "fix the `<component>` in `<slug>`", "update the `<sl
 
 ## Output
 
-Main Claude writes the following to `<lesson_root>\lesson_build.log.md` under `## Phase 0 — Scoping` (new mode) or `### Phase 0 — Scoping (update)` nested under `## Update YYYY-MM-DD (run-id: <short-hash>)` (update mode):
+Main Claude writes the following to `<lesson_root>/lesson_build.log.md` under `## Phase 0 — Scoping` (new mode) or `### Phase 0 — Scoping (update)` nested under `## Update YYYY-MM-DD (run-id: <short-hash>)` (update mode):
 
 - **Mode detection line**: `Detected mode: new` or `Detected mode: update (candidate: <path>)`.
 - **Mode confirmed**: `YES` / user-corrected mode if they overrode detection.

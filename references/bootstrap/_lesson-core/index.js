@@ -6,7 +6,8 @@ export { Chatbot } from "./chat/Chatbot.jsx";
 export { STYLES } from "./chat/chat.css.js";
 
 export { Eq, M } from "./ui/Eq.jsx";
-export { P, Section, KeyConcept, CollapsibleBlock, RefImg } from "./ui/primitives.jsx";
+export { P, Section, KeyConcept, CollapsibleBlock, RefImg, PracticeProblem, FormulaSheetBox, SummaryBox } from "./ui/primitives.jsx";
+export { DesmosGraph } from "./ui/DesmosGraph.jsx";
 
 export {
   Slider, RangeSlider, NumberInput, Toggle, Button, Dropdown, Stepper,
@@ -14,6 +15,7 @@ export {
 } from "./ui/primitives-interactive.jsx";
 
 export { THEMES_G } from "./constants/themes.js";
-export { MODELS, EFFORT_LEVELS } from "./constants/models.js";
+export { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "./constants/models.js";
 
 export { useKatex } from "./hooks/useKatex.js";
+export { useDesmos } from "./hooks/useDesmos.js";

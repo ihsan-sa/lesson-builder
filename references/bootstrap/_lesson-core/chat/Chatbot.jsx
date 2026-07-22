@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { MODELS, EFFORT_LEVELS } from "../constants/models.js";
+import { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "../constants/models.js";
 import { _cs, _ss, makeTab } from "./chatState.js";
 import { ChatBubble } from "./ChatBubble.jsx";
 import { ThreadPanel } from "./ThreadPanel.jsx";
@@ -30,12 +30,13 @@ export function Chatbot({
   topicId, topicTitle, contextSnippets, onClearSnippet, onClearAllSnippets,
   open, setOpen, onEditGraph, graphParams, graphRenderId, addSnippet, threadTrigger, threadCtxTrigger,
   courseCode, courseName, lessonContext, topicContext, lessonFile, graphSchema,
+  institution,
 }) {
   const [tabs, setTabs] = useState([]);
   const [activeTabIdx, setActiveTabIdx] = useState(0);
   const [input, setInput] = useState("");
-  const [model, setModel] = useState(MODELS[1].model);
-  const [effort, setEffort] = useState("max");
+  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [effort, setEffort] = useState(DEFAULT_EFFORT);
   const [expanded, setExpanded] = useState(false);
   const [chatSize, setChatSize] = useState(null);
   const resizeRef = useRef(null);
@@ -211,7 +212,7 @@ export function Chatbot({
       if (e.ctrlKey) return;
       // Chat UI handles its own gating; don't touch form controls either.
       if (e.target.closest(".chat-panel, .chat-toggle, .chat-msg-rendered, .tab-bar, .header, input, textarea, button, a, select")) return;
-      if (e.target.closest(".eq-block, .key-concept, .compare-card, .para, .info-list li, .section-title")) {
+      if (e.target.closest(".eq-block, .key-concept, .formula-sheet-box, .summary-box, .compare-card, .para, .info-list li, .section-title")) {
         e.stopPropagation();
       }
     };
@@ -245,8 +246,8 @@ export function Chatbot({
   }, []);
 
   const makeSystemPrompt = useCallback((isolatedFlag) => buildSystemPrompt({
-    courseCode, courseName, lessonContext, topicContext, graphParams, isolatedFlag, lessonFile,
-  }), [courseCode, courseName, lessonContext, topicContext, graphParams, lessonFile]);
+    courseCode, courseName, lessonContext, topicContext, graphParams, isolatedFlag, lessonFile, institution,
+  }), [courseCode, courseName, lessonContext, topicContext, graphParams, lessonFile, institution]);
 
   const createSessionForTab = useCallback(async (tabId) => {
     updateTab(tabId, { sessionStatus: "loading" });
@@ -334,6 +335,9 @@ export function Chatbot({
   }, []);
 
   useEffect(() => {
+    // PROD gate: the static deploy has no proxy, so never fire /sessions or
+    // /session/init there (they only 404 and spam the console).
+    if (import.meta.env.PROD) return;
     if (initStartedRef.current) return;
     initStartedRef.current = true;
 
@@ -1007,7 +1011,10 @@ export function Chatbot({
         {"?"}
         {contextSnippets.length > 0 && <span className="chat-badge">{contextSnippets.length}</span>}
       </button>}
-      {<div className={`chat-panel ${expanded ? "chat-panel-expanded" : ""}`} style={{ ...(chatSize ? { width: chatSize.w, height: chatSize.h } : {}), ...(!open ? { display: "none" } : {}) }}>
+      {/* PROD gate: the static deploy has no proxy, so the whole panel is
+          withheld (not just the toggle button) — otherwise Ctrl+/ in a lesson
+          could open a chat that can only ever error. */}
+      {!import.meta.env.PROD && <div className={`chat-panel ${expanded ? "chat-panel-expanded" : ""}`} style={{ ...(chatSize ? { width: chatSize.w, height: chatSize.h } : {}), ...(!open ? { display: "none" } : {}) }}>
           <div className="chat-resize-l" onMouseDown={e => startResize(e, "l")} />
           <div className="chat-resize-t" onMouseDown={e => startResize(e, "t")} />
           <div className="chat-resize-tl" onMouseDown={e => startResize(e, "tl")} />
@@ -1025,17 +1032,17 @@ export function Chatbot({
             </div>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: sessionStatus === "ready" ? "var(--accent)" : sessionStatus === "loading" ? "var(--text-dim)" : "var(--chat-stop-color)", flexShrink: 0 }} title={sessionId ? `Session: ${sessionId.slice(0, 8)}...` : sessionStatus} />
             <span className="chat-header-topic">{topicTitle}</span>
-            <select className="chat-model-select" value={model} onChange={e => setModel(e.target.value)}>
+            <select className="chat-model-select" title="Model" value={model} onChange={e => setModel(e.target.value)}>
               {MODELS.map(m => <option key={m.model} value={m.model}>{m.label}</option>)}
             </select>
-            <select className="chat-model-select" value={effort} onChange={e => setEffort(e.target.value)}>
+            <select className="chat-model-select" title="Effort" value={effort} onChange={e => setEffort(e.target.value)}>
               {EFFORT_LEVELS.map(e => <option key={e} value={e}>{e}</option>)}
             </select>
-            <button className="chat-expand-btn" onClick={transferSession} disabled={sessionStatus !== "ready"} title={isolated ? "Isolated: no shared memory. Click to enable memory/CLAUDE.md" : "Shared: uses global Claude memory + CLAUDE.md. Click to isolate"} style={{ background: isolated ? "var(--chat-stop-color)" : "var(--accent)", color: isolated ? "var(--bg-main)" : "var(--bg-main)", opacity: sessionStatus !== "ready" ? 0.4 : 1 }}>
+            <button className="chat-expand-btn" onClick={transferSession} disabled={sessionStatus !== "ready"} title={isolated ? "Isolated: no shared memory. Click to enable memory/CLAUDE.md" : "Shared: uses global Claude memory + CLAUDE.md. Click to isolate"} style={{ background: isolated ? "var(--chat-stop-color)" : "var(--accent)", color: "var(--bg-main)", opacity: sessionStatus !== "ready" ? 0.4 : 1 }}>
               {isolated ? "ISO" : "MEM"}
             </button>
             <button className="chat-expand-btn" onClick={() => { if (!activeTab) return; updateTab(activeTab.id, { keepContext: !activeTab.keepContext }); _ss.setItem("keepContext", (!activeTab.keepContext) ? "true" : "false"); }} title={keepContext ? "Keep context ON: session survives reload" : "Keep context OFF: new session on reload"} style={{ background: keepContext ? "var(--accent)" : undefined, color: keepContext ? "var(--bg-main)" : undefined }}>
-              {keepContext ? "KC" : "kc"}
+              {"KC"}
             </button>
             <button className="chat-kill-btn" onClick={killSession} title="Kill session and stop all processes">KILL</button>
             <button className="chat-expand-btn" onClick={toggleExpand} title={expanded ? "Shrink" : "Expand"}>

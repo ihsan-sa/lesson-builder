@@ -1,6 +1,5 @@
 // Canonical Express proxy for all lessons.
-// Extracted verbatim from ECE109/claude_lessons/qm-waves/server/proxy.js
-// (the reference implementation) with one patch: LOG_FILE and PORT_FILE use
+// LOG_FILE and PORT_FILE use
 // process.cwd() instead of __dirname so that per-lesson logs and port files
 // land in the lesson's own server/ directory when this module is imported
 // via a shim from `<lesson>/server/proxy.js` and launched with
@@ -14,10 +13,11 @@ import { fileURLToPath } from "url";
 
 const LOG_FILE = path.join(process.cwd(), "server", "chat.log");
 
-// Derive the 2A repo root so the CLI can Read _lesson-core/prompts/*.md
-// and discover agents at 2A/.claude/agents/*.md when running from a lesson
-// subdirectory. __dirname here = _lesson-core/server; the repo root is two
-// levels up. Passed to the CLI via --add-dir on every spawn.
+// Derive the workspace root so the CLI can Read _lesson-core/prompts/*.md
+// and discover agents at <workspace_root>/.claude/agents/*.md when running
+// from a lesson subdirectory. __dirname here = _lesson-core/server; the
+// workspace root is two levels up. Passed to the CLI via --add-dir on every
+// spawn.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = path.dirname(path.dirname(__dirname));
 
@@ -60,9 +60,8 @@ function log(event, data) {
 }
 
 function modelAlias(model) {
-  if (model.includes("opus")) return "opus";
-  if (model.includes("sonnet")) return "sonnet";
-  if (model.includes("haiku")) return "haiku";
+  // CLI accepts full names ('claude-opus-4-7') or latest-model aliases ('opus'/'sonnet'/'haiku').
+  // Pass through so selecting "Opus 4.6" runs 4.6, not the 'opus' alias (which CLI resolves to 4.7).
   return model;
 }
 
@@ -475,7 +474,7 @@ app.post("/commit", async (req, res) => {
   }
 });
 
-const BASE_PORT = 3001;
+const BASE_PORT = process.env.PROXY_PORT ? Number(process.env.PROXY_PORT) : 3001;
 const MAX_PORT_ATTEMPTS = 50;
 const PORT_FILE = path.join(process.cwd(), "server", ".proxy-port");
 

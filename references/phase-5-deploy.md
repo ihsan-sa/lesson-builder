@@ -30,7 +30,7 @@ Runs first and gates everything else. Uses the existing project build pipeline p
 cd <workspace_root> && bash build-all.sh
 ```
 
-The workspace's `build-all.sh` runs `npm install` + `npx vite build --base="/<course>/<slug>/"` per lesson and copies each per-lesson `dist/` into the root `dist/<course>/<slug>/`. The skill only needs to confirm the target lesson's output exists:
+The workspace's `build-all.sh` runs `npm install` + `npx vite build --base="/<course>/<slug>/"` per lesson and copies each per-lesson `dist/` into the root `dist/<course>/<slug>/`. Full-workspace rebuild time scales with lesson count (typically a few minutes; local times vary). The skill only needs to confirm the target lesson's output exists:
 
 ```
 <workspace_root>/dist/<course>/<slug>/index.html
@@ -391,7 +391,7 @@ Skill responsibility stops at `git push`:
 
 ### Chatbot in prod
 
-The chatbot is **disabled** in production on static hosts. The `PROD` banner says so. Static hosts cannot run the Express proxy; users run it locally via `node server/proxy.js` + `npx vite`. The final report should not flag this as an issue — it is intentional. On Node-capable hosts, the banner can be removed.
+The chat panel is **PROD-gated out of static builds** — production bundles exclude it entirely, so hosted lessons ship without a chat panel rather than with a disabled one. Static hosts cannot run the Express proxy anyway; users run the chatbot locally via `node server/proxy.js` + `npx vite`. The final report should not flag the missing chat panel as an issue — it is the designed behavior. On Node-capable hosts the gate can be lifted.
 
 ## Final report format
 

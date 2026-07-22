@@ -26,8 +26,8 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 
 # Build every lesson in one course into $OUT/<code>/<slug>/.
-#   $1 = deploy URL segment (e.g. "ece109")
-#   $2 = on-disk course directory (e.g. "ECE109" or "240")
+#   $1 = deploy URL segment (e.g. "math101")
+#   $2 = on-disk course directory (e.g. "MATH101")
 #   $3+ = lesson slugs under <course>/claude_lessons/
 build_course() {
   local code="$1"

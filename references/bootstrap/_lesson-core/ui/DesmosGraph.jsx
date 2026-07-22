@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useDesmos } from "../hooks/useDesmos.js";
 
 // Lesson-facing Desmos embed primitive.
 //
 // Props:
 //   state         Desmos state JSON object (passed to calc.setState).
-//   height        Container pixel height (default 400).
+//   height        Initial container pixel height (default 400). User can
+//                 drag the bottom-right corner to resize both axes.
 //   options       Passthrough to Desmos.GraphingCalculator(el, options).
 //   onStateChange Optional callback, throttled ~250ms, fired when the student
 //                 manipulates the calculator. Lesson parents can use this to
@@ -13,23 +14,21 @@ import { useDesmos } from "../hooks/useDesmos.js";
 //   className     Composable on the wrapper div.
 //   mid           Marker id for debugging (kept to match other lesson graphs).
 //
-// Animation: the bot/author never auto-plays. If any expression in `state`
-// carries a sliderBounds block, a play/pause overlay button appears and the
-// student toggles animation. It auto-pauses on unmount and when the tab is
-// backgrounded, so nothing keeps a slider running in a detached calculator.
+// Animation: the bot/author never auto-plays. Students click the native
+// Desmos per-slider Play button inside the expression panel; there is no
+// overlay button in the lesson path. `isPlaying: true` is stripped from
+// incoming state so nothing auto-starts on mount.
+//
+// Resizing: the root uses CSS `resize: both` so the student can drag the
+// bottom-right corner to adjust both width and height. A ResizeObserver
+// calls calc.resize() so the Desmos canvas reflows cleanly.
 
 const PRIMITIVE_CSS_ID = "core-desmos-graph-style";
 const DESMOS_CSS = `
-.dg-root { position: relative; width: 100%; border: 1px solid var(--border);
-  border-radius: 6px; overflow: hidden; background: var(--bg-card); }
+.dg-root { position: relative; width: 100%; min-width: 320px; min-height: 220px;
+  max-width: 100%; border: 1px solid var(--border); border-radius: 6px;
+  overflow: auto; resize: both; background: var(--bg-card); }
 .dg-host { width: 100%; height: 100%; }
-.dg-play-btn { position: absolute; top: 8px; right: 8px; z-index: 2;
-  padding: 4px 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px;
-  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
-  background: var(--bg-panel); color: var(--accent); border: 1px solid var(--accent);
-  border-radius: 4px; cursor: pointer; opacity: 0.85; transition: opacity 0.15s; }
-.dg-play-btn:hover { opacity: 1; }
-.dg-play-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dg-fallback { padding: 14px; font-family: 'IBM Plex Mono', monospace;
   font-size: 12px; color: var(--chat-stop-color); background: var(--bg-panel);
   border: 1px dashed var(--chat-stop-color); border-radius: 6px; text-align: center; }
@@ -59,24 +58,10 @@ function stripAutoplay(obj) {
   return out;
 }
 
-function extractSliderIds(state) {
-  const ids = [];
-  const list = state?.expressions?.list;
-  if (Array.isArray(list)) {
-    for (const e of list) {
-      if (e && e.id && e.sliderBounds) ids.push(e.id);
-    }
-  }
-  return ids;
-}
-
-export function DesmosGraph({ state, height = 400, options, onStateChange, className, mid }) {
+export function DesmosGraph({ state, height = 520, options, onStateChange, className, mid }) {
   const { ready, keyMissing } = useDesmos();
   const hostRef = useRef(null);
   const calcRef = useRef(null);
-  const sliderIdsRef = useRef([]);
-  const [playing, setPlaying] = useState(false);
-  const [hasSliders, setHasSliders] = useState(false);
 
   // Callbacks via ref so updates don't trigger a full remount. Options and
   // onStateChange are typically inline object literals / closures from the
@@ -107,9 +92,6 @@ export function DesmosGraph({ state, height = 400, options, onStateChange, class
       ...(optionsRef.current || {}),
     });
     calcRef.current = calc;
-    const sliders = extractSliderIds(cleaned);
-    sliderIdsRef.current = sliders;
-    setHasSliders(sliders.length > 0);
     try {
       calc.setState(cleaned);
     } catch (e) {
@@ -128,13 +110,11 @@ export function DesmosGraph({ state, height = 400, options, onStateChange, class
     return () => {
       try { calc.destroy(); } catch (_) {}
       calcRef.current = null;
-      sliderIdsRef.current = [];
-      setPlaying(false);
-      setHasSliders(false);
     };
   }, [ready, stateSig]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounced resize on host size changes.
+  // Debounced resize on host size changes (student drag-resize, window
+  // resize, or sibling layout shifts). Keeps the Desmos canvas sharp.
   useEffect(() => {
     if (!ready || !hostRef.current) return;
     let t = null;
@@ -148,35 +128,6 @@ export function DesmosGraph({ state, height = 400, options, onStateChange, class
     return () => { clearTimeout(t); ro.disconnect(); };
   }, [ready]);
 
-  // Auto-pause on tab hidden.
-  useEffect(() => {
-    if (!playing) return;
-    const onVis = () => {
-      if (document.hidden) pauseAll();
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, [playing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const pauseAll = useCallback(() => {
-    const calc = calcRef.current;
-    if (!calc) return;
-    for (const id of sliderIdsRef.current) {
-      try { calc.setExpression({ id, isPlaying: false }); } catch (_) {}
-    }
-    setPlaying(false);
-  }, []);
-
-  const toggle = useCallback(() => {
-    const calc = calcRef.current;
-    if (!calc) return;
-    const next = !playing;
-    for (const id of sliderIdsRef.current) {
-      try { calc.setExpression({ id, isPlaying: next }); } catch (_) {}
-    }
-    setPlaying(next);
-  }, [playing]);
-
   if (keyMissing) {
     return (
       <div className={["dg-root", className].filter(Boolean).join(" ")} style={{ height }} data-mid={mid}>
@@ -188,11 +139,6 @@ export function DesmosGraph({ state, height = 400, options, onStateChange, class
     <div className={["dg-root", className].filter(Boolean).join(" ")} style={{ height }} data-mid={mid}>
       {!ready && <div className="dg-loading">Loading graph...</div>}
       <div ref={hostRef} className="dg-host"/>
-      {ready && hasSliders && (
-        <button type="button" className="dg-play-btn" onClick={toggle} aria-label={playing ? "Pause animation" : "Play animation"}>
-          {playing ? "Pause" : "Play"}
-        </button>
-      )}
     </div>
   );
 }

@@ -26,7 +26,20 @@ If the user flags limited resources — phrases like "quick pass", "keep it chea
 
 Under `resource_mode: "full"` (the default) agents must not silently downgrade media richness, research depth, fix-loop iterations, or visual-QA coverage to save time. Cheaper runs require an explicit user signal.
 
-**Practice problems from source materials are gold.** When the user's provided materials contain past finals, past midterms, homework questions, or problem sets, Phase 1 extracts each problem with its source attribution and full worked solution; Phase 2 plans them into a per-topic practice section; Phase 3 renders them via the template's `PracticeProblem` card pattern (statement visible, solution collapsed). These are the highest-value calibration content the lesson can carry — they're the actual questions the student will be graded on. Do NOT fabricate practice problems via research; include only real, attributed ones (course materials, or textbook end-of-chapter problems under `materials_scope: "extensions"`).
+**Practice problems from source materials are gold.** When the user's provided materials contain past finals, past midterms, homework questions, or problem sets, Phase 1 extracts each problem with its source attribution and full worked solution; Phase 2 plans them into a per-topic practice section; Phase 3 renders them via the template's `PracticeProblem` card pattern (statement visible, solution collapsed, provenance-marked). These are the highest-value calibration content the lesson can carry — they're the actual questions the student will be graded on. Do NOT fabricate practice problems via research; include only real, attributed ones (course materials, or textbook end-of-chapter problems under `materials_scope: "extensions"`). Collapsed, sourced solutions on practice cards are compatible with the tutor's withhold-first PEDAGOGY POLICY — the policy governs the chatbot's dialogue, not the lesson's attributed practice material.
+
+## Do NOT build these (debunked / overstated)
+
+Maximum teaching quality means evidence-based, not intuitive-but-wrong. The following are appealing, common in ed-tech, and either **debunked** or badly **overstated** by the learning-science evidence. No agent may emit, design around, or recommend them — in lesson copy, media choices, tutor steering, or the plan. They are not a style preference; they fail proper testing. (Mirrors the SaaS `myth-lint.ts` categories.)
+
+- **Learning-styles / VARK matching.** Do not assess a "visual / auditory / kinesthetic learner" or route/restyle content to a sensory style — the meshing hypothesis has no replicated effect. Match the medium to the **content** (a graph because the concept is spatial), never to a learner label.
+- **Dale's-cone "remember X%" retention numbers.** Never display or design around "we remember 10% of what we read / 90% of what we do" figures — the percentages are fabricated and carry no empirical basis. Justify interactivity via the testing/doer effect instead.
+- **Bloom's "2-sigma" claims.** Do not promise or design to a 2-sigma tutoring gain; it has never replicated at that magnitude.
+- **Brain-training / far-transfer claims.** Do not claim a drill or game trains "general intelligence" or transfers broadly. Practice trains the **actual target knowledge**, nothing more.
+- **Gamification as motivator — leaderboards, points, badges, streaks.** Do not add them or write copy that motivates via them; they boost extrinsic over intrinsic motivation and demoralize low performers. Use informational, task-level competence feedback (this is the same rule the tutor PEDAGOGY POLICY enforces).
+- **Hattie-rank / "0.40 hinge" / bare "d=0.NN" badges as an oracle.** Do not cite a Visible-Learning rank or a precise effect-size badge as a build-priority truth — the meta-meta-analytic ranks carry wide uncertainty. Cite the principle, not the rank.
+
+Left/right-brain "dominance" and "digital natives" are in the same debunked bucket; do not frame learners by them either. When a medium or content choice is tempting for one of these reasons, that is the signal to drop it — see Quality policy and the Phase 2 medium-selection criteria.
 
 ## Mode detection
 
@@ -51,9 +64,9 @@ See `references/update-mode.md` for the full decision tree and edge cases.
 Every run begins with one Glob: does `<workspace_root>/_lesson-core/index.js` exist? `_lesson-core/` is the shared chat + UI + proxy module every lesson imports via the `@core` Vite alias; without it nothing builds, nothing tests, and the chatbot will not start.
 
 - **Exists** → continue directly to Phase 0.
-- **Missing** → run the bootstrap procedure in `references/bootstrap.md` before Phase 0. This is mechanical (copy canonical payload, `npm install`, seed workspace-root files) and needs no approval gate — announce in one sentence and proceed.
+- **Missing** → run the bootstrap procedure in `references/bootstrap.md` before Phase 0. This is mechanical (copy canonical payload, `npm install`, seed workspace-root files including `.claude/agents/`) and needs no approval gate — announce in one sentence and proceed.
 
-The skill ships the canonical payload at `references/bootstrap/`: the full `_lesson-core/` source tree, a placeholder lesson skeleton (`lesson-template/`), and workspace-root templates (`.gitignore`, `.env.local.example`, `build-all.sh`, `netlify.toml`). Bootstrapping from this payload is the only supported way to stand up a fresh workspace; do **not** pull from the legacy `jsx-lesson` skill, whose copies predate the `@core` refactor.
+The skill ships the canonical payload at `references/bootstrap/`: the full `_lesson-core/` source tree, a placeholder lesson skeleton (`lesson-template/`, including per-lesson `CLAUDE.md` and `.gitignore`), and workspace-root templates (`.gitignore`, `.env.local` example, `build-all.sh`, `netlify.toml`, runtime tutor agents for `.claude/agents/`). Bootstrapping from this payload is the only supported way to stand up a fresh workspace; do **not** pull from the legacy `jsx-lesson` skill, whose copies predate the `@core` refactor.
 
 Acceptance criterion: after bootstrap + new-mode Phases 0-4, a skeleton lesson must reach `17/17 passed` on `test_lesson.cjs`, render KaTeX, show the chatbot bubble in dev, respect the Ctrl+Click context gate, and render `<DesmosGraph/>` (when `VITE_DESMOS_KEY` is set). See `references/bootstrap.md` for the full checklist.
 
@@ -74,7 +87,8 @@ Phase 3 — Execution          Parallel specialists. New: assemble from scratch.
                               Update: git branch + splice assembly.
                               Both: write/update private-by-default .gitignore
                               covering materials/, source/, notes/, *.local, .env*.
-Phase 4 — Review + Fix       Parallel code/content/test/visual-QA. Progress-aware fix loop.
+Phase 4 — Review + Fix       Parallel code/content/test/visual-QA + pedagogy gate.
+                              Progress-aware fix loop.
                               Update: no-grandfathering + regression-watch stop rule.
 Phase 5 — Deploy             Branches on deploy_action. Build verify runs under every
                               action (sanity check). Gitignore-override question
@@ -94,16 +108,20 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 
 ```
 <workspace_root>/
+  .claude/agents/               Runtime tutor-team agents (seeded by bootstrap;
+                                discovered by the spawned claude CLI)
   _lesson-core/                 Shared module (imported via @core)
     chat/                       Chatbot, ChatBubble, ThreadPanel, processResponse,
                                 buildSystemPrompt, chatState, chat.css.js
     ui/                         Eq, M, P, Section, KeyConcept, CollapsibleBlock,
-                                RefImg, DesmosGraph
-    constants/                  THEMES_G, MODELS, EFFORT_LEVELS
-    hooks/
-      useKatex.js               KaTeX CDN loader
-      useDesmos.js              Desmos CDN loader (gated on VITE_DESMOS_KEY)
-    server/proxy.js             Canonical Express proxy (shim-imported by lessons)
+                                RefImg, PracticeProblem, FormulaSheetBox, SummaryBox,
+                                DesmosGraph
+    constants/                  THEMES_G, MODELS, EFFORT_LEVELS, DEFAULT_MODEL,
+                                DEFAULT_EFFORT
+    hooks/useKatex.js           KaTeX CDN loader
+    hooks/useDesmos.js          Desmos CDN loader (gated on VITE_DESMOS_KEY)
+    server/proxy.js             Canonical Express proxy (shim-imported by lessons;
+                                model name passed through unchanged; PROXY_PORT honored)
     package.json                Backend deps (express, cors)
     index.js                    Barrel export consumed via @core alias
   <course>/claude_lessons/<slug>/
@@ -111,10 +129,13 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
       main.jsx                  5-line ReactDOM entry
       <slug>.jsx                Lesson-specific content (topics, graphs, TOPICS array, LessonApp)
     server/proxy.js             1-line shim importing ../../../../_lesson-core/server/proxy.js
-    vite.config.js              Sets @core alias + server.fs.allow
+    vite.config.js              Sets @core alias + server.fs.allow + envDir at the
+                                workspace root (single .env.local serves all lessons)
     package.json                Lesson deps (React, Vite, KaTeX, etc.)
     test_lesson.cjs             17-test QA suite
     index.html
+    CLAUDE.md                   Per-lesson project doc (from the template)
+    .gitignore                  Runtime carve-outs (from the template)
     lesson_build.log.md         Build + update trail (owned by main Claude)
 ```
 
@@ -125,6 +146,8 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 - `<<EDIT_GRAPH>>`, `<<DEMO>>` (inline SVG), `<<SUGGEST>>` (lesson augmentation), `<<SOURCES>>`, `<<COMMIT_SUGGEST>>`.
 - `<<DESMOS>>` — bot emits a Desmos state JSON; client validates + hydrates a live calculator. Animation control is Desmos's own per-slider Play button inside the expression panel; `isPlaying:true` is stripped upstream so only the student initiates animation. Requires `VITE_DESMOS_KEY` in `.env.local`; fails loud if missing. Authors embed `<DesmosGraph state={...}/>` directly in lesson JSX for pre-authored interactive graphs. State schema is error-prone — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain.{min,max}`, `polarDomain.{min,max}` must be JSON strings, not numbers, or `setState` crashes silently. Read `references/desmos-schema.md` before authoring either surface.
 - `<<REINFORCE>>` — bot records a durable heuristic about the student, covering three first-class trigger categories: (1) MEDIA signals, (2) STATED PREFERENCES on tone/register/analogy use/explanation depth/format, (3) CORRECTIONS of a prior approach. The client accumulates entries into `[REINFORCED BEHAVIORS]` injected back via ACTIVE CONTEXT and the system prompt treats them as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response, not just media choices. Lesson planning implication: seed each topic with a diverse media mix so the media-signal arm has something to learn from; the preference and correction arms work regardless.
+
+**Chat runtime facts** authors and reviewers should know: the chat panel renders only in dev — `import.meta.env.PROD` gates it (and all `/session` fetches) out of static deploys, which have no proxy. The chat opens on `DEFAULT_MODEL`/`DEFAULT_EFFORT` from `constants/models.js` (the `default: true` entry; keyboard-shortcut chars must be unique and avoid j/g). The proxy passes the selected model name to the `claude` CLI unchanged, so a specific version pick runs that exact version. `<Chatbot>` accepts an optional `institution` prop (e.g. `institution="University X"`) that appears in the tutor system prompt; omit it and no institution is mentioned.
 
 **Ctrl+Click context gate** (client-side UX, added late in the dev loop): clicking a lesson content block or chat reply block to add it to chat context now requires the Ctrl key to be held. `body.ctx-ctrl-held` gates hover highlights and the pointer cursor; a capture-phase document click listener stops non-Ctrl clicks before they reach the per-lesson `handleContentClick`. Author-testing note: mention this in lesson-level CLAUDE.md if a human tester will QA the lesson — they will otherwise wonder why plain clicks stopped adding context.
 
@@ -159,6 +182,8 @@ All agents are bundled at `agents/` — the skill is self-contained. Claude Code
 - `code-review-agent` — template compliance, KaTeX safety, Babel parse
 - Visual-QA: `geometry-agent`, `colour-agent`, `readability-agent`, `scientific-accuracy-agent`, `motion-timing-agent`, `interaction-agent`
 
+**Runtime tutor team** (not part of the build pipeline): `breakthrough-gap-agent`, `coordinator-agent`, `curriculum-context-agent` ship at `references/bootstrap/workspace-root/.claude/agents/` and are seeded into `<workspace_root>/.claude/agents/` at bootstrap, alongside copies of the pipeline agents above. The embedded chatbot's spawned `claude` CLI discovers that registry and uses it for in-chat delegation (graphics, QA, coordination) while a student is using the lesson.
+
 In update mode, visual-QA specialists receive the **original stated intent** (captured by content-orchestrator), not the user's most recent concerns — so refined media is evaluated against what it was always supposed to show.
 
 Every agent respects `resource_mode: "full" | "limited"`. Absent field → `"full"`.
@@ -174,4 +199,5 @@ Every agent respects `resource_mode: "full" | "limited"`. Absent field → `"ful
 
 ## Legacy
 
-`~/.claude/skills/jsx-lesson/` remains as a legacy reference. Do not delete.
+If a `~/.claude/skills/jsx-lesson/` folder exists on this machine, it is a legacy predecessor kept as reference only — do not delete it, and do not source any bootstrap or template files from it (its copies predate the `@core` refactor). It is not shipped with this skill; standalone installs will not have it.
+

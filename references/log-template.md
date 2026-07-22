@@ -4,19 +4,25 @@ Reference for main Claude when writing the per-lesson build trail during lesson-
 
 ## Purpose
 
-`lesson_build.log.md` lives at `<lesson_root>/lesson_build.log.md`. The canonical build/update trail, surfaced to the user at end of each run. New mode creates it; update mode appends. A lesson built once and updated three times has four stacked sections in the same file.
+`lesson_build.log.md` lives in the lesson root at `<course>/claude_lessons/<slug>/lesson_build.log.md`. Main Claude writes to it throughout every run. New-mode runs create it; update-mode runs append to it. It is the canonical build/update trail for a lesson and is surfaced to the user at the end of each run. The log persists across runs, so a lesson that has been built once and updated three times will have four stacked sections in the same file: one original build and three updates.
 
 ## File location
+
+Path pattern:
 
 ```
 <workspace_root>/<course>/claude_lessons/<slug>/lesson_build.log.md
 ```
 
-Per-lesson. No shared log.
+This is per-lesson, not global. There is no shared log across lessons. Examples:
+
+- `<workspace_root>/MATH101/claude_lessons/intro-derivatives/lesson_build.log.md`
+- `<workspace_root>/PHYS102/claude_lessons/standing-waves/lesson_build.log.md`
+- `<workspace_root>/CS135/claude_lessons/binary-trees/lesson_build.log.md`
 
 ## Ownership
 
-Main Claude owns the file. Subagents return findings to main Claude; main Claude logs. Single writer avoids concurrent-write races and keeps formatting consistent.
+Main Claude owns this file. Subagents and specialists do not write to it directly. They return findings, diffs, test results, and QA reports to main Claude, and main Claude logs them. This keeps the log coherent (single writer, single voice, consistent formatting) and avoids concurrent-write races when multiple agents run in parallel.
 
 ## New-mode skeleton
 
@@ -122,69 +128,69 @@ Stash recovery: auto-popped | manual | none
 
 ## Log-writing conventions
 
-- ISO timestamps: `YYYY-MM-DDTHH:MM:SSZ` or local with offset (`YYYY-MM-DDTHH:MM:SS-04:00`).
-- Concise but informative. One line per event; multi-line for structured data (change-lists, plans, file lists).
-- Agent findings in bulleted lists under the phase heading. Attribute when useful: `- [code-reviewer] unused import in src/<slug>.jsx:14`.
-- Embed long artifacts inline. For thousands of lines, link to a sibling file and note the path.
-- Errors/unresolved go in a marked subsection (`### UNRESOLVED` or `Regression watch: [...]`) for end-of-run surfacing.
+- Use ISO timestamps: `YYYY-MM-DDTHH:MM:SSZ` (UTC) or local equivalent with offset (`YYYY-MM-DDTHH:MM:SS-04:00`).
+- Keep entries concise but informative. One line per event is fine; multi-line is appropriate for structured data (change-lists, Lesson Plans, file lists).
+- Agent findings go in bulleted lists under the relevant phase heading. Attribute findings to the agent that produced them when useful (e.g., `- [code-reviewer] unused import in src/<slug>.jsx:14`).
+- For long artifacts (full Lesson Plans, large change-lists, compiled research packages), embed them inline in the log. This is the source of truth for the build trail, so do not truncate. If an artifact is exceptionally long (thousands of lines), link to a sibling file under the lesson root and note the path in the log.
+- Errors and unresolved items go in a clearly-marked subsection (`### UNRESOLVED` in new mode, `Regression watch: [...]` in update mode) so they are easy to surface at the end of the run.
 
 ## Surfacing to the user
 
-- At end of Phase 5, main Claude composes the final report from `### UNRESOLVED`, `Regression watch`, and `Final Report` sections.
-- The log stays on disk. Users can read it any time.
-- Final report in chat is brief (20-50 lines): deploy confirmation, commit SHA, dashboard URL, unresolved/regression items. The log is the full audit trail.
+- At the end of Phase 5, main Claude reads the `### UNRESOLVED`, `Regression watch`, and `Final Report` sections from the log and composes the user-facing final report.
+- The full log file stays on disk. The user can read it at any time for the complete build trail.
+- The final report shown in the chat is brief (20-50 lines): deploy confirmation, commit SHA, deploy dashboard URL, and any unresolved or regression items. The log file is the full audit trail.
 
 ## Worked example
 
-A condensed example log for a lesson `<course>/claude_lessons/<slug>` after one new-mode build plus one update run. Path:
+A condensed example log for a fictional `MATH101/claude_lessons/intro-derivatives` lesson after one new-mode build plus one update run. Path:
 
 ```
-<workspace_root>/<course>/claude_lessons/<slug>/lesson_build.log.md
+<workspace_root>/MATH101/claude_lessons/intro-derivatives/lesson_build.log.md
 ```
 
 ```markdown
-# Lesson Build Log — <course> / <slug>
-Started: <ISO timestamp>
-Skill: lesson-builder v<version>
+# Lesson Build Log — MATH 101 / intro-derivatives
+Started: 2026-04-10T09:12:33-04:00
+Skill: lesson-builder v0.1.0
 
 ## Phase 0 — Scoping
 - Detected mode: new
-- User answers: audience=<audience>; depth=<goal>; resources=[<list of files>]; media=[<preference notes>]
-- Derived scope: N topics covering <list>
+- User answers: audience=first-year calculus students; depth=intro+intermediate; resources=[course notes PDF, textbook ch.2]; media=[SVG graphs, 1 manim animation]
+- Derived scope: 5 topics covering limits and the difference quotient, the derivative at a point, the derivative as a function, product/quotient rules, chain rule basics
 
 ## Phase 1 — Content Analysis
-- Resources analyzed: <file 1> (N pages), <textbook reference>
-- Research rounds: 2 (initial sweep + gap-fill on <subtopic>)
+- Resources analyzed: derivatives-notes.pdf (42 pages), Stewart, Calculus ch.2 (pp. 105-172)
+- Research rounds: 2 (initial sweep + gap-fill on tangent-line intuition)
 - Gap-fill rounds: 1
-- Compiled package summary: <list of concepts, graph specs, animation specs>
+- Compiled package summary: limit definition, secant vs tangent distinction, 5 differentiation rules, 3 worked examples, 2 graph specs, 1 animation spec (secant-to-tangent limit)
 
 ## Phase 2 — Plan
 - Plan artifact: embedded below
-  - Topic 1: <title> (<key concepts>)
-  - Topic 2: <title> (derivation + worked example)
-  - Topic 3: <title> (derivation + worked example)
-  - Topic 4: <title>
-  - Topic 5: <title>
-- Approval: APPROVED by user at <timestamp>
+  - Topic 1: Limits and the difference quotient
+  - Topic 2: The derivative at a point (derivation + worked example)
+  - Topic 3: The derivative as a function (derivation + worked example)
+  - Topic 4: Product and quotient rules
+  - Topic 5: Chain rule basics
+- Approval: APPROVED by user at 2026-04-10T09:34:17-04:00
 
 ## Phase 3 — Execution
-- Specialists spawned: graphics-agent (x2), manim-agent, interactive-demo-agent
+- Specialists spawned: jsx-writer, katex-writer, svg-graph-builder (x2), manim-animator
 - Files written:
-  - src/<slug_underscored>.jsx
+  - src/intro-derivatives.jsx
   - src/main.jsx
   - vite.config.js
   - server/proxy.js
   - index.html
   - package.json
   - test_lesson.cjs
-  - public/videos/<asset>.mp4
+  - public/videos/secant-to-tangent.mp4
 
 ## Phase 4 — Review
 - Code review findings: 2 unused imports, 1 missing @core alias usage (fixed)
-- Content review findings: topic 3 derivation missing explicit <step> (fixed)
+- Content review findings: topic 3 derivation missing explicit limit step (fixed)
 - Test results: 17/17 PASS on iteration 2
 - Visual QA findings per medium:
-  - SVG graphs: graph 1 x-axis label clipped (fixed)
+  - SVG graphs: tangent-slope plot x-axis label clipped (fixed)
   - Manim animation: PASS on first check
 - Fix loop iterations: 2
 
@@ -192,63 +198,63 @@ Skill: lesson-builder v<version>
 - (none)
 
 ## Phase 5 — Deploy
-- Build verification: PASS (build-all.sh, <duration>)
-- Commit SHA: <sha>
-- Deploy dashboard URL: <host-specific>
+- Build verification: PASS (build-all.sh, 2m 51s)
+- Commit SHA: 7e4b9a2
+- Deploy dashboard URL: <deploy dashboard URL>/deploys/<id>
 
 ## Final Report to User
-- Lesson deployed to <host-specific URL>
+- Lesson deployed to <live URL>/MATH101/intro-derivatives/
 - 5 topics, 2 SVG graphs, 1 manim animation
 - No unresolved items
 
-## Update YYYY-MM-DD (run-id: <hash>)
+## Update 2026-04-15 (run-id: a3f7b2)
 
 ### Phase 0 — Scoping (update)
-Detected mode: update (candidate: <workspace_root>/<course>/claude_lessons/<slug>)
+Detected mode: update (candidate: <workspace_root>/MATH101/claude_lessons/intro-derivatives)
 Mode confirmed: YES
 Working tree state: clean
 Research depth: targeted
-Scope of change: add <new topic> as a new topic; refine <existing topic> to set it up
-Media hints: 1 new SVG graph for the <new concept>
+Scope of change: add implicit differentiation as a 6th topic; refine topic 5 (chain rule) to set up the new topic
+Media hints: 1 new SVG graph for an implicitly-defined curve and its tangent line
 
 ### Phase 1 — Content Analysis (update)
-Research mode: targeted (<source references>)
-Change-list summary: { topics_kept: [1,2,3,5], modified: [4], added: [6], removed: [], reordered: no; media: { keep: 2, refine: 0, replace: 0, remove: 0, add: 1 } }
+Research mode: targeted (Stewart, Calculus section 3.5, supplementary course notes)
+Change-list summary: { topics_kept: [1,2,3,4], modified: [5], added: [6], removed: [], reordered: no; media: { keep: 2, refine: 0, replace: 0, remove: 0, add: 1 } }
 Drift incidents: none
 
 ### Phase 2 — Plan (update)
 Change-list view:
-  - Topic 4 (<title>): expand closing paragraph to motivate the new topic
-  - Topic 6 (NEW): <title> — key equations and concepts
+  - Topic 5 (chain rule): expand closing paragraph to motivate curves not given as explicit y = f(x)
+  - Topic 6 (NEW): Implicit differentiation — differentiate both sides, isolate dy/dx, tangent-to-a-circle worked example
 Full Lesson Plan: embedded below (6 topics total, abbreviated for brevity)
-Approval: APPROVED by user at <timestamp>
+Approval: APPROVED by user at 2026-04-15T14:02:08-04:00
 
 ### Phase 3 — Execution (update)
-Branch: lesson-update/<slug>-YYYYMMDD
+Branch: lesson-update/intro-derivatives-20260415
 Stash ref: none
-Specialists spawned: graphics-agent
+Specialists spawned: jsx-writer, katex-writer, svg-graph-builder
 Splice counts: refine=1, replace=0, remove=0, add=1
 Orphan cleanup: none (orphan list was empty)
 GRAPH_SCHEMA backfill: not needed (graph already conformant)
 
 ### Phase 4 — Review (update)
 Code review findings: 1 missing KaTeX escape (`<` instead of `\lt`) in new topic (fixed)
-Content review findings: equation notation consistent across topics (PASS)
-Test results: 17/17 PASS on iteration 1
+Content review findings: dy/dx notation consistent with topic 5 (PASS)
+Test results: T1-T6 PASS on iteration 1
 Visual QA findings per medium:
-  - New SVG graph: PASS
+  - New SVG graph (implicit curve + tangent): PASS
 Fix loop iterations: 1
 Regression watch:
-  - Existing topic 4 modified text did not break prior worked example (verified via screenshot diff)
+  - Topic 5 modified text did not break existing worked example (verified via screenshot diff)
 
 ### Phase 5 — Deploy (update)
-Build verification: PASS (build-all.sh, <duration>)
-Merge commit SHA: <sha>
+Build verification: PASS (build-all.sh, 2m 58s)
+Merge commit SHA: 9c2d1f8
 Stash recovery: none
 
 ### Final Report
 - Update merged to main
-- 1 topic added, 1 topic refined
+- 1 topic added (implicit differentiation), 1 topic refined (chain rule)
 - No regressions detected
 - No unresolved items
 ```

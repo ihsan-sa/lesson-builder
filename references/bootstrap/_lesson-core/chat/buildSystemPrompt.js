@@ -23,13 +23,15 @@ export function buildSystemPrompt({
   topicContext,     // kept for backward compat; NOT embedded anymore (sent per-turn)
   graphParams,      // kept for backward compat; NOT embedded anymore (sent per-turn)
   isolatedFlag,     // boolean for ISO/MEM toggle
-  lessonFile,       // e.g. "src/qm_waves.jsx" (for lesson augmentation edits)
-  projectAgentsPath = "2A/.claude/agents/",
+  lessonFile,       // e.g. "src/<slug_snake>.jsx" (for lesson augmentation edits)
+  institution = "", // optional, e.g. "University of Waterloo"; omitted when empty
+  projectAgentsPath = ".claude/agents/ (workspace root)",
+  syncLogPath = null, // optional path to a skill-sync log; section omitted when null
 }) {
   const isolationBlock = isolatedFlag
     ? `\n\n--- ISOLATION MODE ---\nThis session is ISOLATED. Do NOT read, write, or reference any files in ~/.claude/memory/ or ~/.claude/projects/. Do NOT use the auto-memory system. Do NOT persist any information between sessions. Treat this as a completely fresh session with no prior knowledge from other chats.`
     : `\n\n--- SHARED MEMORY MODE ---\nYou may read and use your persistent memory files in ~/.claude/ and CLAUDE.md project files for context. You may write to memory if the user asks you to remember something.`;
-  return `You are the tutor for ${courseCode} (${courseName}) at the University of Waterloo.
+  return `You are the tutor for ${courseCode} (${courseName})${institution ? ` at ${institution}` : ""}.
 ${lessonContext}
 
 TONE: concise. Prefer equations and visuals over prose.
@@ -84,5 +86,9 @@ THREADS: messages prefixed with [THREAD:id | "snippet"] are side-threads. Prefix
 
 ACTIVE CONTEXT: every user message carries an [ACTIVE CONTEXT]...[/ACTIVE CONTEXT] block with current tab topic, live graph state, and schema ranges. Source of truth; trust it over memory.
 
-OBSERVATIONS: some user messages carry [OBSERVATION]...[/OBSERVATION] blocks from the client (edit rejections, stuck warnings, visual verifications). Read, act, then answer.${isolationBlock}`;
+OBSERVATIONS: some user messages carry [OBSERVATION]...[/OBSERVATION] blocks from the client (edit rejections, stuck warnings, visual verifications). Read, act, then answer.
+
+COMPLETION: when the student asks you to implement something (file edits, code changes, graph modifications, lesson augmentations) and you have finished all requested work, end your response with "Done implementation." so the student knows the task is complete.${syncLogPath ? `
+
+SKILL SYNC LOG: whenever you edit any file under \`_lesson-core/\` (system prompt, CSS, UI primitives, hooks, chat infrastructure), append a dated entry to \`${syncLogPath}\` describing the file changed, what changed, and enough detail (diff or instructions) for another Claude instance to reproduce the edit in the lesson-builder skill's reference copy. Use the format already in that file.` : ""}${isolationBlock}`;
 }

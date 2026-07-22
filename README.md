@@ -52,6 +52,8 @@ flowchart TD
 
 For a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*. The skill flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced at Phase 0 for explicit override.
 
+Teaching quality is evidence-based: lessons are planned backward from measurable objectives, the embedded tutor follows a withhold-first pedagogy policy (hint ladder before answers), a Phase 4 pedagogy gate checks every objective is assessed, and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
+
 ## Key invariants
 
 - **Quality-first default**: `resource_mode: "full"` unless the user signalled otherwise.
@@ -87,10 +89,12 @@ references/
   bootstrap.md                 Workspace bootstrap procedure (fresh-workspace gate)
   bootstrap/                   Canonical payload shipped with the skill:
     _lesson-core/                Drop-in copy of the shared module imported via @core
-    lesson-template/             Skeleton lesson project (package.json, vite.config.js,
-                                 proxy shim, main.jsx, index.html, test_lesson.cjs)
+    lesson-template/             Skeleton lesson project (package.json, vite.config.js
+                                 with workspace-root envDir, proxy shim, main.jsx,
+                                 index.html, test_lesson.cjs, CLAUDE.md, .gitignore)
     workspace-root/              Workspace-level templates (gitignore.template,
-                                 env.local.example, build-all.sh, netlify.toml)
+                                 env.local.example, build-all.sh, netlify.toml,
+                                 .claude/agents/ runtime tutor team)
   update-mode.md               Update-mode orientation (read first if mode=update)
   phase-0-scoping.md           Scoping interview + scoping artifact format + resource-mode detection
   phase-1-content.md           Content orchestration + existing-media inventory pre-scan
@@ -116,4 +120,6 @@ git clone https://github.com/ihsan-sa/lesson-builder.git ~/.claude/skills/lesson
 
 Claude Code auto-discovers skills there. Trigger by asking Claude to create, build, update, revise, or improve a lesson in a workspace using the `<workspace_root>/<course>/claude_lessons/<slug>/` layout.
 
-A sibling `_lesson-core/` module is required at the workspace root. If it does not already exist, the skill installs it from `references/bootstrap/_lesson-core/` before Phase 0 (see `references/bootstrap.md`). `VITE_DESMOS_KEY` in a workspace-root `.env.local` is required for any lesson that embeds `<DesmosGraph/>` or the chatbot `<<DESMOS>>` protocol; obtain a free educational key at https://www.desmos.com/api.
+A sibling `_lesson-core/` module is required at the workspace root. If it does not already exist, the skill installs it from `references/bootstrap/_lesson-core/` before Phase 0 (see `references/bootstrap.md`). `VITE_DESMOS_KEY` in a workspace-root `.env.local` is required for any lesson that embeds `<DesmosGraph/>` or the chatbot `<<DESMOS>>` protocol; obtain a free educational key at https://www.desmos.com/api. Each lesson's `vite.config.js` points `envDir` at the workspace root, so that single `.env.local` serves every lesson.
+
+The embedded chatbot requires the `claude` CLI on `PATH` (the Express proxy spawns it per chat session; no API key is stored in the workspace). The chat panel renders in dev only — static production builds ship without it.

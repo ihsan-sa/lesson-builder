@@ -2,12 +2,29 @@
 
 ## 1. Purpose
 
-`GRAPH_SCHEMA` pairs with `DEFAULT_GRAPH_PARAMS` to give the chatbot runtime type and range info for every tunable parameter. When the LLM emits `<<EDIT_GRAPH>>`, `validateEdit(edits, GRAPH_SCHEMA)` from `_lesson-core/chat/graphSchema.js` rejects type/range/enum violations (LLM gets an `edit-rejection` observation), forwards valid entries through `onEditGraph` into `graphParams` state. A lesson without `GRAPH_SCHEMA` silently bypasses validation — any malformed LLM edit lands in React state and crashes the graph.
+`GRAPH_SCHEMA` is a per-lesson export that pairs with `DEFAULT_GRAPH_PARAMS`
+to give the chatbot runtime type and range information for every tunable
+graph parameter. When the LLM emits an `<<EDIT_GRAPH>>` block, the chat
+pipeline calls `validateEdit(edits, GRAPH_SCHEMA)` from
+`<workspace_root>/_lesson-core/chat/graphSchema.js`. Entries that fail
+type, range, or enum checks are rejected and the LLM receives an
+`edit-rejection` observation explaining why; valid entries are forwarded
+through `onEditGraph` and applied to `graphParams` state. A lesson without
+`GRAPH_SCHEMA` silently bypasses validation (the helper early-returns when
+`schema` is falsy), which means any malformed LLM edit goes straight into
+React state and crashes the graph.
 
-Used in two places:
+This guide applies in two places in the lesson-builder pipeline:
 
-- **New mode — Phase 3 Step 4**: write from scratch after `DEFAULT_GRAPH_PARAMS`.
-- **Update mode — Phase 3 Step 4.7 (backfill)**: generate for lessons predating the feature. Detection at Phase 2; key-set invariant enforced by post-splice sanity pass (section 4.6 check 4).
+- **New mode — Phase 3 Step 4**: main Claude writes `GRAPH_SCHEMA` from
+  scratch immediately after `DEFAULT_GRAPH_PARAMS` during assembly.
+- **Update mode — Phase 3 Step 4.7 (backfill)**: main Claude generates
+  `GRAPH_SCHEMA` for a pre-existing lesson that predates the
+  graph-schema feature. Detection and the approval-gate wording are set up in
+  `references/phase-2-plan.md`. See `references/phase-3-execution.md`
+  section 4.7 for where the backfill fires in the splice algorithm, and
+  section 4.6 check 4 for the post-splice sanity pass that enforces the
+  key-set invariant.
 
 ## 2. Canonical shape
 
@@ -30,54 +47,73 @@ type ParamSpec =
   | { type: "string" }
 ```
 
-Validator behavior:
+Notes on what the validator actually checks:
 
-- `int`: `Number.isInteger(value)` AND `min <= value <= max`. Non-integers rejected.
-- `float`: `typeof value === "number"` AND `min <= value <= max`. No integer coercion.
+- `int`: `Number.isInteger(value)` AND `min <= value <= max`. Non-integer
+  numerics are rejected.
+- `float`: `typeof value === "number"` AND `min <= value <= max`. No
+  integer coercion.
 - `bool`: `typeof value === "boolean"`.
-- `enum`: membership in `spec.values`. Key is literally `values` (not `enum`) — `enum` silently fails.
-- `string`: `typeof value === "string"`, no patterns.
-- `min`/`max` optional. Omit only when truly unbounded.
+- `enum`: membership in `spec.values`. The key is literally `values` (not
+  `enum`) — using `enum` silently fails because the helper treats the
+  spec as having no allowed values.
+- `string`: `typeof value === "string"` only, no pattern matching.
+- `min` and `max` are both optional. Omit them only when the parameter is
+  truly unbounded (rare in practice).
 
-The validator ignores unknown fields, so `label`/`description`/`step` metadata is safe but not used in deployed lessons. Keep schemas lean.
+The validator ignores unknown fields on a `ParamSpec`, so it is safe to
+attach `label` / `description` / `step` metadata, but none of the deployed
+lessons carry those fields today. Keep new schemas lean so they match the
+corpus and diff reviews stay readable.
 
-Valid types: `int | float | bool | enum | string`. `"number"`, `"boolean"`, `"number[]"` fail with `"unknown schema type"`.
+> **Validator ground truth**: `_lesson-core/chat/graphSchema.js` is the
+> single source of truth for the type vocabulary. It accepts only
+> `int | float | bool | enum | string`. Anything else (e.g. `"number"`,
+> `"boolean"`, `"number[]"`) fails at runtime with `"unknown schema type"`.
+> Enum specs use `values: [...]`, not `enum: [...]`.
 
-### Worked example
+### Worked example — a standing-waves lesson
+
+From a hypothetical standing-waves lesson's `src/<slug>.jsx`:
 
 ```jsx
 const DEFAULT_GRAPH_PARAMS = {
-  firstGraph:  { nMax: 4, showOverlay: false },
-  secondGraph: { nMax: 4 },
-  thirdGraph:  { nMax: 6, width: 1.0 },
+  standingWaveModes: { nMax: 4, showNodes: false },
+  modeAmplitudes:    { nMax: 4 },
+  harmonicSpectrum:  { nMax: 6, stringLength_m: 1.0 },
 };
 
 export const GRAPH_SCHEMA = {
-  firstGraph: {
-    nMax:        { type: "int",  min: 1, max: 6 },
-    showOverlay: { type: "bool" },
+  standingWaveModes: {
+    nMax:      { type: "int",  min: 1, max: 6 },
+    showNodes: { type: "bool" },
   },
-  secondGraph: {
+  modeAmplitudes: {
     nMax: { type: "int", min: 1, max: 6 },
   },
-  thirdGraph: {
-    nMax:  { type: "int",   min: 1, max: 8 },
-    width: { type: "float", min: 0.2, max: 5.0 },
+  harmonicSpectrum: {
+    nMax:           { type: "int",   min: 1, max: 8 },
+    stringLength_m: { type: "float", min: 0.2, max: 5.0 },
   },
 };
 ```
 
 Observe: `nMax` is `int` because the graph component iterates
-`for (let n = 1; n <= nMax; n++)`, and the schema max (`6`) mirrors any
-`Math.min(p.nMax, 6)` clamp inside the component. When a graph silently
-clamps its input, match the clamp in the schema so the chatbot surfaces a
-rejection instead of a silently-clamped value.
+`for (let n = 1; n <= nMax; n++)`, and the schema max (`6`) mirrors the
+`Math.min(p.nMax, 6)` clamp inside `StandingWaveModes`. When a
+graph silently clamps its input, match the clamp in the schema so the
+chatbot surfaces a rejection instead of a silently-clamped value.
 
 ## 3. Derivation rules from DEFAULT_GRAPH_PARAMS
 
 ### 3.1 Key correspondence (hard invariant)
 
-Every `DEFAULT_GRAPH_PARAMS[graphKey][paramKey]` **must** have a matching `GRAPH_SCHEMA[graphKey][paramKey]`, and nothing else. Enforced by the Phase 3 post-splice sanity pass (section 4.6). The 17-test suite does not currently enforce this; the sanity pass is the backstop.
+Every `DEFAULT_GRAPH_PARAMS[graphKey][paramKey]` **must** have a matching
+`GRAPH_SCHEMA[graphKey][paramKey]`, and nothing else. The Phase 3
+post-splice sanity pass (`references/phase-3-execution.md` section 4.6)
+enforces this by diffing the top-level key sets. The 17-test suite does
+NOT currently enforce schema-key alignment; main Claude must rely on the
+sanity pass. Adding a dedicated test is tracked as a follow-up.
 
 ### 3.2 Type inference from the default value
 
@@ -129,13 +165,13 @@ priority:
 
 ### 3.4 Enums
 
-`enum` requires an explicit `values` array. Examples:
+`enum` requires an explicit `values` array. Examples from the corpus:
 
 ```jsx
-// a CPU-instruction visualization
+// a single-cycle-cpu lesson
 instruction: { type: "enum", values: ["add", "lw", "sw", "beq", "jal"] }
 
-// a forcing-function selector for an ODE solver
+// a second-order-odes lesson
 forcing: { type: "enum", values: ["polynomial", "exponential", "trig"] }
 ```
 
@@ -149,13 +185,13 @@ Always bare: `{ type: "bool" }`. No min, max, or description.
 
 ## 4. Worked backfill example (update mode)
 
-**Input** — an existing lesson has no `GRAPH_SCHEMA` export. Suppose its
-`DEFAULT_GRAPH_PARAMS` looks like:
+**Input** — an existing lesson has no `GRAPH_SCHEMA` export. Its
+`DEFAULT_GRAPH_PARAMS` is:
 
 ```jsx
 const DEFAULT_GRAPH_PARAMS = {
-  exampleFloat: { Is: 1e-14, VT: 0.026 },
-  exampleInt:   { kn: 0.001, Vth: 1.0, W: 10, L: 1 },
+  shockley: { Is: 1e-14, VT: 0.026 },
+  mosfet:   { kn: 0.001, Vth: 1.0, W: 10, L: 1 },
 };
 ```
 
@@ -164,11 +200,11 @@ after the `DEFAULT_GRAPH_PARAMS` block:
 
 ```jsx
 export const GRAPH_SCHEMA = {
-  exampleFloat: {
+  shockley: {
     Is: { type: "float", min: 1e-18, max: 1e-9 },
     VT: { type: "float", min: 0.018, max: 0.035 },
   },
-  exampleInt: {
+  mosfet: {
     kn:  { type: "float", min: 1e-5, max: 1e-2 },
     Vth: { type: "float", min: 0.3,  max: 3.0 },
     W:   { type: "int",   min: 1,    max: 100 },
@@ -177,31 +213,33 @@ export const GRAPH_SCHEMA = {
 };
 ```
 
-Reasoning trace (for a physics/electronics lesson where these parameters
-represent a diode saturation current, thermal voltage, and MOSFET
-dimensions):
+Reasoning trace:
 
-- `Is` — literature bound for the physical quantity (here, silicon
-  saturation current): `1e-18` to `1e-9`. `float` because it is a
-  real-valued arithmetic input.
+- `Is` — silicon saturation current. Literature bound: `1e-18` to `1e-9`.
+  `float` because it is a real-valued arithmetic input.
 - `VT` — thermal voltage `kT/q`. Room-temperature range `0.018` to
   `0.035` V covers ~210 K to ~400 K.
-- `kn` — transconductance parameter. Literature bound `1e-5` to `1e-2` A/V^2.
-- `Vth` — threshold voltage. Typical range `0.3` to `3.0` V.
+- `kn` — MOSFET transconductance parameter. Literature bound `1e-5` to
+  `1e-2` A/V^2.
+- `Vth` — threshold voltage. Typical Si NMOS range `0.3` to `3.0` V.
 - `W`, `L` — channel dimensions. The default values (`10`, `1`) are
   integers and channel geometry is conventionally given in whole micron
   multiples at the level lessons target, so `int`. Bounds are a rounded
   `~10x` envelope around the default.
 
-Substitute the ranges appropriate to the lesson's actual domain. If any of
-these ranges is an uncertain guess rather than a literature value, add
+Substitute the ranges appropriate to the lesson's actual domain. If any
+of these ranges is an uncertain guess rather than a literature value, add
 `description: "range is a guess, tune after testing"` to the spec so the
 Phase 4 review and the user can find it easily. The runtime validator
 ignores `description`.
 
 ## 5. Validation
 
-After writing `GRAPH_SCHEMA`, main Claude runs these checks as part of the Phase 3 post-splice sanity pass (section 4.6):
+After writing `GRAPH_SCHEMA`, main Claude runs the following checks.
+All are part of the Phase 3 post-splice sanity pass
+(`references/phase-3-execution.md` section 4.6). The 17-test suite does
+NOT currently enforce schema-key alignment; the sanity pass is the
+backstop.
 
 1. **Top-level key count**:
    `Object.keys(GRAPH_SCHEMA).length === Object.keys(DEFAULT_GRAPH_PARAMS).length`.
@@ -242,7 +280,8 @@ under `Drift repairs:` in `lesson_build.log.md` with the failure reason.
    `const DEFAULT_GRAPH_PARAMS = \{ ... \};` closing brace.
 5. **Reconcile Chatbot props** — confirm the `<Chatbot ... />` JSX
    passes `graphSchema={GRAPH_SCHEMA}`. If the prop is missing (common
-   on pre-Phase-A lessons), add it as a second drift-repair item.
+   on lessons predating the graph-schema feature), add it as a second
+   drift-repair item.
 6. **Validate** — run the section 5 checks. Halt on any failure.
 7. **Log** — under `### Phase 3 — Execution (update)`, add a
    `Drift repairs:` line that includes `GRAPH_SCHEMA backfill` (and
@@ -280,4 +319,7 @@ The wiring path, end to end:
    it into the `graphParams` state via `setGraphParams`, and the graph
    re-renders with the new values.
 
-A missing `GRAPH_SCHEMA` short-circuits step 4 — `validateEdit` returns `{ validValue: edits, errors: [] }` unchecked, and arbitrary LLM output lands in React state. This guide exists to prevent that.
+A missing `GRAPH_SCHEMA` short-circuits this entire chain at step 4 —
+`validateEdit` returns `{ validValue: edits, errors: [] }` without
+checking anything, meaning arbitrary LLM output lands in React state.
+That is the failure mode this guide exists to prevent.

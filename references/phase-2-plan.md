@@ -10,14 +10,27 @@ Phase 2 consumes:
 
 - **Scoping artifact** from Phase 0: `mode`, `course`, `slug`, `audience_level`, `pedagogical_goal`, `scope_of_lesson`, and mode-specific fields (`provided_materials` / `new_lesson_context` for new mode, or `existing_lesson_root`, `research_depth`, `scope_of_change`, `media_hints`, `working_tree_state` for update mode).
 - **Compiled content package** from Phase 1:
-  - **New mode**: the full compiled package with topics, equations, concepts, constants, `graphs_needed`, `manim_opportunities`, `interactive_opportunities`, per-topic context strings, `LESSON_CONTEXT`, `SOURCES_CONSULTED`, `GAPS_REMAINING`.
+  - **New mode**: the full compiled package with topics, equations, concepts, constants, `graphs_needed`, `manim_opportunities`, `interactive_opportunities`, per-topic context strings and `practice_problems` arrays, `LESSON_CONTEXT`, `SOURCES_CONSULTED`, `PRACTICE_PROBLEMS_INDEX`, `GAPS_REMAINING`.
   - **Update mode**: the **update package** that extends the new-mode schema with per-topic `action` verdicts (`keep | modify | remove | reorder:<N> | add`), per-existing-medium `preverdicts` (`keep | refine | replace | remove`), drift incidents, and the existing-media inventory compiled by main Claude prior to Phase 1.
+
+## Objectives-first + prerequisite ordering (backward design)
+
+The plan is derived **backward from measurable objectives**, not forward from "what content do we have." This is the constructive-alignment spine: decide what the learner should be able to DO, then what evidence proves they can, and only then which topics and media deliver it. A plan that lists activities with no objective they serve, or an objective with no check, is misaligned and must be repaired before the approval gate — not shipped and caught in Phase 4.
+
+Before Step 1's topic split, main Claude extracts the objective skeleton from the Phase 1 content package:
+
+- **Each topic states what the learner should be able to DO.** Write observable, measurable objectives — an action verb on specific content (*derive* the dispersion relation, *predict* the sign of the current, *compare* two models, *classify* the regime). Ban vague verbs (*understand*, *know*, *appreciate*, *be familiar with*): they cannot be assessed, so they cannot be aligned. A topic carries a small set (1–3) of objectives, not a content dump.
+- **Each objective maps to ≥1 active check, including ≥1 transfer item across the topic.** For every objective, name the assessment evidence that would show it is met — a retrieval prompt, a prediction-before-reveal, a worked-then-faded example, a self-check. At least one check per topic must be a **transfer** item (same deep structure, new surface), not just recall of what was shown. Tag each check recall vs transfer. An objective with no check is an alignment error; refuse to advance the topic until it has one.
+- **Topics are ordered by prerequisite, not arbitrary sequence.** Replace "whatever order the source happened to present it" with a prerequisite ordering: if topic B's objective assumes a concept established by topic A, A precedes B. Sketch the prerequisite edges (A → B means A enables B) and sequence by them; the `TOPICS` array order is the linearization of that dependency graph, not the lecture's incidental order. Where two topics have no dependency between them, order by the teaching narrative.
+- **Default topic skeleton follows the load-fading sequence** for procedural content: worked example → faded/partial → independent practice, with the inline check at the independent step. (This is the lesson-side mirror of the tutor's fade-by-competence policy in `references/template.md`.)
+
+This objective → evidence → ordering skeleton is the contract Step 1 partitions against and that the Phase 4 pedagogy gate (`references/phase-4-review.md`) verifies. It is consistent with the evidence grades — stating objectives is only weakly effective on its own, so the leverage is in the **checks that force retrieval against them**, never in a myth (no learning-styles routing, no "remember X%", no gamified objectives; see the `SKILL.md` guardrail).
 
 ## Procedure
 
 ### Step 1: Split compiled content into logical topic units
 
-Main Claude reads the compiled content package and partitions it into topics matching the user's scope from Phase 0. One topic per tab in the final lesson. In update mode, topic boundaries are already determined by the Phase 1 verdicts (`keep`, `modify`, `add`, `remove`, `reorder`), so Step 1 reconciles them against the scoping artifact's `scope_of_change` — if the user asked for "specific topics", topics outside that list default to `keep` regardless of drift unless the drift is severe enough to block the lesson.
+Main Claude reads the compiled content package and partitions it into topics matching the user's scope from Phase 0. One topic per tab in the final lesson. The split follows the objective skeleton above — each topic owns its objectives, their checks, and its place in the prerequisite ordering, so the `TOPICS` order reflects prerequisites rather than source sequence. In update mode, topic boundaries are already determined by the Phase 1 verdicts (`keep`, `modify`, `add`, `remove`, `reorder`), so Step 1 reconciles them against the scoping artifact's `scope_of_change` — if the user asked for "specific topics", topics outside that list default to `keep` regardless of drift unless the drift is severe enough to block the lesson.
 
 ### Step 2: Spawn medium-decider-agent in parallel
 
@@ -45,6 +58,7 @@ Main Claude merges all draft execution plans into a single Lesson Plan artifact 
 - Reconciling the `GRAPH_SCHEMA` draft so every interactive graph has a schema entry with matching keys to its `DEFAULT_GRAPH_PARAMS`.
 - Tallying change-list counts (update mode) so the approval-gate summary can show honest `keep/refine/replace/remove/add` totals.
 - Flagging any internal inconsistencies (e.g., a topic marked `add` that depends on an equation marked `remove`).
+- **Forwarding `PRACTICE_PROBLEMS_INDEX`** from the Phase 1 package into the plan's `Practice problems index:` section so the user sees per-topic problem totals and solution provenance at the approval gate without reading every problem body.
 - **Forwarding deploy intent from the scoping artifact** into a `DEPLOY:` section of the plan. Every Lesson Plan (both modes) includes `Action: <deploy_action>`, `Service: <deploy_service>` (or "GitHub → workspace-configured host auto-deploy" when `deploy_action == "push-to-github"`), and `Course materials in commit: asked at Phase 5` (or "N/A — no materials provided" when `provided_materials` is empty). The user sees deploy intent at the approval gate alongside the content plan so approval covers both.
 - **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
 
@@ -124,6 +138,8 @@ Main Claude aggregates verdicts across all topics. The `specialist` field routes
 
 `medium-decider-agent` uses these to rank options. Every interactive demo must answer: "what does the student learn by manipulating this that they could not from a static figure?" Nothing → static graph.
 
+**Match the medium to the content, never to a learner "style."** Pick a graph because the concept is spatial, an animation because the temporal dimension is essential — not because a learner is "a visual learner" (a debunked premise). The medium ranking and any copy it produces must clear the "Do NOT build these" myth guardrail in `SKILL.md`: no learning-styles routing, no Dale's-cone "remember X%" justifications for interactivity (justify via the testing/doer effect), and no gamification (points / badges / leaderboards) as a motivation medium. When a choice is tempting for one of those reasons, drop it.
+
 **High-value interactive patterns**:
 - **Convergence**: iterative algorithms; let the user step through or adjust initial conditions.
 - **Parameter sensitivity**: physical properties reshape I-V curves, frequency responses, transfer functions in real time.
@@ -165,13 +181,13 @@ Practice problems index:
   - topic-2: N problems (Final 2023 ×1)
   - topic-3: none
   - ...
-  Total: M problems across K topics. Solutions: <from-source: X, orchestrator-derived: Y>.
+  Total: M problems across K topics. Solutions: <official: X, ai-worked: Y>.
 Overall structure: tab order, approximate lesson length, expected complexity
 Deploy:
   Action:  push-to-github | push-to-custom | commit-only | skip
   Service: <remote URL / CLI / service name, or "GitHub → workspace-configured host">
   Private paths (gitignored by default): <materials/, source/, notes/, *.local, .env* and any loose provided_materials>
-  Gitignore override: asked at Phase 5 (default: no override — nothing private gets published) | N/A (no gitignored candidates) | N/A (deploy skipped) | N/A (deploy skipped)
+  Gitignore override: asked at Phase 5 (default: no override — nothing private gets published) | N/A (no gitignored candidates) | N/A (deploy skipped)
 ```
 
 Rendering rules for the `Gitignore override:` line:
@@ -231,6 +247,8 @@ DEPLOY:
 
 APPROVE? [approve / request changes / abort]
 ```
+
+The `DEPLOY:` block follows the same rendering rules as the new-mode format above.
 
 **Orphan asset action semantics**:
 - `keep` — no-op in Phase 3. File stays on disk. Use when the file is work-in-progress, a reference asset the user may want to wire up later, or a legal/provenance artifact.
@@ -393,9 +411,9 @@ Routing:
 - **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, then re-run the affected `medium-decider-agent` spawn.
 - **Media-only changes** (medium type wrong, specialist brief wrong): loop back through `medium-decider-agent` for the affected topic only. Cheaper than re-running content orchestration.
 - **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
-- **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 Q7 deploy-destination question (and its custom-service follow-up when applicable), updates `deploy_action` / `deploy_service` on the scoping artifact in place, rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
+- **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates `deploy_action` / `deploy_service` on the scoping artifact in place, rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
 
-In both cases, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same AskUserQuestion pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
+In every case, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same AskUserQuestion pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
 
 ### Abort path
 
@@ -423,3 +441,4 @@ Phase 3 branches on mode:
 - **Update mode**: splices into the existing `src/<slug>.jsx`. Specialists write to `<lesson_root>/.build-scratch/{add,refine,replace}/<topic>-<medium>.jsx`. Main Claude performs splice edits against the lesson file in place, walks the verdict list, and runs the post-splice sanity pass.
 
 Phase 2 ends the moment the approval gate clears. Everything downstream operates under the constraint that the plan is the contract and any deviation requires a new approval gate (in practice, Phase 3 and Phase 4 only log deviations; they don't re-prompt the user unless a fundamental flaw surfaces in the fix loop).
+

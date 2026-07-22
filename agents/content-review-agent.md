@@ -42,6 +42,10 @@ The caller passes `mode: "new" | "update"`.
 5. If Phase 4 and a change-list is provided: verify each declared change landed as described.
 6. Compile an issue list plus the `update_criterion_coverage` block.
 
+## Source-material reading
+
+When re-reading cited PDFs, slide decks, or lecture notes: default to the `Read` tool's native PDF support. It returns rendered pages as multimodal input, preserving equations, figures, tables, and layout — essential for this agent's equation-correctness and constant-verification checks. Do NOT use `pdftotext` / `pypdf`: they silently corrupt Greek letters, super/subscripts, and fractions, which would produce false-negative equation reviews. PDFs over 10 pages require `pages: "N-M"` (max 20 per call); chunk as needed. See `references/phase-1-content.md` § "Uploaded PDFs / files" for the full procedure.
+
 ## Return format
 
 ```

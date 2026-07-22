@@ -36,14 +36,14 @@ Semantics:
 
 Management rules:
 
-- If `<lesson_root>/.gitignore` is missing, create it with the full block above.
+- If `<lesson_root>/.gitignore` is missing, create it with the full block above. (In new mode, Step 6 already copies the template's `.gitignore`, which ships this block.)
 - If it exists, append any missing entries. Never remove existing entries — the user may have added project-specific patterns.
 - Add any `provided_materials` path that sits under `<lesson_root>/` but outside the default-gitignored directories (e.g., a loose PDF at `<lesson_root>/chapter3.pdf`) as an explicit entry so it's gitignored without moving it.
 - Stage `<lesson_root>/.gitignore` at Phase 5 as part of the deploy-safe file set, so the protection persists in the repo.
 
 Override path: if the user wants to force-include a gitignored file in a specific commit, Phase 5's Step 1.5 offers the override prompt, and staging uses `git add -f` — the gitignore entry stays in place so the next run is still protected by default.
 
-Both new and update mode run this step near the tail of Phase 3 (see Step 6.5 new mode; Step 4.7 update mode).
+Both new and update mode run this step near the tail of Phase 3 (see Step 6.5 new mode; Step 4.11 update mode).
 
 ### Log discipline
 
@@ -83,7 +83,7 @@ Main Claude reads each scratch file after the specialist returns and checks for 
 Read `references/template.md` to pull the skeleton. Fill in each `REPLACE` marker using the Phase 2 Lesson Plan and the collected specialist outputs:
 
 - **`TOPIC_CONTEXT`** — one entry per topic, keyed by `topic-N`. Must include equations, key variables, given values, and the learning objective. Add a `graph-preview` entry verbatim from the template (the Graph Preview tab's context string).
-- **`LESSON_CONTEXT`** — full course and lesson description from Phase 1's compiled package. Single template literal. Reinforces the "explain, do not solve" directive.
+- **`LESSON_CONTEXT`** — full course and lesson description from Phase 1's compiled package. Single template literal. Carries the chatbot's pedagogy stance (tutor, not answer key).
 - **`DEFAULT_GRAPH_PARAMS`** — one key per graph component. Parameter objects are lifted from specialist outputs. Keys use camelCase matching the graph function name.
 - **`TOPICS`** — one entry per tab with `id`, `tab`, `title`, `subtitle`, `content`. The `content` function takes `graphParams` (conventionally named `gp`) and returns JSX. Each topic's `content` body is stitched from its specialist scratch files plus UI primitives from `@core` (`<Section>`, `<P>`, `<Eq>`, `<M>`, `<KeyConcept>`, `<CollapsibleBlock>`, `<RefImg>`).
 - **Header title and subtitle** — lesson title and course tagline (both supplied during Phase 0 scoping as free-text fields).
@@ -136,17 +136,18 @@ Files produced (sourced from `lesson-template/` unless noted):
 - **`index.html`** — Vite entry. Substitute `__COURSE_CODE__` and `__LESSON_TITLE__`. Inject any workspace-level analytics tags per existing sibling lessons (optional).
 - **`src/main.jsx`** — 5-line `ReactDOM.createRoot` entry. Substitute `__SLUG_SNAKE__`.
 - **`src/<slug_snake>.jsx`** — lesson content. Phase 3 assembles this from `references/template.md` + specialist outputs. The shipped `lesson-template/src/__SLUG_SNAKE__.jsx` is a minimal placeholder that passes only T1+T4; delete it once the real content is in place.
-- **`vite.config.js`** — copied verbatim; sets `@core` alias to `path.resolve(__dirname, "../../../_lesson-core")`, plus `server.fs.allow` for the parent dirs.
+- **`vite.config.js`** — copied verbatim; sets `@core` alias to `path.resolve(__dirname, "../../../_lesson-core")`, `server.fs.allow` for the parent dirs, and `envDir` pointed at the workspace root so the root `.env.local` (`VITE_DESMOS_KEY`) is actually loaded by Vite.
 - **`server/proxy.js`** — copied verbatim; one-line shim: `import "../../../../_lesson-core/server/proxy.js";`.
 - **`test_lesson.cjs`** — copied verbatim; 17-test QA suite (template compliance, KaTeX safety, Babel parse, etc.).
-- **`CLAUDE.md`** — newly authored, with a `## Lesson App` heading summarizing the lesson's scope, topics, and medium inventory.
-- **`.env.local`** — only when the approved plan includes a `<DesmosGraph>` embed. Write `VITE_DESMOS_KEY=<key>` by copying from the repo root's `.env.local` (which the user maintains, gitignored). If the key is not available, main Claude notes the gap in the log and the Desmos embed renders a red "key not configured" fallback until the user supplies one. Do NOT check `.env.local` into git. Before hand-authoring the embed's `state` object, read `references/desmos-schema.md` — `setState` crashes silently on numeric values where Desmos expects LaTeX strings (`sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds), and the only way to catch it without the reference is the blank-canvas-plus-console-error symptom.
+- **`CLAUDE.md`** — copied from the template with the same placeholder substitutions as the other files (`__SLUG__`, `__SLUG_SNAKE__`, `__COURSE_CODE__`, `__LESSON_TITLE__`); after assembly, fill its `## Lesson App` section with the lesson's scope, topics, and medium inventory.
+- **`.gitignore`** — copied verbatim; ships the private-by-default block from the shared convention above. Step 6.5 verifies it and appends lesson-specific entries.
+- **`.env.local`** — normally NOT created per-lesson: because `vite.config.js` sets `envDir` to the workspace root, the root `.env.local` (which the user maintains, gitignored) is loaded directly and `VITE_DESMOS_KEY` is available without copying. When the approved plan includes a `<DesmosGraph>` embed, verify the root `.env.local` defines `VITE_DESMOS_KEY`; if it does not, note the gap in the log — the Desmos embed renders a red "key not configured" fallback until the user supplies one. Do NOT check any `.env.local` into git. Before hand-authoring the embed's `state` object, read `references/desmos-schema.md` — `setState` crashes silently on numeric values where Desmos expects LaTeX strings (`sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds), and the only way to catch it without the reference is the blank-canvas-plus-console-error symptom.
 
 None of these files reference `@core` internals beyond the alias; they are stable scaffolding.
 
 ### Step 6.5: ensure private-by-default `.gitignore`
 
-Apply the "Private-by-default `.gitignore`" shared convention above. For a brand-new lesson this means writing `<lesson_root>/.gitignore` with the full default block, plus any lesson-specific entries for loose materials files that landed under `<lesson_root>/`. Log the file and the entry count under `Phase 3 — Execution`.
+Apply the "Private-by-default `.gitignore`" shared convention above. Step 6 already copied the template's `.gitignore` with the full default block; verify it matches the convention and append any lesson-specific entries for loose materials files that landed under `<lesson_root>/`. If the file is somehow absent, create it with the full default block. Log the file and the entry count under `Phase 3 — Execution`.
 
 ### Step 7: tactical wins to preserve from jsx-lesson
 
@@ -211,6 +212,7 @@ Files written:
   server/proxy.js
   test_lesson.cjs
   CLAUDE.md
+  .gitignore
   public/videos/<file>.mp4          (×2)
   public/images/<file>.png          (×3)
 GRAPH_SCHEMA: generated from DEFAULT_GRAPH_PARAMS (<N> top-level keys)

@@ -75,11 +75,20 @@ export const STYLES = `
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: var(--bg-card); }
 
 .lesson-body { padding: 24px; max-width: 920px; }
-.section { margin-bottom: 28px; }
-.section-title { font-size: 18px; font-weight: 700; color: var(--text-primary); margin: 0 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-.para { font-size: 16px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 10px; }
-.para b { color: var(--text-primary); font-weight: 600; }
-.para i { color: var(--text-muted); }
+.topic-header { max-width: 980px; margin: 0 auto; padding: 28px 36px 18px; }
+.topic-header h2 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.01em; }
+.topic-header > p { margin: 4px 0 0; font-size: 13px; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; }
+.section { max-width: 980px; margin: 0 auto 36px; padding: 0 36px; }
+.section-title { font-size: 19px; font-weight: 700; color: var(--text-primary); margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); letter-spacing: -0.01em; }
+.section .section { padding: 0; margin-bottom: 24px; }
+.section .section .section-title { font-size: 16px; color: var(--accent); border-bottom-color: transparent; padding-bottom: 4px; }
+.para { font-size: 15px; line-height: 1.7; color: var(--text-secondary); margin: 0 0 12px; }
+.para b, .para strong { color: var(--text-primary); font-weight: 600; }
+.para i, .para em { color: var(--text-muted); }
+@media (max-width: 640px) {
+  .topic-header { padding: 20px 20px 12px; }
+  .section { padding: 0 20px; margin-bottom: 28px; }
+}
 
 .ctrl-btn { padding: 6px 16px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-main); color: var(--text-primary); font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; transition: background 0.15s; }
 .ctrl-btn:hover { background: var(--accent); color: var(--bg-main); }
@@ -87,6 +96,7 @@ export const STYLES = `
 .eq-block { margin: 12px 0; padding: 14px 18px; background: var(--bg-eq); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; overflow-x: auto; }
 .eq-block .katex { font-size: 1.15em; }
 .eq-block .katex-html { color: var(--chat-katex); }
+.katex-mathml { position: absolute !important; clip: rect(1px,1px,1px,1px) !important; clip-path: inset(50%) !important; height: 1px !important; width: 1px !important; overflow: hidden !important; white-space: nowrap !important; }
 .eq-inline .katex { font-size: 1.0em; }
 .eq-inline .katex-html { color: var(--chat-katex); }
 
@@ -95,6 +105,22 @@ export const STYLES = `
 .kc-body { font-size: 15px; line-height: 1.6; color: var(--text-muted); }
 .hw-tested { border-left: 3px solid #5cb85c !important; box-shadow: inset 4px 0 0 -1px rgba(92,184,92,0.15); }
 .hw-tested .kc-label::after { content: " [TESTED]"; color: #5cb85c; font-size: 11px; font-weight: 400; }
+
+.formula-sheet-box { margin: 10px 0; padding: 12px 14px; background: rgba(92, 184, 92, 0.07); border: 1px solid rgba(92, 184, 92, 0.30); border-left: 4px solid #5cb85c; border-radius: 6px; }
+.fsb-label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: #5cb85c; margin-bottom: 6px; letter-spacing: 0.08em; text-transform: uppercase; }
+.fsb-body { font-size: 15px; line-height: 1.6; color: var(--text-muted); }
+.fsb-body .para, .fsb-body p { color: var(--text-muted); margin: 4px 0; }
+.fsb-body .eq-block { margin: 6px 0; }
+.theme-light .formula-sheet-box { background: rgba(60, 140, 75, 0.08); border-color: rgba(60, 140, 75, 0.35); border-left-color: #3c8c4b; }
+.theme-light .fsb-label { color: #2f7a3a; }
+
+.summary-box { margin: 10px 0; padding: 12px 14px; background: rgba(227, 139, 183, 0.07); border: 1px solid rgba(227, 139, 183, 0.30); border-left: 4px solid #e388b7; border-radius: 6px; }
+.sb-label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 700; color: #e388b7; margin-bottom: 6px; letter-spacing: 0.08em; text-transform: uppercase; }
+.sb-body { font-size: 15px; line-height: 1.6; color: var(--text-muted); }
+.sb-body .para, .sb-body p { color: var(--text-muted); margin: 4px 0; }
+.sb-body .eq-block { margin: 6px 0; }
+.theme-light .summary-box { background: rgba(180, 90, 140, 0.08); border-color: rgba(180, 90, 140, 0.35); border-left-color: #b45a8c; }
+.theme-light .sb-label { color: #a04a78; }
 
 .info-list { margin: 8px 0; padding-left: 20px; list-style: none; }
 .info-list li { position: relative; font-size: 15px; line-height: 2.2; color: var(--text-muted); padding-left: 4px; }
@@ -203,9 +229,9 @@ export const STYLES = `
 /* Lesson context blocks: transition is always present so the Ctrl-press-in
    feels smooth, but the pointer cursor and the hover outline only appear
    while Ctrl is held (body gets .ctx-ctrl-held from the Chatbot gate). */
-.ctx-active .eq-block, .ctx-active .key-concept, .ctx-active .compare-card, .ctx-active .para, .ctx-active .info-list li, .ctx-active .section-title { transition: outline 0.15s, background 0.15s; border-radius: 4px; }
-body.ctx-ctrl-held .ctx-active .eq-block, body.ctx-ctrl-held .ctx-active .key-concept, body.ctx-ctrl-held .ctx-active .compare-card, body.ctx-ctrl-held .ctx-active .para, body.ctx-ctrl-held .ctx-active .info-list li, body.ctx-ctrl-held .ctx-active .section-title { cursor: pointer; }
-body.ctx-ctrl-held .ctx-active .eq-block:hover, body.ctx-ctrl-held .ctx-active .key-concept:hover, body.ctx-ctrl-held .ctx-active .compare-card:hover, body.ctx-ctrl-held .ctx-active .para:hover, body.ctx-ctrl-held .ctx-active .info-list li:hover { outline: 1px dashed var(--ctx-hover-outline); outline-offset: 2px; background: var(--ctx-hover-bg); }
+.ctx-active .eq-block, .ctx-active .key-concept, .ctx-active .formula-sheet-box, .ctx-active .summary-box, .ctx-active .compare-card, .ctx-active .para, .ctx-active .info-list li, .ctx-active .section-title, .ctx-active .practice-problem { transition: outline 0.15s, background 0.15s; border-radius: 4px; }
+body.ctx-ctrl-held .ctx-active .eq-block, body.ctx-ctrl-held .ctx-active .key-concept, body.ctx-ctrl-held .ctx-active .formula-sheet-box, body.ctx-ctrl-held .ctx-active .summary-box, body.ctx-ctrl-held .ctx-active .compare-card, body.ctx-ctrl-held .ctx-active .para, body.ctx-ctrl-held .ctx-active .info-list li, body.ctx-ctrl-held .ctx-active .section-title, body.ctx-ctrl-held .ctx-active .practice-problem { cursor: pointer; }
+body.ctx-ctrl-held .ctx-active .eq-block:hover, body.ctx-ctrl-held .ctx-active .key-concept:hover, body.ctx-ctrl-held .ctx-active .formula-sheet-box:hover, body.ctx-ctrl-held .ctx-active .summary-box:hover, body.ctx-ctrl-held .ctx-active .compare-card:hover, body.ctx-ctrl-held .ctx-active .para:hover, body.ctx-ctrl-held .ctx-active .info-list li:hover, body.ctx-ctrl-held .ctx-active .practice-problem:hover { outline: 1px dashed var(--ctx-hover-outline); outline-offset: 2px; background: var(--ctx-hover-bg); }
 
 @keyframes ctxFlash { 0% { background: var(--ctx-flash-bg); outline: 2px solid var(--accent); outline-offset: 2px; } 100% { background: transparent; outline: 2px solid transparent; outline-offset: 2px; } }
 .ctx-flash { animation: ctxFlash 0.6s ease-out !important; }
@@ -251,15 +277,41 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 .collapsible-toggle:hover { color: var(--accent); }
 .collapsible-content { padding: 12px 14px; background: var(--bg-card); }
 
+/* PracticeProblem */
+.practice-problem { margin: 16px 0; padding: 14px 16px; background: var(--bg-card); border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 6px; }
+.practice-problem.pp-has-official { border-left-color: var(--accent); }
+.pp-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+.pp-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 3px; text-transform: uppercase; }
+.pp-badge-official { background: var(--accent); color: var(--chat-badge-text); }
+.pp-badge-ai { background: var(--bg-eq); color: var(--text-dim); border: 1px solid var(--border); }
+.pp-source { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-dim); font-style: italic; }
+.pp-difficulty { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 6px; border: 1px solid var(--border); border-radius: 3px; margin-left: auto; }
+.pp-diff-intro { color: #5cb85c; border-color: rgba(92, 184, 92, 0.35); }
+.pp-diff-core { color: var(--text-muted); }
+.pp-diff-stretch { color: var(--accent); border-color: var(--chat-chip-border); }
+.pp-statement { font-size: 15px; line-height: 1.6; color: var(--text-secondary); margin-bottom: 10px; }
+.pp-statement .para { margin-bottom: 6px; }
+.pp-solution-wrap { border-top: 1px dashed var(--border); margin-top: 10px; padding-top: 10px; }
+.pp-solution-toggle { background: none; border: none; padding: 4px 0; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; font-size: 13px; cursor: pointer; transition: color 0.15s; }
+.pp-solution-toggle:hover { color: var(--accent); }
+.pp-solution-body { padding: 10px 0 2px; font-size: 15px; line-height: 1.6; color: var(--text-secondary); }
+.pp-solution-body .para { margin-bottom: 8px; }
+.pp-ai-sources { margin-top: 12px; padding: 10px 12px; background: var(--bg-eq); border-radius: 4px; border-left: 2px solid var(--border); }
+.pp-ai-sources-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 6px; }
+.pp-ai-sources-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-muted); }
+.pp-ai-sources-list li { margin-bottom: 3px; line-height: 1.45; }
+.pp-ai-sources-list a { color: var(--text-muted); text-decoration: underline; text-decoration-color: var(--border); }
+.pp-ai-sources-list a:hover { color: var(--accent); text-decoration-color: var(--accent); }
+
 /* --- Inline demo blocks --- */
 .chat-demo-block { margin: 8px 0; padding: 10px; background: var(--bg-eq); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .chat-demo-title { font-size: 11px; font-family: 'IBM Plex Mono', monospace; color: var(--accent); margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 .chat-demo-block svg { display: block; margin: 0 auto; }
 
 /* --- Desmos chat embeds --- */
-.chat-desmos-block { position: relative; margin: 8px 0; min-height: 340px; background: var(--bg-eq); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.chat-desmos-block { position: relative; margin: 8px 0; min-height: 520px; background: var(--bg-eq); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .chat-desmos-block:empty::before { content: 'Rendering graph...'; display: block; padding: 18px; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; }
-.chat-desmos-host { width: 100%; height: 340px; }
+.chat-desmos-host { width: 100%; height: 520px; }
 .chat-desmos-error { padding: 14px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--chat-stop-color); text-align: center; }
 
 /* --- Media blocks (images, videos, standalone SVGs) --- */

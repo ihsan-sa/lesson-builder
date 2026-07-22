@@ -68,6 +68,6 @@ chat_*.png
 #   !<COURSE_DIR>/<COURSE_DIR>_formula_sheet.pdf
 #   !<COURSE_DIR>/<COURSE_DIR>_formula_sheet.tex
 #
-# Replace <COURSE_DIR> with the actual directory name (e.g. `ECE109`, `240`).
+# Replace <COURSE_DIR> with the actual directory name (e.g. `MATH101`).
 # Without the explicit `!…pdf` re-allow, the `*.pdf` rule above would drop it.
 # ---------------------------------------------------------------------------

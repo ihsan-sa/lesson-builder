@@ -1,26 +1,28 @@
 # Phase 4: Review with progress-aware fix loop
 
-Phase 4 is the quality gate. It catches what Phases 1-3 missed, decides whether fixes are worth attempting, and either produces a shippable artifact or halts with a diagnosable failure.
+Phase 4 is the quality gate of the lesson-builder pipeline. Everything before it is constructive (research, planning, execution); everything after it is deployment. Phase 4's job is to catch what Phases 1-3 missed, decide whether fixes are worth attempting, and either produce a shippable artifact or halt cleanly with a diagnosable failure state.
 
 ## Purpose
 
-Run parallel reviews against the post-execution lesson (the JSX from Phase 3 plus every medium), compile findings into one issue list, drive a progress-aware fix loop, and gate on local build verification before Phase 5. Mode-agnostic in mechanism; two update rules layer on: **no-grandfathering** (visual-QA covers all final media, including `keep`) and **regression-watch** (halt a fix thread when a refine/replace regresses a previously-clean `keep` medium).
+Phase 4 runs a battery of parallel reviews against the post-execution lesson (the JSX assembled in Phase 3 plus every medium built by the specialists), compiles the findings into a single issue list, drives a progress-aware fix loop that halts cleanly instead of churning, and gates on a local build verification step before Phase 5 is permitted to deploy. The mechanism itself is mode-agnostic: new-mode and update-mode builds share the same reviewers, the same compile step, and the same fix loop shell. Two update-mode-specific rules layer on top — the **no-grandfathering** rule expands visual-QA coverage to every medium in the post-update lesson (not just the ones that changed), and the **regression-watch** rule halts a fix thread the moment a refine/replace iteration breaks a previously-clean `keep` medium.
 
 ---
 
 ## Parallel reviews
 
-Fire all reviews at once in a single message; do not serialize. Listing order within the parallel block (`code-review-agent`, `content-review-agent`, build+test, visual-QA teams, headed Playwright, change-list sanity Grep for update) is for readability/log order, not execution.
+Main Claude fires all of these at once. Do not serialize. The goal is to get the complete picture of what is wrong in one pass, then fix once, rather than discovering problems drip by drip.
+
+Spawning order inside the single parallel fire: `code-review-agent` and `content-review-agent` first (cheapest), then the build+test shell command, then the visual-QA specialist teams, then the headed Playwright run, then the change-list sanity Grep pass (update mode only), and the pedagogy gate (review #7, folded into `content-review-agent`'s brief or run as its own light check). All of these are in the **same** parallel message — "first" and "last" here refer to the order tools are listed in the tool call block, not sequential execution. Tool call ordering inside a parallel block matters only for readability and log order, not for execution.
 
 ### 1. `code-review-agent`
 
 Structural and syntactic review of the lesson JSX. Checks:
 
-- **Template compliance**: `@core` imports present and correct (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `Chatbot` as needed). No inlined chat code.
-- **KaTeX safety**: every `<Eq>` / `<M>` uses `{"..."}` with double-escaped backslashes; bare `<` / `>` replaced with `\\lt` / `\\gt`. Allowed: `\\leq`, `\\left`, `\\ll`, `\\lambda`.
-- **Babel parse**: file parses cleanly with `@babel/parser` under `sourceType: module` with `jsx` plugin (duplicate of T1; runs first for fastest fail).
-- **SVG markup**: every inline SVG has `viewBox`, closes all tags, and has unique marker IDs (no duplicate `id="ah"` from copy-paste).
-- **Graph schema consistency**: `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA` keys match exactly. Drift in either direction is a blocker.
+- **Template compliance**: `@core` imports are present and correct (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `Chatbot` as needed). No inlined chat code — the lesson must delegate to the shared `<Chatbot>` component rather than duplicating `ChatBubble`, `ThreadPanel`, `sendMessage`, etc. This matters because lessons share chat infrastructure through `_lesson-core/`, and any lesson that re-inlines chat code will drift away from bug fixes and feature additions made in `_lesson-core/chat/`.
+- **KaTeX safety**: every `<Eq>` and `<M>` uses `{"..."}` with double-escaped backslashes, and bare `<` / `>` inside KaTeX strings are replaced with `\\lt` / `\\gt`. Legitimate escapes (`\\leq`, `\\left`, `\\ll`, `\\lambda`) are allowed. The rationale is that KaTeX strings get parsed as JSX string expressions first, so a bare `<` inside a `{"..."}` body either breaks parsing or renders as an HTML tag.
+- **Babel parse**: the file parses cleanly with `@babel/parser` under `sourceType: module` with the `jsx` plugin. This is the same check as T1 below, duplicated here because `code-review-agent` runs before `node test_lesson.cjs` and the fastest fail is the one that short-circuits everything else.
+- **SVG markup validation**: every inline SVG has a `viewBox`, closes all tags, and has unique marker IDs across the file (no duplicate `id="ah"` from copy-pasted arrow markers). Duplicate marker IDs cause the second occurrence to inherit the first's styling, which silently breaks arrowheads on the second graph.
+- **Graph schema consistency**: the keys in `DEFAULT_GRAPH_PARAMS` match the keys in `GRAPH_SCHEMA` exactly (required by the chatbot edit-graph feature; a drift here breaks self-editing). Drift in either direction is a blocker: a missing `GRAPH_SCHEMA` entry means the chatbot has no schema to reason about; a missing `DEFAULT_GRAPH_PARAMS` entry means an edit-graph instruction has no initial value to diff against.
 
 Returns a list of issues tagged by severity and line number. Does not attempt fixes; fixes happen in the fix loop below.
 
@@ -39,7 +41,7 @@ return_format: { blockers: [...], majors: [...], minors: [...] }
 Pedagogical review against the Lesson Plan, the compiled content package from Phase 1, and the original source materials. Two shapes depending on mode:
 
 - **New mode**: review content for accuracy, clarity, and alignment with the scope agreed in Phase 0. Flag hallucinated equations, missing caveats, wrong constants, missing variable definitions, or drift between what the Lesson Plan promised and what the JSX actually teaches.
-- **Update mode**: review against the Phase 2 change-list specifically. The change-list is the contract; this reviewer's job is to catch drift between what the user approved and what landed in the JSX. If the change-list says "replace derivation A with derivation B", this reviewer confirms derivation B is now present AND the old derivation A is actually gone. Drift in either direction is flagged.
+- **Update mode**: review against the Phase 2 change-list specifically. The change-list is the contract; this reviewer's job is to catch drift between what the user approved and what landed in the JSX. If the change-list says "replace the Shockley diode derivation with the piecewise-linear model", this reviewer confirms the piecewise-linear model is now present AND the old Shockley derivation is actually gone. Drift in either direction is flagged.
 
 ### 3. Build + test
 
@@ -55,7 +57,25 @@ node test_lesson.cjs
 
 #### The 17-test suite
 
-Full list in `references/checklists.md` → "17-test suite summary". Each test is a one-liner pass/fail in `test_lesson.cjs`. Phase 4 runs the suite via `node test_lesson.cjs`; capture the full pass/fail breakdown and feed it into the compile step.
+The canonical executable copy ships at `references/bootstrap/lesson-template/test_lesson.cjs` and is copied into each lesson root when the scaffold is bootstrapped. Each test is a one-liner pass/fail check inside `test_lesson.cjs`:
+
+- **T1 — JSX Babel parse**: `@babel/parser` parses the file with `jsx` plugin enabled. Catches syntax errors.
+- **T2 — KaTeX safety**: no bare `<` characters inside KaTeX string expressions (regex `{"..<.."}`), except allow-listed sequences `\\lt`, `\\leq`, `\\left`, `\\ll`, `\\lambda`, `\\langle`, `\\ldots`. Bare `<` crashes KaTeX.
+- **T3 — Heading bracket safety**: no bare `<` / `>` inside `<h2>`, `<h3>`, `<h4>` text nodes (JSX parse error).
+- **T4 — Export default**: file contains `export default`.
+- **T5 — `TOPICS` defined**: `const TOPICS = [` declaration present.
+- **T6 — `TOPIC_CONTEXT` defined**: `const TOPIC_CONTEXT = {` declaration present.
+- **T7 — `LESSON_CONTEXT` defined**: `const LESSON_CONTEXT =` declaration present.
+- **T8 — Imports from `@core`**: file imports from `"@core"` and references `Chatbot`.
+- **T9 — Theme className**: uses `className="theme-dark"` or `className="theme-light"` (gold accent handled by CSS vars in `@core`).
+- **T10 — IBM Plex**: file mentions `'IBM Plex'` somewhere (inline monospace label styles).
+- **T11 — Core CSS classes**: imports `Eq`, `KeyConcept`, and `Chatbot` from `@core` (these apply `.eq-block`, `.key-concept`, `.chat-panel`).
+- **T12 — No browser storage**: no `localStorage` usage (sessionStorage alias `_ss` is intentionally allowed).
+- **T13 — No emojis**: Unicode emoji regex finds nothing.
+- **T14 — `TOPIC_CONTEXT` keys match `TOPICS` ids**: Babel AST walk: every `{id: "..."}` entry in `TOPICS` has a matching key in `TOPIC_CONTEXT`. Replaces a buggy regex-based check.
+- **T15 — `useKatex` hook**: imports `useKatex` from `@core`.
+- **T16 — `<Chatbot>` render**: file renders `<Chatbot>` with a `courseCode=` prop.
+- **T17 — No direct API**: imports `Chatbot` from `@core` (not a local copy) AND does NOT contain `api.anthropic.com` (all chat routed through the local proxy).
 
 ### 4. Visual-QA per medium
 
@@ -66,12 +86,12 @@ Specialist visual-QA teams spawned in parallel, one team per medium type present
 - **Manim**: `motion-timing-agent` (animation pacing, transitions, hold durations appropriate for study use) + `colour-agent` + `scientific-accuracy-agent`. Geometry and readability fold into motion-timing for Manim because a static frame of a Manim video tells you less than a static frame of an SVG.
 - **Interactive demos**: `interaction-agent` (controls work, slider ranges sensible, state updates correctly on input) + `readability-agent` + `scientific-accuracy-agent`.
 
-Each specialist reviews against the **original stated intent** captured by the orchestrator, not the user's most recent concerns — otherwise refinements are graded on a shifting rubric. Main Claude's spawn brief includes the original intent string.
+Each specialist reviews its artifact against the **original stated intent** as captured by the orchestrator, not against the user's most recent concerns. A refined graph must be evaluated against what the graph was always supposed to show, otherwise refinements get graded on a shifting rubric. Main Claude's spawn brief must include the original intent string, not the update user-concerns string.
 
 **Scope depends on mode**:
 
 - **New mode**: every built medium runs through the full specialist team for its type.
-- **Update mode (no-grandfathering)**: every medium in the post-update lesson — `keep`, `refine`, `replace`, `add` — runs through its full visual-QA team. Pre-existing drift gets no free pass. Without this, update reviews would be strictly weaker than new-mode reviews.
+- **Update mode (no-grandfathering)**: every medium in the post-update lesson — `keep`, `refine`, `replace`, `add` — runs through its full visual-QA team. Pre-existing drift does not get a free pass. Rationale: the user decided once (by approving the Lesson Plan at the Phase 2 gate); visual-QA then covers all final media equally so the lesson that ships matches the plan that was approved. Skipping `keep` media would make update-mode reviews strictly weaker than new-mode reviews, and the user would have no way to know when they shipped a lesson whose unchanged media silently fails a quality dimension that would have blocked a new build.
 
 **Spawn brief template** (main Claude passes this to each specialist):
 
@@ -86,7 +106,7 @@ previous_verdict: <specialist verdict from prior review if any, else null>
 
 ### 5. Headed Playwright testing via `@playwright/mcp`
 
-Main Claude spawns a headed browser session against the dev server (from the chatbot plan Phase C wiring) and drives a short interaction script. This is the only reviewer that exercises the runtime behavior of the lesson end to end, so it catches issues that are invisible to static analysis: stale closures, uncaught promise rejections, theme transitions that leave orphan styles, chatbot SSE streams that open but never produce tokens.
+Main Claude spawns a headed browser session against the lesson's running dev server and drives a short interaction script. This is the only reviewer that exercises the runtime behavior of the lesson end to end, so it catches issues that are invisible to static analysis: stale closures, uncaught promise rejections, theme transitions that leave orphan styles, chatbot SSE streams that open but never produce tokens.
 
 Prerequisites: the lesson's proxy (`node server/proxy.js`) and Vite dev server (`npx vite`) must be running. Main Claude either starts them as background tasks before the Playwright spawn or reuses already-running instances if the lesson was launched earlier in the session.
 
@@ -112,7 +132,21 @@ A cheap, Grep-level verification that every declared topic add / remove / reorde
 - For every media `refine`: confirm the original function name or asset path is still present (refine must preserve identifiers so call sites remain valid — this is enforced in `graphics-agent.md` and `manim-agent.md` update-mode rules).
 - For every media `replace`: confirm the new artifact is present AND the old one is gone.
 
-Fails loudly on declared-vs-actual mismatch. Content-review reasons about meaning; change-list sanity reasons about presence. Both matter.
+Fails loudly on any declared-vs-actual mismatch. This is the backstop for the content-review-agent's soft drift check: content-review reasons about meaning, change-list sanity reasons about presence. Both matter, because a change-list can be followed literally while the meaning drifts (content-review catches this), and a change-list can be followed in spirit while the JSX does not reflect the declared change (change-list sanity catches this).
+
+### 7. Pedagogy gate (backward-design check)
+
+Runs in the same parallel fire (folded into `content-review-agent`'s brief, or as its own light check — it reasons about the assembled JSX against the Phase 2 objective skeleton). This is the reviewer-side enforcement of the backward design established in `references/phase-2-plan.md`: it confirms the lesson actually teaches the way the plan promised, not merely that the content is accurate.
+
+Checks, per topic:
+
+- **Every objective is assessed.** Each topic objective (the observable verb-on-content from the Phase 2 plan) maps to at least one active check present in the JSX. An objective with no aligned check is a **blocker**-adjacent alignment failure — the topic teaches toward a goal it never lets the learner demonstrate. Verb-level alignment matters: the check must exercise the same cognitive verb as the objective (an objective to *derive* is not satisfied by a *recall*-only check).
+- **At least one retrieval / active-practice primitive per topic.** Confirm each topic has at least one retrieval-first or active-practice element — a prediction-before-reveal, a recall prompt, a worked-then-faded example, a self-check — not pure exposition. A topic that is read-only (prose + static figure, no check) fails this gate.
+- **At least one transfer item across the topic's checks**, tagged distinctly from recall. A topic whose only checks parrot back what was just shown fails the transfer requirement.
+- **Misconception refutation where one is declared.** If the Phase 2 plan / `TOPIC_CONTEXT` names a known misconception for the topic, the inline copy or a check must state it, mark it false, and give the causal reason — a bare correct statement does not refute.
+- **No myth in the shipped copy.** The lesson copy and tutor steering contain none of the `SKILL.md` "Do NOT build these" items — no learning-styles routing, Dale's-cone "remember X%", 2-sigma promise, gamification (points / badges / leaderboards), or Hattie-rank/effect-size badge. This is a cheap text scan mirroring the SaaS `myth-lint.ts`; treat a hit as a major (copy fix), and never resolve it by reintroducing the myth.
+
+Severity: an objective with no assessment, or a topic with no retrieval/active-practice primitive, is a **major** (the lesson is structurally passive — fix by adding the missing check, not by deleting the objective). A missing transfer item or unrefuted declared-misconception is a **major** in new mode, a **minor** in a `keep`-only update topic. A myth hit is a **major** copy fix. These are pedagogy-quality majors: they do not halt the handoff by themselves (per the major/minor handoff rule below), but under `resource_mode: "full"` the fix loop should clear them rather than forward them — a passive lesson is the failure mode this whole change exists to prevent.
 
 ---
 
@@ -130,7 +164,7 @@ Main Claude assembles the issue list across all reviewers into a single structur
   id: <stable string, e.g. "code.katex.001">,
   severity: "blocker" | "major" | "minor",
   medium: "code" | "svg" | "matplotlib" | "manim" | "demo" | "content" | "changelist",
-  source_reviewer: "code-review-agent" | "content-review-agent" | "T<N>" | "<specialist>-agent" | "playwright" | "changelist-sanity",
+  source_reviewer: "code-review-agent" | "content-review-agent" | "T<N>" | "<specialist>-agent" | "playwright" | "changelist-sanity" | "pedagogy-gate",
   location: <file:line or component name or asset path>,
   description: <what is wrong>,
   fix_hint: <optional pointer to the likely fix>,
@@ -139,26 +173,26 @@ Main Claude assembles the issue list across all reviewers into a single structur
 }
 ```
 
-The compiled list feeds the fix loop. Write it to the log under Phase 4 before attempting fixes so the baseline is recoverable if the loop is abandoned.
+The compiled issue list is the input to the fix loop. It is also written to the log under the Phase 4 section before any fixes are attempted, so the starting state is recoverable if the fix loop has to be abandoned. Writing the baseline to the log first is a deliberate choice: if the fix loop crashes or the user ctrl-Cs, the baseline is already persisted and the next run has a starting point.
 
 ---
 
 ## Progress-aware fix loop
 
-Combines hard metrics and LLM self-assessment. Principle: **iterate until quality, halt only on demonstrable regression or stall**. Under `resource_mode: "full"`, be patient. Under `"limited"`, tighten stop rules.
+The loop combines hard metric signals and LLM self-assessment. The guiding principle is **bias toward stopping early** over churning. A fix loop that burns iterations without converging is worse than logging a known issue and moving on, because churning risks regressing already-correct work.
 
-Fixes dispatched to the originating specialist: code → `code-review-agent` (with edit authority in Phase 4), SVG → `graphics-agent`, Manim → `manim-agent`, demos → `interactive-demo-agent`, content drift → `content-review-agent` (with edit authority). Main Claude dispatches; it does not fix directly.
+Fixes are applied by the same medium specialist that created the artifact originally: code issues go to `code-review-agent` (which has edit authority in this phase, unlike its read-only Phase 3 role), SVG graph issues go to `graphics-agent`, Manim issues to `manim-agent`, interactive demo issues to `interactive-demo-agent`, content drift issues to `content-review-agent` (with edit authority). Main Claude is the dispatcher; it does not apply fixes directly.
 
 ### Metrics (hard signals per issue)
 
-- **Issue count must decrease per iteration.** No strict decrease for a given thread = stall.
-- **Test pass rate must increase per iteration.** No increase (or same tests fail twice) = stall on test-category issues.
-- **Diff size** should shrink as the loop converges. Regrowing diffs = churning, not refining.
-- **Iteration count**: a soft signal. Not a hard max — allow iteration 4 if metrics say it will converge; halt before iteration 3 if regression is already evident.
+- **Issue count must decrease per iteration.** If the total number of open issues does not strictly decrease from iteration N to N+1 for a given issue thread, that is a stall.
+- **Test pass rate must increase per iteration.** If the 17-test pass count does not increase (or the same tests fail twice), that is a stall on test-category issues.
+- **Diff size per fix.** The diff applied by the fix iteration should shrink as the loop converges (each fix gets more surgical). A re-growing diff is a signal of churning — the fix agent is rewriting, not refining.
+- **Iteration count.** Soft cap at 3 iterations. This is another input signal, not a hard max. If metrics say "iteration 4 would converge", main Claude can allow it; if metrics say "iteration 2 is already regressing", halt before iteration 3.
 
 ### LLM judgment (soft signal)
 
-Each iteration the fix agent writes a one-line self-assessment: "improving", "stalled", "regressing", or "no meaningful progress". Main Claude reads it alongside metrics; it breaks ties when metrics are ambiguous, never halts alone.
+At the end of each iteration the fix agent writes a one-line self-assessment: "improving", "stalled", "regressing", or "no meaningful progress". Main Claude reads it alongside the metrics. The LLM signal is never the sole reason to halt, but it breaks ties when metrics are ambiguous.
 
 ### Stop rules
 
@@ -173,18 +207,19 @@ Each iteration is logged with: issues-before count, issues-after count, test pas
 
 ### Worked example
 
-A lesson enters Phase 4 with 6 issues: 2 blockers (T2 KaTeX `<`, T14 TOPIC_CONTEXT mismatch), 3 majors (off-axis label on graph 2, missing variable definition, theme-toggle console error), 1 minor (missing `finally` in `sendMessage`).
+A lesson enters Phase 4 with 6 issues: 2 blockers (T2 KaTeX bare `<` on two lines, T14 TOPIC_CONTEXT key mismatch), 3 majors (SVG geometry-agent reports off-axis label on graph 2, content-review-agent reports missing variable definition, Playwright reports console error on theme toggle), 1 minor (checklist: missing `finally` block in `sendMessage`).
 
-- **Iteration 1**: fix agent addresses all 6. Diff 42 lines. Re-review: 2 blockers resolved, moved label now overlaps curve (new major), variable added, console error still present, `finally` added. Count 6→3. Tests 15/17→17/17. "improving".
-- **Iteration 2**: repositions label with fixed offset, traces console error to stale `THEMES_G` import. Diff 18 lines (shrinking). Count 3→0. "improving". Loop closes.
+- **Iteration 1**. Fix agent addresses all 6 in one pass. Diff is 42 lines. Post-iteration re-review: 2 blockers resolved, graph-2 label moved but scientific-accuracy now flags the moved label as overlapping the curve, content variable definition added, Playwright console error still present (theme toggle unhandled), `finally` block added. New issue count: 3 (1 fresh major from the label move, 2 carried over). Test pass rate: 15/17 → 17/17. Self-assessment: "improving". Continue.
+- **Iteration 2**. Fix agent targets the 3 remaining: repositions the label with a fixed offset, traces the theme-toggle console error to a stale `THEMES_G` import. Diff is 18 lines (shrinking — good sign). Post-iteration: 0 issues. Test pass rate: 17/17. Self-assessment: "improving". Loop closes cleanly.
+- **Logged**: 2 iterations, both improving, no stop rules fired, 6 → 0 issues.
 
-Counter-example that halts: iteration 1 fixes 1 issue, introduces 2, diff 80 lines. Iteration 2 fixes 1, introduces 1, diff 95 lines. Count 6→7→7 (no decrease), diff growing. "stalled" then "no meaningful progress". Stop rule fires, 4 unresolved.
+A counter-example that halts: same starting state, but iteration 1 fixes only 1 issue and introduces 2 new ones. Diff is 80 lines (larger than needed). Iteration 2 fixes 1 more but introduces 1 new. Diff is 95 lines (growing). Metrics: issue count 6 → 7 → 7 (no strict decrease), diff growing. Self-assessment: "stalled" then "no meaningful progress". Stop rule fires at end of iteration 2, 4 issues logged as unresolved, loop terminates.
 
 ---
 
 ## Local build verification (Phase 5 gate)
 
-Runs at end of Phase 4 after the fix loop settles. Phase 5 cannot bypass this. Catches build breaks the dev server and test suite miss — issues that only surface under `vite build` (unresolved imports at build time, missing public assets, production-only code paths).
+Runs at the very end of Phase 4, after the fix loop has settled. This is the gate that Phase 5 cannot bypass. The purpose is to catch build breaks that the per-lesson dev server and test suite miss — mainly issues that only surface under `vite build` (unresolved imports at build time, missing public assets, production-only code paths) and that would otherwise fail in the host's build after the commit lands.
 
 ```bash
 cd <workspace_root>
@@ -202,9 +237,9 @@ After the build completes, run a **headless Playwright check** of the built arti
 
 **Update mode note**: in update mode the build runs against the current branch (the update branch created in Phase 3, typically `lesson-update/<slug>-YYYYMMDD`). Do not switch to `main` before the build — that would build the wrong code and invalidate the verification.
 
-On failure, halt before Phase 5 commit/merge. Surface the failing command, log excerpt, and current branch state. No automatic fixes — a build failure that survived 17 tests and the fix loop needs informed intervention, not blind patching. Return to Phase 4 with the new info, or Phase 2 if structural, or surface to the user.
+If either `build-all.sh` or the headless Playwright check fails, halt before the Phase 5 commit/merge. Surface the failure to the user with: the failing command, the relevant log excerpt, and the current branch state (so the user can reproduce). Do not attempt automatic fixes at this stage — a build failure that survived the 17-test suite and the fix loop is, by definition, something the reviewers missed, and main Claude should not try to patch it blind. The correct response is to return to Phase 4 reviews with the new information (the build error), possibly return to Phase 2 if the error suggests a structural problem, or surface the blocker to the user for an abort decision.
 
-`build-all.sh` builds the whole workspace because a `_lesson-core/` change can break any lesson importing from `@core`. Full build catches cross-lesson regressions. If Phase 3 only touched per-lesson files, a scoped build of `<lesson_root>` is acceptable; full build remains the default.
+Note that the full `build-all.sh` builds every lesson in the workspace, not just the one under review. This is deliberate: a change in `_lesson-core/` can break any lesson importing from `@core`, so the full build is the only way to catch cross-lesson regressions introduced by a change to the shared core. If Phase 3 only touched per-lesson files (no `_lesson-core/` edits), a scoped build targeting only `<lesson_root>` is acceptable as an optimization, but the full build remains the default.
 
 ---
 
@@ -238,6 +273,7 @@ Sub-sections under the Phase 4 header:
   - Manim: [specialists: pass/fail, findings]
   - Interactive demos: [specialists: pass/fail, findings]
 - Change-list sanity (update mode only): [pass/fail, mismatches]
+- Pedagogy gate: [per-topic: objectives-assessed pass/fail, retrieval/active-practice present, transfer item present, misconception refuted, myth scan clean]
 - Playwright headed test: [pass/fail, captured issues]
 - Fix loop iterations:
   - Iteration 1: [issues before, issues after, tests before, tests after, diff lines, self-assessment, stop rules fired]
@@ -269,12 +305,12 @@ If both conditions hold, Phase 5 proceeds to commit / merge / deploy. Unresolved
 
 ### What counts as "unresolved"
 
-An issue is unresolved if the fix loop attempted it but a stop rule halted further attempts before it cleared. Unresolved issues are never silently dropped — the final report enumerates them with their progress-eval trace.
+An issue is marked unresolved and forwarded to Phase 5 when it was present at the start of the fix loop, the fix loop made at least one attempt to address it, and one of the stop rules halted further attempts before the issue was cleared. Unresolved issues are never silently dropped — the final report always enumerates them with their progress-eval trace so the user can see exactly why the loop gave up. An issue that was fixed successfully within the loop is removed from the open list and does not appear in the final report.
 
 ### What halts the handoff entirely
 
-- **Blocker** the fix loop could not clear (e.g., T1 Babel still failing).
-- **Fundamental flaw** (Phase 2 plan was wrong — re-run Phase 2, not continue).
-- **Local build verification failure** (`build-all.sh` or headless Playwright).
+- A **blocker** severity issue that the fix loop could not clear (e.g., T1 Babel parse still failing after 3 iterations). Shipping a lesson that does not parse is not an option.
+- A **fundamental flaw** (the fix loop halted because the Phase 2 plan was wrong). This requires re-running Phase 2, not continuing to Phase 5.
+- A **local build verification failure** (either `build-all.sh` or the headless Playwright check fails).
 
-Major/minor unresolved issues forward as known-issue flags; the user decides at the final report whether to ship or abort.
+Major and minor unresolved issues do not halt the handoff by themselves; they are forwarded as known-issue flags. The judgment call of whether the lesson is good enough to ship with known majors belongs to the user, who sees them in the final report and can either approve the deploy or abort.

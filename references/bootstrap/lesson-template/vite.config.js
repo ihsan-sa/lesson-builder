@@ -17,6 +17,10 @@ function getProxyPort() {
 
 export default defineConfig({
   plugins: [react()],
+  // Load .env.local from the WORKSPACE ROOT so one key file (VITE_DESMOS_KEY)
+  // serves every lesson. Vite does NOT walk upward on its own — without this,
+  // a root .env.local is silently ignored and Desmos reports a missing key.
+  envDir: path.resolve(__dirname, "../../.."),
   resolve: {
     alias: {
       "@core": path.resolve(__dirname, "../../../_lesson-core"),

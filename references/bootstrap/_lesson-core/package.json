@@ -2,7 +2,7 @@
   "name": "_lesson-core",
   "private": true,
   "type": "module",
-  "description": "Shared chat, UI primitives, and Express proxy for all 2A lesson apps. Imported via @core vite alias and via relative path from each lesson's server/proxy.js shim.",
+  "description": "Shared chat, UI primitives, and Express proxy for all lesson apps in this workspace. Imported via @core vite alias and via relative path from each lesson's server/proxy.js shim.",
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.0"

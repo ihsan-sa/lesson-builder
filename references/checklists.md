@@ -43,7 +43,11 @@ If anything shows up, fix immediately. The `safe` filter deliberately whitelists
 
 Every lesson imports chat + UI from `@core`. Lessons inlining old chat code (local copies of `ChatBubble`, `ThreadPanel`, `buildSystemPrompt`) do not comply; update mode halts on these with a migration-first warning. Detection: Grep for `from "@core"` in `src/<slug>.jsx`.
 
+- [ ] Lesson scaffolding was copied from `references/bootstrap/lesson-template/` — the copy includes the lesson-level `CLAUDE.md`, `.gitignore`, `test_lesson.cjs`, `index.html`, `package.json`, and `vite.config.js`. Do not hand-assemble the scaffold or omit the dotfiles.
+- [ ] `vite.config.js` sets `envDir` to the workspace root, so the root `.env.local` (`VITE_DESMOS_KEY`) loads for every lesson without per-lesson env files.
 - [ ] Imports `Chatbot` and UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`) from `@core` rather than inlining them.
+- [ ] Uses the current `@core` export surface where the content calls for it: `PracticeProblem` (attributed practice problems), `FormulaSheetBox` / `SummaryBox` (exam formula-sheet and course-summary callouts), `DesmosGraph` + `useDesmos` (Desmos embeds), and `DEFAULT_MODEL` / `DEFAULT_EFFORT` (chat model defaults). No local reimplementations of any of these.
+- [ ] Chat panel is PROD-gated: `<Chatbot>` UI renders only in dev (`import.meta.env.PROD` gates it out of static builds, which have no proxy). Do not "fix" its absence from a production build, and do not remove the gate.
 - [ ] No inlined chat code in the lesson file. The lesson JSX should not define `ChatBubble`, `ThreadPanel`, `processResponse`, `buildSystemPrompt`, or `chatState` locally.
 - [ ] Uses `useKatex()` hook from `@core` for KaTeX loading. No manual CDN `<link>` tag injection.
 - [ ] `THEMES_G` imported from `@core/constants` (or defined inline for lessons that predate the constants module).
@@ -61,7 +65,7 @@ Run against generated or spliced JSX before handing to Phase 4.
 - [ ] `export default` present on the main component (`LessonApp`).
 - [ ] `TOPICS` array is non-empty; every topic `id` has a matching key in `TOPIC_CONTEXT`.
 - [ ] `TOPIC_CONTEXT` keys are one-to-one with `TOPICS` ids — no orphans, no missing entries.
-- [ ] `LESSON_CONTEXT` is non-empty and includes the **solve-protocol directive**: when a student brings a problem, the chatbot (1) asks "full solution or guided hints?", (2) internally solves the problem with two-source cross-reference regardless of which mode the student picks, (3) presents a full worked solution OR progressive hints per the student's choice, (4) never refuses to solve or lectures about academic honesty. Verbatim wording lives in `references/template.md`'s LESSON_CONTEXT block — lesson authors copy that into their per-lesson LESSON_CONTEXT string. Earlier lessons may still carry the legacy "NEVER solve" wording; on update runs, refresh them to the new protocol.
+- [ ] `LESSON_CONTEXT` is non-empty and embeds the PEDAGOGY POLICY block (see `references/template.md`). The policy supersedes the bare "NEVER solve" line: it withholds the answer AND adds the retrieval-first / least-help-first / task-focused-feedback moves. A lone "NEVER solve" with no policy is a downgrade — flag it.
 - [ ] `MODELS` array is defined with at least one model, using the `model:` field (not `id:`) to avoid T14 false positives.
 - [ ] Header `<h1>` is updated to match the actual lesson topic (not placeholder text from the template).
 - [ ] Every `<Eq>` and `<M>` uses `{"..."}` with double-escaped backslashes.
@@ -124,13 +128,26 @@ Applies to lessons that import `DesmosGraph` from `@core/ui/DesmosGraph` or that
 
 **Infrastructure and lifecycle:**
 
-- [ ] `.env.local` exists at the lesson root with `VITE_DESMOS_KEY=<key>`. Obtain at https://www.desmos.com/api (free for educational use); register the allowed origins in the Desmos dashboard (`http://localhost:*` dev, deploy domain prod).
+- [ ] `.env.local` exists at the **workspace root** with `VITE_DESMOS_KEY=<key>` — the lesson's `vite.config.js` resolves it via `envDir`, so one key serves every lesson. Obtain at https://www.desmos.com/api (free for educational use); register the allowed origins in the Desmos dashboard (`http://localhost:*` dev, deploy domain prod).
 - [ ] `.env.local` is gitignored at the repo root. Never commit the key.
 - [ ] The `state` prop passed to `<DesmosGraph>` is stable across renders. If it's built from component state, wrap in `useMemo` so the calculator does not remount every render.
 - [ ] Do NOT pass `isPlaying: true` in the state. The component strips it. Animation is always student-initiated: `DesmosGraph` (lesson path) renders a top-right Play overlay AND Desmos's native per-slider Play button is visible when `expressionsCollapsed: false`; `ChatBubble` (chat path) shows no overlay and the student taps the native Play button after expanding the (initially collapsed) expression panel.
 - [ ] `height` prop is set (default 400 px). Avoid `100%` unless the parent has a fixed height.
 - [ ] Cap at 3 Desmos embeds per visible topic. Subsequent embeds on the same page are free (CDN bundle already loaded) but visual density still matters.
 - [ ] For lessons NOT using Desmos: the key check does nothing; the hook is a no-op until a component calls it with `{ enabled: true }` (the chat path gates on the presence of a `.chat-desmos-block`).
+
+---
+
+## Pedagogy
+
+Run against the assembled lesson (Phase 4) and against the Phase 2 plan. The lesson should teach the way the evidence says learning sticks, not just present material. Mirrors the tutor PEDAGOGY POLICY in `references/template.md` and the backward-design gate in `references/phase-4-review.md`.
+
+- [ ] **Objectives stated and assessed.** Every topic states what the learner should be able to DO (an observable verb — derive / predict / compare / classify, not "understand" / "know"). Every objective maps to at least one active check in the same topic. A topic with content but no check is a constructive-alignment failure.
+- [ ] **Retrieval / active practice present per topic.** Each topic has at least one retrieval-first or active-practice primitive (a prediction-before-reveal, a recall prompt, a worked-then-faded example, a self-check question) — not pure exposition. Reading and watching alone are the weakest modes; build in doing.
+- [ ] **At least one transfer item.** Beyond recall of what was just shown, at least one check applies the idea to a new surface (same deep structure, different problem). Tag each check recall vs transfer.
+- [ ] **Hint ladder, not answer dump.** The `LESSON_CONTEXT` PEDAGOGY POLICY encodes least-help-first (nudge -> hint -> step -> answer as last resort) and step-level interaction. Confirm it is present and not weakened to "just give the answer."
+- [ ] **Misconception refutation where one exists.** For any topic with a known misconception, `TOPIC_CONTEXT` names the faulty idea + correct conception so the tutor can diagnose-then-refute. Inline copy that addresses the misconception states it, marks it false, and gives the causal reason — not a bare correct statement.
+- [ ] **Feedback is task-focused, never ego.** No person-praise ("you're a natural"), no points / streaks / badges / leaderboards anywhere in lesson copy or tutor steering. Competence feedback is informational and about the work.
 
 ---
 
@@ -154,7 +171,7 @@ Clicking a lesson content block or chat reply block to add it to chat context no
 
 - A global `keydown` / `keyup` / `blur` / `visibilitychange` listener toggles `body.ctx-ctrl-held` while Ctrl is down.
 - CSS in `_lesson-core/chat/chat.css.js` gates the pointer cursor and hover-outline on that class — transitions stay outside the gate so the fade-in feels smooth the moment Ctrl is pressed.
-- A capture-phase `document` click listener `stopPropagation()`s on lesson content blocks when `!ctrlKey`, which means none of the 39 per-lesson `handleContentClick` copies need editing.
+- A capture-phase `document` click listener `stopPropagation()`s on lesson content blocks when `!ctrlKey`, which means none of the per-lesson `handleContentClick` copies need editing.
 - `ChatBubble.handleBlockClick` early-returns on `!e.ctrlKey`.
 - Text-selection-then-mouseup adding a selection to context is unchanged (different gesture).
 
@@ -203,7 +220,7 @@ Three lightweight checks Phase 4's `code-review-agent` runs first, before the fu
 **T1 — Babel JSX parse** (run once per lesson file):
 
 ```bash
-cd /home/claude && npm install --save-dev @babel/parser 2>/dev/null
+cd "<lesson_root>" && npm install --save-dev @babel/parser 2>/dev/null
 node -e "
 const fs = require('fs');
 const p = require('@babel/parser');
@@ -262,8 +279,21 @@ Run at the end of Phase 1 before handing to Phase 2.
 
 - [ ] Every equation has a source (lecture page, textbook section, URL). "Standard result" is not acceptable.
 - [ ] Every variable is defined, with units.
-- [ ] Didactic prose earns its space. Worked examples and solutions are welcome wherever they teach something — a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study — but none of it is filler. Cut any "here's an answer" block that doesn't extend understanding. The chatbot has its own solve-protocol (ask full-or-guided, solve internally, share per student's preference) governed by `LESSON_CONTEXT`; lesson content is not constrained by it.
+- [ ] **Worked solutions: allowed for practice cards, never as answer dumps.** Research/content agents MAY extract worked solutions for `PracticeProblem` cards when the solution is official (came verbatim with the source material) or verifiably sourced (derived, then confirmed against ≥2 independent sources). These render collapsed and provenance-marked (`provenance="official"` or `"ai-worked"` with `aiSources`); fabricated problems or solutions are forbidden. The anti-answer-key rule still governs everything else: the chatbot's tutoring behavior follows the `LESSON_CONTEXT` PEDAGOGY POLICY (least-help-first, never a straight answer dump), and lesson prose must not dump answers outside practice cards.
 - [ ] **Concision**: every paragraph teaches something. Cut filler. Prefer an equation or diagram reference over prose describing the same thing.
+
+---
+
+## Practice problems checklist
+
+Applies wherever Phase 1 extracted practice problems (past finals, midterms, HW, problem sets) into a topic's `practice_problems` array. Phase 3 renders them; Phase 4 verifies.
+
+- [ ] Rendered via the `PracticeProblem` component from `@core` — statement visible by default, solution collapsed by default so students attempt first, then check. No ad-hoc per-lesson reimplementations.
+- [ ] Every problem carries a `source` provenance tag in `"<Exam or Set> <Year> — Q<N>"` form (e.g., `"Final 2024 — Q3"`, `"PS4 — Q2"`); fall back to `"<filename> p.<page>"` when the source is ambiguous, so the student can trace it.
+- [ ] `provenance` prop is correct: `"official"` only when the solution was captured verbatim from the source material (solutions appendix, HW key, textbook worked example). Derived solutions use `"ai-worked"` AND supply `aiSources` with ≥2 independent sources — the same two-source cross-reference bar as other equations. An `"ai-worked"` card without `aiSources` fails this check.
+- [ ] Solutions include the final answer with units and significant figures preserved exactly as the source gave them. Do not paraphrase numerical answers.
+- [ ] No fabricated problems. A topic with an empty `practice_problems` array gets no practice section at all — do not render an empty "Practice problems" heading, and do not invent problems to fill the slot.
+- [ ] Per-topic problem counts and provenance totals in the final lesson match the approved Phase 2 plan's `Practice problems index`.
 
 ---
 
@@ -330,7 +360,7 @@ Update mode only. Run before scoping closes. Failures surface at mode confirmati
 - [ ] Git working tree is either clean, or the caller has intentionally stashed changes. If dirty, main Claude stashes with a labeled ref (`lesson-builder-preflight-<slug>-<timestamp>`) and logs the stash ref for later recovery.
 - [ ] `from "@core"` imports are present in `src/<slug>.jsx`. If absent, the lesson predates the `_lesson-core/` migration and still inlines the old chat code. Update mode must halt with a migration-first warning. Narrow opt-in bypass ("update without migration") is allowed only with explicit user acknowledgement during scoping confirmation.
 - [ ] `GRAPH_SCHEMA` is present in the lesson file. If absent, the lesson predates the graph-schema feature; schedule a backfill in Phase 3 per `references/graph-schema-guide.md`. Do not halt; log as a drift-repair item.
-- [ ] `test_lesson.cjs` exists in the lesson root. If absent, it cannot be spliced from a sibling lesson as a one-line shim without breaking test paths; halt and flag.
+- [ ] `test_lesson.cjs` exists in the lesson root. If absent, restore it from the canonical copy at `references/bootstrap/lesson-template/test_lesson.cjs` and log the restore as a drift-repair item; do not splice a shim from a sibling lesson.
 - [ ] Branch name `lesson-update/<slug>-YYYYMMDD` does not already exist locally. If it does, increment with a suffix (`-a`, `-b`) or ask the user to confirm a rerun. Collision handling must be deterministic so the Phase 5 merge target is unambiguous.
 - [ ] No slug rename requested (disallowed — slug renames affect branch name, commit message, hosted deploy path, and `vite.config.js base=`; handle as "create new + delete old" flow, not as an update).
 
@@ -377,3 +407,4 @@ Main Claude runs this after assembly, before Phase 4. Cheap gate catching common
 - Phase 3 execution (splice algorithm): `references/phase-3-execution.md`
 - Phase 4 review (parallel reviews, fix loop): `references/phase-4-review.md`
 - Shared chat + UI core: `<workspace_root>/_lesson-core/`
+

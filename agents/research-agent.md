@@ -46,6 +46,10 @@ Prefer primary sources. Corroborate every non-trivial claim with at least 2 inde
 - Do not return `verified` from a single source unless it is a primary authoritative reference (NIST, CODATA, original paper).
 - Default: 3-5 citations for non-trivial claims. Under `resource_mode: "limited"`, 2 authoritative citations are acceptable.
 
+## Source-material reading
+
+When the brief includes file-path references (uploaded PDFs, slide decks, lecture notes) via `new_materials`, `existing_lesson_baseline` pointers, or a gap-fill handoff that cites an attached document, default to the `Read` tool's native PDF support. It returns rendered pages as multimodal input, preserving equations, figures, and layout. Do NOT use `pdftotext` / `pypdf`: they silently corrupt math and would produce false-verified claims keyed to mangled source text. PDFs over 10 pages require the `pages` parameter (max 20 per call); chunk as `pages: "1-20"`, `"21-40"`, etc. See `references/phase-1-content.md`, "Uploaded PDFs / files" block, for the full procedure including the ZIP-detection branch and the verification requirement.
+
 ## Update mode input
 
 When the caller (content-orchestrator-agent in update mode) passes `mode: "update"`, the brief may include:

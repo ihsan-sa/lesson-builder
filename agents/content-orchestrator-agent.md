@@ -40,6 +40,10 @@ You are the Phase 1 sub-orchestrator for lesson-builder. Main Claude spawns you 
 
 Under `research_depth: "full"`, note the runtime implication in the return (it runs the complete new-mode flow and takes longer than `light` or `targeted`) so main Claude can surface it if the user flagged a runtime budget. Do not downgrade yourself; the caller owns that decision.
 
+## Source-material reading (both modes)
+
+For PDFs, slide decks, lecture notes, and problem sets, default to the `Read` tool's native PDF support — it returns rendered pages as multimodal input, preserving equations, figures, tables, and layout. `pdftotext` / `pypdf` mangle math and are reserved for bulk programmatic mining only; never use them as the primary reader for math or physics material. PDFs over 10 pages require the `pages` parameter (max 20 per call) — chunk as `pages: "1-20"`, `"21-40"`, …; omitting `pages` on a long PDF errors out. Many course-provided "PDFs" are actually ZIPs of page images; check file type before reading. See `references/phase-1-content.md`, the "Uploaded PDFs / files" block, for the full procedure, ZIP branch, and verification requirement. **Forward this directive verbatim in the brief to every sub-agent that will read source materials** — deep-review team members, `research-agent` spawns receiving `new_materials` or `existing_lesson_baseline` file-path pointers, and any other reader. The default without explicit forwarding is for sub-agents to reach for `pdftotext` and lose the math; a silent PDF-handling regression in any single spawn propagates into the content package unreviewed.
+
 ## Return schema: new mode
 
 ```

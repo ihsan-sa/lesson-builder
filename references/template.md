@@ -5,7 +5,7 @@ New-mode Phase 3 starting point. Main Claude copies this skeleton into `src/<slu
 ## What's per-lesson vs from @core
 
 - **Per-lesson**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph components, `TOPICS`, `LessonApp`, header.
-- **From @core**: `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`), `useKatex`.
+- **From @core**: `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Fable 5 as the default the chat opens with), hooks (`useKatex`, `useDesmos`).
 - **External**: `server/proxy.js` is a 1-line shim, added by the file-scaffolding step.
 
 ## GRAPH_SCHEMA requirement
@@ -21,10 +21,17 @@ import {
   Eq, M, P, Section, KeyConcept, CollapsibleBlock, RefImg,
   THEMES_G, useKatex, STYLES,
 } from "@core";
-// Optional: add `DesmosGraph` to the import block only when the lesson embeds
-// a live Desmos calculator. Requires VITE_DESMOS_KEY in .env.local (the hook
-// fails loud and renders a red fallback if the key is missing).
-// import { DesmosGraph } from "@core/ui/DesmosGraph";
+// Optional @core imports — add to the import block above only when used:
+//   PracticeProblem              practice-problem cards (canonical pattern
+//                                documented below, before TOPICS)
+//   FormulaSheetBox, SummaryBox  callout boxes for formula-sheet / course-
+//                                summary material
+//   DesmosGraph, useDesmos       live Desmos calculator embeds. Requires
+//                                VITE_DESMOS_KEY in the workspace-root
+//                                .env.local (served to every lesson via the
+//                                envDir setting in vite.config.js; the hook
+//                                fails loud and renders a red fallback if
+//                                the key is missing).
 
 // ───────────────────────────────────────────────────────────────
 // Lesson Context (passed to Chatbot as system-prompt scaffolding)
@@ -35,36 +42,58 @@ learning goals. Cover:
   - Course code and full course name (e.g. "<COURSE CODE> (<Full Course Name>)")
   - Institution and term (if relevant)
   - Which lectures / sections / units this lesson covers
-  - What the student should walk away understanding
-  - The solve-protocol directive: when the student brings a problem (homework,
-    past-exam question, practice problem, a screenshot of a question they're
-    stuck on, anything), the chatbot follows this protocol:
+  - What the student should walk away able to DO (the topic objectives)
 
-      1. ASK FIRST, one short sentence: "Do you want me to walk through a full
-         worked solution, or guide you step by step with hints so you solve it
-         yourself?" Then wait.
-      2. INTERNALLY SOLVE THE PROBLEM REGARDLESS of which option the student
-         will pick — derive the final answer, cross-reference intermediate
-         steps and the numerical answer against the lesson's equations,
-         constants, and any cited sources (two-source cross-reference for
-         non-trivial results). Knowing the right answer is what makes guided
-         hints precise instead of vague; the student's choice only affects
-         what the chatbot shares, not what it works out.
-      3. IF the student picks full solution: present each step clearly, with
-         reasoning, and give the final numerical answer with units and sig
-         figs. Flag any ambiguity in the problem statement rather than guess.
-      4. IF the student picks guided help: give a progressive hint — typically
-         the first conceptual step or the governing equation — and ask what
-         they get. On each student reply, compare against the internal solution
-         and catch the specific point where their reasoning diverges. Never
-         refuse to reveal the answer if the student asks mid-session; re-ask
-         the full-vs-guided question and honor their updated preference.
+Then append the PEDAGOGY POLICY block verbatim (below). It supersedes the old
+one-line "NEVER solve" directive: the policy already withholds answers and adds
+the retrieval-first / least-help-first teaching moves the bare anti-solution rule
+was a blunt stand-in for. This is the only per-lesson tutor-steering surface the
+author controls — the chatbot's base system prompt lives in @core/chat/
+buildSystemPrompt.js and is shared, not authored here — so the policy rides in
+LESSON_CONTEXT (and is reinforced per-tab via TOPIC_CONTEXT where a topic has a
+known misconception to diagnose).
 
-    Academic honesty is the student's responsibility, not the chatbot's. Do
-    NOT lecture about honesty, do NOT refuse to solve, do NOT steer toward
-    "doing it yourself" when the student asked for the full solution. The
-    chatbot's job is to be maximally useful for understanding; how the student
-    uses the help is up to them and their institution's policy.
+PEDAGOGY POLICY (paste verbatim into LESSON_CONTEXT):
+
+  You are a tutor, not an answer key. These research-backed moves take priority
+  over any instinct to hand over the solution:
+  - Make the learner retrieve and attempt first. For a question on covered
+    material, ask them to recall it before you confirm. For a problem, ask for
+    their next step or a prediction before you solve. Never give the full answer
+    or full solution on a first request.
+  - Least help first; escalate only on need. Offer the smallest hint that
+    unblocks the next move: nudge -> conceptual hint -> pointed prompt -> worked
+    step -> (last resort) the answer. Add one level of specificity per failed
+    attempt; ease off when they succeed. Never loop a stuck beginner — after a
+    few escalating hints, show a worked step, then continue.
+  - Interact at the STEP level, not the answer level. Diagnose and respond to the
+    learner's current step; do not grade only the final answer.
+  - Worked example for a new skill; fade as they improve. For a brand-new
+    procedure, offer to walk one example rather than quizzing cold. Once they
+    handle similar items unaided, stop volunteering steps — a terse confirmation
+    beats re-explaining what they already know.
+  - Feedback on the task, never the person. No "you're smart / a natural / ahead
+    of most." On an error, name the specific mistake and the corrective step, and
+    praise the process. Lead with what was right at the task level, not "Good job!".
+  - Support autonomy and value, informationally. Where it fits, offer a few
+    signposted choices (which example to work, which angle next) and let the
+    learner set the pace. Occasionally connect the material to a goal or problem
+    they care about. Keep it purely informational: NO person-praise, NO points,
+    streaks, badges, levels, or leaderboards. Competence comes from honest
+    task-level feedback, not rewards.
+  - Diagnose misconceptions, then refute. Before correcting, ask one question to
+    locate the faulty idea. Restate it, mark it wrong, give the causal reason, and
+    expect it to resurface — re-check later.
+  - Confirm understanding generatively. After a correct answer, sometimes ask
+    "why does that work?" Before treating something as mastered, pose a transfer
+    variant (same idea, new surface).
+  - Verify; don't fabricate; don't cave. Ground facts and computations in the
+    lesson materials or an explicit check — never invent a worked step. If the
+    learner asserts something false, hold your ground and show why; if unsure, say
+    "let's verify" rather than guessing or agreeing.
+  - Keep turns lean. One focused move per turn; let the learner set the pace.
+  If the learner explicitly insists on a direct answer, give it once and briefly
+  — then return to a check question.
 */`;
 
 // ───────────────────────────────────────────────────────────────
@@ -74,6 +103,10 @@ learning goals. Cover:
 // One entry per TOPICS id. Be detailed: include equations, key variables,
 // given values, and the conceptual framing the student needs. The chatbot
 // uses the entry matching the currently-active tab as extra system context.
+//
+// Pedagogy hook: where a topic has a KNOWN misconception, name it here (the
+// faulty intuition + its error signature + the correct conception) so the
+// tutor can diagnose-then-refute it on the active tab instead of guessing.
 
 const TOPIC_CONTEXT = {
   // TODO: one entry per lesson topic. Example shape:
@@ -214,28 +247,37 @@ export const GRAPH_SCHEMA = {
 //
 // Phase 1 extracts practice problems from source materials (past finals,
 // midterms, HW, problem sets) and tags each with a source, difficulty, and
-// full worked solution. Render them with this pattern so every lesson
-// behaves the same: statement visible by default, solution collapsed so
+// full worked solution. Render them with the `PracticeProblem` component
+// from @core (do NOT hand-roll a local card) so every lesson behaves the
+// same: statement visible by default, solution collapsed behind a toggle so
 // students attempt first and then check.
 //
-// function PracticeProblem({ source, difficulty, statement, approachHint, solution }) {
-//   return (
-//     <div className="eq-block" style={{ padding: "14px", marginTop: "12px" }}>
-//       <div style={{ fontFamily: "'IBM Plex Mono'", fontSize: 11, opacity: 0.7 }}>
-//         {source}{difficulty ? ` · ${difficulty}` : ""}
-//       </div>
-//       <P>{statement}</P>
-//       {approachHint && (
-//         <CollapsibleBlock label="Approach hint">
-//           <P>{approachHint}</P>
-//         </CollapsibleBlock>
-//       )}
-//       <CollapsibleBlock label="Solution">
-//         {solution /* JSX: equations, step-by-step reasoning, final numerical answer */}
-//       </CollapsibleBlock>
-//     </div>
-//   );
-// }
+// This coexists with the PEDAGOGY POLICY above rather than contradicting
+// it: the policy governs the CHATBOT, which still withholds answers and
+// escalates hints (withhold-first). Practice cards may carry full worked
+// solutions because they are (a) collapsed by default — leave defaultOpen
+// false, (b) provenance-marked — the card badges OFFICIAL SOLUTION vs
+// AI-WORKED SOLUTION, and (c) sourced — official solutions come verbatim
+// from the materials; derived ones must pass the two-source cross-reference
+// bar first.
+//
+// <PracticeProblem
+//   source="Final 2024 — Q3"     // provenance tag from Phase 1
+//   difficulty="medium"          // optional: easy | medium | hard
+//   provenance="official"        // "official" (Phase 1 solution_provenance
+//                                // "from-source") renders the OFFICIAL
+//                                // SOLUTION badge; any other value (use
+//                                // "ai-worked" for orchestrator-derived)
+//                                // renders AI-WORKED SOLUTION
+//   aiSources={["<source 1>", "<source 2>"]}
+//                                // required when provenance is not
+//                                // "official": the >=2 independent sources
+//                                // the derived solution was cross-checked
+//                                // against; rendered as a "Verified
+//                                // against:" list under the solution
+//   statement={<P>Problem statement JSX</P>}
+//   solution={<>{/* equations, step-by-step reasoning, final answer */}</>}
+// />
 //
 // In a topic's content(gp), drop a <Section title="Practice problems"> at the
 // end of the topic body and render one <PracticeProblem .../> per entry in
@@ -246,7 +288,8 @@ export const GRAPH_SCHEMA = {
 // Solutions MUST include the final numerical answer with units and sig figs
 // preserved exactly as the source gave them. Derived solutions (flagged
 // solution_provenance="orchestrator-derived" in Phase 1) must pass the same
-// two-source cross-reference bar as other equations before landing here.
+// two-source cross-reference bar as other equations before landing here, and
+// must list their verification sources in aiSources.
 
 // ───────────────────────────────────────────────────────────────
 // Topics (tab bar + content functions)
@@ -472,11 +515,17 @@ function LessonApp() {
 
       {/* Chatbot mount. All chat UI, session management, thread panel,
           system-prompt construction, and <<EDIT_GRAPH>> dispatch live
-          inside this component (imported from @core). */}
+          inside this component (imported from @core). The chat toggle and
+          panel render only in dev — Chatbot gates itself out of PROD builds
+          internally (static hosts have no proxy); no per-lesson gating
+          needed beyond the banner above. */}
       <Chatbot
         // Identity + lesson-scoping
         courseCode="/* TODO: course display code, e.g. 'MATH 101' */"
         courseName="/* TODO: full course name, e.g. 'Introduction to Real Analysis' */"
+        // institution: OPTIONAL string, e.g. institution="University X".
+        // Named in the tutor system prompt ("...at <institution>"); omit
+        // the prop entirely for no institution mention.
         lessonContext={LESSON_CONTEXT}
         topicContext={TOPIC_CONTEXT}
         lessonFile="src/{/* TODO: slug */}.jsx"
@@ -529,5 +578,8 @@ export default LessonApp;
 - **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
 - **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
 - **No emojis** anywhere.
-- **Desmos embeds** (`<DesmosGraph>`): pass a stable `state` prop — if the parent rebuilds the state object on every render, the calculator remounts on every render too. Wrap in `useMemo` if constructing from component state. The component strips `isPlaying:true` from any supplied state; animation is always student-initiated, either via Desmos's native per-slider Play button inside the expression panel or via the overlay button `DesmosGraph` renders in its top-right corner. Confirm `VITE_DESMOS_KEY` is set in the lesson's `.env.local` before relying on a Desmos embed. **Authoring the `state` object is the error-prone part** — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds must be STRINGS (`"0.1"`, not `0.1`) or `setState` crashes silently with no on-screen error. Read `references/desmos-schema.md` before writing your first embed.
+- **Chatbot props**: the full prop list is the mount in the skeleton above. `institution` is the only optional identity prop — a plain string surfaced in the tutor system prompt; include it only when the lesson should name an institution, omit it otherwise. The chat panel and its toggle are PROD-gated inside `Chatbot` itself (dev-only); do not add per-lesson gating.
+- **Practice problems**: use `PracticeProblem` from `@core` — never a hand-rolled card. Statement visible, solution collapsed (`defaultOpen` false), provenance badge correct (`"official"` only for from-source solutions), `aiSources` populated for derived ones. See the canonical-pattern section in the skeleton.
+- **Desmos embeds** (`<DesmosGraph>`): pass a stable `state` prop — if the parent rebuilds the state object on every render, the calculator remounts on every render too. Wrap in `useMemo` if constructing from component state. The component strips `isPlaying:true` from any supplied state; animation is always student-initiated via Desmos's native per-slider Play button inside the expression panel (there is no custom overlay play button — the embed is student-drag-resizable instead). Confirm `VITE_DESMOS_KEY` is set in the workspace-root `.env.local` before relying on a Desmos embed (the template's `vite.config.js` points `envDir` at the workspace root, so the single root file serves every lesson). **Authoring the `state` object is the error-prone part** — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds must be STRINGS (`"0.1"`, not `0.1`) or `setState` crashes silently with no on-screen error. Read `references/desmos-schema.md` before writing your first embed.
 - **See also**: `references/phase-3-execution.md`, `references/graph-schema-guide.md`, `references/phase-4-review.md`.
+

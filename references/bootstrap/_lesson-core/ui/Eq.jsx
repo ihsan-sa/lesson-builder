@@ -10,7 +10,7 @@ export function Eq({ children, display = true }) {
       } catch (e) { ref.current.textContent = children; }
     }
   }, [children, display]);
-  return display ? <div className="eq-block"><span ref={ref} /></div> : <span ref={ref} className="eq-inline" />;
+  return display ? <div className="eq-block" data-latex={children}><span ref={ref} /></div> : <span ref={ref} className="eq-inline" data-latex={children} />;
 }
 
 export function M({ children }) { return <Eq display={false}>{children}</Eq>; }

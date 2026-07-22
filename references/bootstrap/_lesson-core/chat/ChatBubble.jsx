@@ -357,7 +357,8 @@ export function ChatBubble({ text, role, onReplyBlock, streaming }) {
     if (sel && sel.toString().trim().length > 0) return;
     const block = e.target.closest('[data-chat-block]');
     if (!block) return;
-    const blockText = block.textContent.trim();
+    const cl = block.cloneNode(true); cl.querySelectorAll('.katex-mathml').forEach(m => m.remove());
+    const blockText = (block.dataset.latex || cl.textContent).trim();
     if (blockText.length < 3) return;
     let source = "chat reply";
     if (block.classList.contains('chat-eq-block')) source = "chat equation";
