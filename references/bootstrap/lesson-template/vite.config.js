@@ -29,10 +29,14 @@ export default defineConfig({
   server: {
     fs: { allow: ["..", "../..", "../../..", "../../../.."] },
     proxy: {
+      // Every Express route the chat client calls MUST be listed here — the
+      // client posts same-origin and Vite 404s anything unlisted. /commit was
+      // missing for months and silently broke the commit chip in dev.
       "/chat": `http://localhost:${getProxyPort()}`,
       "/upload": `http://localhost:${getProxyPort()}`,
       "/session": `http://localhost:${getProxyPort()}`,
       "/sessions": `http://localhost:${getProxyPort()}`,
+      "/commit": `http://localhost:${getProxyPort()}`,
     },
   },
 });

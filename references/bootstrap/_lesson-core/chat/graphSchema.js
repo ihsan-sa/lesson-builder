@@ -12,7 +12,12 @@ export function validateEdit(edits, schema) {
     return { validValue, errors };
   }
   if (!schema || typeof schema !== "object") {
-    return { validValue: edits, errors: [] };
+    // Fail CLOSED: with no schema there is nothing to validate against, and
+    // passing edits through would let the model mutate arbitrary graph state.
+    // Legacy lessons without GRAPH_SCHEMA get this observation until the
+    // update pipeline backfills their schema.
+    errors.push({ graphKey: null, param: null, reason: "this lesson has no GRAPH_SCHEMA — graph edits are disabled until one is added (update pipeline backfills it)" });
+    return { validValue, errors };
   }
   for (const [graphKey, paramEdits] of Object.entries(edits)) {
     if (!schema[graphKey]) {

@@ -77,8 +77,9 @@ Phase 0 — Scoping            AskUserQuestion interview. Mode-branched question
                               Captures materials_scope (course-only/fill-gaps/extensions),
                               deploy_action (push-to-github/push-to-custom/commit-only/skip),
                               and deploy_service.
-Phase 1 — Content Analysis   content-orchestrator-agent (new: research + deep-review;
-                              update: read existing, diff, content-review). Honors
+Phase 1 — Content Analysis   Main Claude fans out extraction/research workers
+                              (evidence persisted to .build-scratch/evidence/);
+                              content-orchestrator-agent synthesizes. Honors
                               materials_scope to cap or broaden research.
 Phase 2 — Plan               medium-decider-agent (new: ranked media; update: 5-way
                               keep/refine/replace/remove/add). Human approval gate.
@@ -168,10 +169,10 @@ Browser (Vite dev server :5173)
 
 All agents are bundled at `agents/` — the skill is self-contained. Claude Code reads `agents/*.md` directly from the skill folder. Judgment-critical agents (content-orchestrator, medium-decider, content-review, research, scientific-accuracy) omit a `model:` line and therefore inherit the session model — a high-end session should not silently downgrade its judgment layer. Production and rubric agents pin `sonnet`.
 
-**Orchestration and content**:
-- `content-orchestrator-agent` — Phase 1 sub-orchestrator (new: research coordinator; update: diff driver)
+**Orchestration and content** (main Claude owns all worker spawns — subagents cannot spawn subagents; workers persist full output to `.build-scratch/evidence/` and return summaries):
+- `content-orchestrator-agent` — Phase 1 SYNTHESIS over persisted worker evidence (new: compile + conflict resolution; update: diff/classify driver)
 - `content-review-agent` — pedagogical content review (Phase 1 + Phase 4)
-- `research-agent` — topic research (equations/concepts with sources) + claim verification
+- `research-agent` — source extraction, topic research (equations/concepts with sources), claim verification
 
 **Media planning and production**:
 - `medium-decider-agent` — ONE spawn per lesson, all topics: ranked media + diversity/dedup (new); 5-way taxonomy (update)
@@ -186,7 +187,7 @@ All agents are bundled at `agents/` — the skill is self-contained. Claude Code
 - `scientific-accuracy-agent` — independent correctness lens per scientific artifact
 - `interaction-agent` — drives interactive demos via Playwright
 
-**Runtime tutor team** (not part of the build pipeline): `breakthrough-gap-agent`, `coordinator-agent`, `curriculum-context-agent` ship at `references/bootstrap/workspace-root/.claude/agents/` and are seeded into `<workspace_root>/.claude/agents/` at bootstrap, alongside copies of the pipeline agents above. The embedded chatbot's spawned `claude` CLI discovers that registry and uses it for in-chat delegation (graphics, QA, coordination) while a student is using the lesson.
+**Runtime tutor team** (not part of the build pipeline): `breakthrough-gap-agent` and `curriculum-context-agent` ship at `references/bootstrap/workspace-root/.claude/agents/` and are seeded into `<workspace_root>/.claude/agents/` at bootstrap, alongside copies of the pipeline agents above. The embedded chatbot's spawned `claude` CLI discovers that registry and delegates directly (graphics, QA, research) while a student is using the lesson — the tutor itself is the orchestrator, since subagents cannot spawn subagents.
 
 In update mode, visual-QA specialists receive the **original stated intent** (captured by content-orchestrator), not the user's most recent concerns — so refined media is evaluated against what it was always supposed to show.
 

@@ -606,13 +606,17 @@ export function Chatbot({
           return { ...t, messages: [...msgs, { role: "assistant", content, _streaming: true }] };
         }));
       };
+      // eventType lives OUTSIDE the read loop: a network chunk can end between
+      // an "event:" line and its "data:" line, and resetting per read would
+      // silently drop that event (missing text / missing done depending on
+      // where the transport happened to split).
+      let eventType = null;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
         const lines = sseBuffer.split("\n");
         sseBuffer = lines.pop();
-        let eventType = null;
         for (const line of lines) {
           if (line.startsWith("event: ")) {
             eventType = line.slice(7).trim();
@@ -628,7 +632,11 @@ export function Chatbot({
               } else if (eventType === "text") {
                 updateTab(tabId, { statusText: "" });
                 finalText += data.text;
-                updateAssistantMsg(processResponse(finalText).display);
+                // Streaming render is display-only: parse WITHOUT callbacks so a
+                // completed <<EDIT_GRAPH>> inside the accumulating text is not
+                // re-applied on every subsequent chunk. Side effects dispatch
+                // exactly once, from the completion pass below.
+                updateAssistantMsg(parseChatResponse(finalText).display);
               } else if (eventType === "done") {
                 finalText = data.text || finalText;
                 doneReceived = true;
@@ -899,13 +907,15 @@ export function Chatbot({
         }));
       };
 
+      // Same chunk-boundary rule as the main SSE loop: eventType persists
+      // across reads or events split across chunks get dropped.
+      let eventType = null;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         sseBuffer += decoder.decode(value, { stream: true });
         const lines = sseBuffer.split("\n");
         sseBuffer = lines.pop();
-        let eventType = null;
         for (const line of lines) {
           if (line.startsWith("event: ")) { eventType = line.slice(7).trim(); }
           else if (line.startsWith("data: ") && eventType) {

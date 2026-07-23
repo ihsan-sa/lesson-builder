@@ -10,25 +10,28 @@ Phase 1 produces a compiled content package for Phase 2. Driven by `content-orch
 
 ## New-mode content orchestration
 
-### Inputs to `content-orchestrator-agent`
+### Inputs to `content-orchestrator-agent` (synthesis spawn, after the workers)
 
 Main Claude passes the following from the scoping artifact:
 
 - `mode: "new"`
+- `evidence_dir`: absolute path to `<lesson_root>/.build-scratch/evidence/` holding every worker's persisted output
 - `course`, `slug`
 - `audience_level`, `pedagogical_goal`, `scope_of_lesson`
 - `provided_materials`: list of file paths (PDFs, ZIPs, slides, problem sets, lecture notes) or `null`
 - `materials_scope: "course-only" | "fill-gaps" | "extensions" | null` — load-bearing when materials are provided; main Claude must forward it verbatim. `course-only` caps the orchestrator's research to prerequisite lookups the materials clearly assume; `fill-gaps` lets research fill background and missing derivations but not broaden the topic; `extensions` permits broadening to related topics, deeper treatment, and applications beyond the materials. Pure-research runs (no materials) ignore it.
 - `new_lesson_context`: any research scope directives the user gave (rough topic list, textbook to parallel, research depth, number of topics target)
 
-### Procedure
+### Procedure — main Claude owns every spawn
 
-1. **Initial sweep (pure-research only)**: if `provided_materials` is empty and `research_depth` is `rough-sweep-first`, the orchestrator spawn does ONLY the rough sweep and returns a package marked `STATUS: PRELIMINARY` with the draft topic list; main Claude confirms scope with the user, then re-spawns the orchestrator for the deep pass. Subagents cannot pause mid-run for confirmation.
-2. **Per-resource deep-review teams in parallel**: one per resource. Extract equations, concepts, constants, candidate topic groupings.
-3. **Topic-area research via `research-agent`**: parallel with step 2 for topics needing coverage beyond provided materials. Each `research-agent` makes its own source reliability judgment.
-4. **Gap-fill**: narrow `research-agent` spawns for remaining concepts.
-5. **Content review pass with `content-review-agent`** over the full compiled findings, gap-fills included, against the scoping artifact. Misalignment triggers corrective rounds — at most 2, with each round's new material covered by the next round's review; remaining issues return in `GAPS_REMAINING` for main Claude to judge.
-6. **Compile and return**.
+Subagents cannot spawn subagents, so the fan-out belongs to main Claude; the orchestrator is a **synthesis** agent over persisted worker outputs. Workers write their FULL output to `<lesson_root>/.build-scratch/evidence/<worker-id>.md` and return only a 1-paragraph summary — main Claude's context carries summaries, the synthesis agent reads the files.
+
+1. **Initial sweep (pure-research only)**: if `provided_materials` is empty and `research_depth` is `rough-sweep-first`, spawn one `research-agent` for a rough topic sweep, confirm the draft topic list with the user, then proceed.
+2. **Per-resource extraction, in parallel**: one `research-agent` in source-extraction mode per provided resource — equations, concepts, constants, comparisons, candidate topic groupings, practice problems per the extraction spec below. Each brief carries explicit boundaries (which resource is yours) so parallel workers don't duplicate.
+3. **Topic-area research, in parallel with step 2**: `research-agent` topic-research spawns for coverage beyond the materials (bounded by `materials_scope`).
+4. **Gap-fill**: narrow `research-agent` spawns for concepts the first wave missed.
+5. **Synthesis**: spawn `content-orchestrator-agent` with the scoping artifact + `evidence_dir`. It compiles the package, resolves conflicts conservatively, and lists what it couldn't resolve in `GAPS_REMAINING`.
+6. **Content review**: spawn `content-review-agent` on the compiled package against the scoping artifact. On misalignment, run at most 2 corrective rounds (targeted worker re-spawns + re-synthesis, each round's new material reviewed by the next round); remaining issues stay in `GAPS_REMAINING` for main Claude to judge at the post-orchestrator check.
 
 ### Tactical input-handling notes
 
@@ -231,9 +234,10 @@ Two contract notes that matter when `references/phase-2-plan.md` hands items to 
 
 ### Inputs to `content-orchestrator-agent` in update mode
 
-Main Claude passes:
+Main Claude passes (after running whatever worker spawns the research depth calls for):
 
 - `mode: "update"`
+- `evidence_dir`: absolute path to `.build-scratch/evidence/` with the workers' persisted outputs
 - `existing_lesson_path`: absolute path to `src/<slug>.jsx`
 - `existing_lesson_root`: absolute path to `<lesson_root>`
 - `existing_media_inventory`: the structured dict above
@@ -249,11 +253,11 @@ Main Claude passes:
 
 ### Procedure branched on `research_depth`
 
-Under `resource_mode: "full"`, Phase 0 picks `targeted` or `full` for most updates. `light` is reserved for `"limited"` or explicit request. The orchestrator never downgrades below Phase 0's choice.
+Under `resource_mode: "full"`, Phase 0 picks `targeted` or `full` for most updates. `light` is reserved for `"limited"` or explicit request. As in new mode, **main Claude runs every worker spawn** (workers persist to `.build-scratch/evidence/`, return summaries) and the orchestrator synthesizes:
 
-- **full**: complete new-mode flow — deep-review per resource, `research-agent` per topic, dialogue loop — seeded with existing content as baseline. Roughly 5-10x slower than `light`; the orchestrator warns about runtime in its opening prompt so main Claude can confirm with the user if runtime budget matters, and notes actual runtime in the return.
-- **targeted**: same as light plus one `research-agent` per user-named topic with narrow brief.
-- **light**: no `research-agent` spawns. Orchestrator reads JSX end-to-end, cross-references the inventory, spawns `content-review-agent` once with concerns + new materials. ~1-2 rounds.
+- **full**: the complete new-mode worker fan-out — extraction per resource, `research-agent` per topic, review — seeded with existing content as baseline so workers flag drift rather than start from zero. Roughly 5-10x slower than `light`; warn the user when runtime budget matters.
+- **targeted**: one `research-agent` per user-named topic (from `scope_topics`) with a narrow brief, plus one `content-review-agent` pass with the exact fields it requires (`existing_content_snapshot`, `user_concerns`, `new_materials`).
+- **light**: no `research-agent` spawns; one `content-review-agent` pass as above. The orchestrator then synthesizes from the existing JSX + inventory + that review's evidence file. ~1-2 rounds.
 
 ### Drift / gap / redundancy / reorganization classification
 

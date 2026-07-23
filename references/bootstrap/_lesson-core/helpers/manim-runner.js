@@ -273,10 +273,10 @@ export async function runManimPipeline({ sceneSource, sceneName, targetMp4Path, 
     return { ok: false, reason: `render produced no mp4 under media/videos/scene/720p30/${sceneName}.mp4` };
   }
 
-  const mp4Copy = await copyFile(mp4Src, targetMp4Path);
-  if (!mp4Copy.ok) return { ok: false, reason: mp4Copy.reason };
-
-  // Stage 4: ffprobe metadata check.
+  // Stage 4: ffprobe metadata check — run against the SCRATCH render. The
+  // target path may hold the last known-good artifact (refine flow); it must
+  // only be overwritten after the new render validates, else a failed render
+  // destroys the good copy.
   const probe = await runProc(
     "ffprobe",
     [
@@ -284,7 +284,7 @@ export async function runManimPipeline({ sceneSource, sceneName, targetMp4Path, 
       "-select_streams", "v:0",
       "-show_entries", "stream=width,height,duration,codec_name",
       "-of", "json",
-      targetMp4Path,
+      mp4Src,
     ],
     { timeoutMs: FFPROBE_MS },
   );
@@ -320,7 +320,7 @@ export async function runManimPipeline({ sceneSource, sceneName, targetMp4Path, 
       [
         "-y",
         "-ss", String(times[i].toFixed(3)),
-        "-i", targetMp4Path,
+        "-i", mp4Src,
         "-vframes", "1",
         outPng,
       ],
@@ -337,6 +337,10 @@ export async function runManimPipeline({ sceneSource, sceneName, targetMp4Path, 
     }
     keyframePaths.push(outPng);
   }
+
+  // Promote only after every validation passed.
+  const mp4Copy = await copyFile(mp4Src, targetMp4Path);
+  if (!mp4Copy.ok) return { ok: false, reason: mp4Copy.reason };
 
   return {
     ok: true,

@@ -32,7 +32,7 @@ Rule of thumb: if the student asks a question whose answer belongs in the lesson
 All imported from `@core`. Use only these in the body:
 
 - `<P>...</P>`: paragraph.
-- `<Eq m={"\\int_0^1 x^2\\,dx"} />`: display math equation.
+- `<Eq>{"\\int_0^1 x^2\\,dx"}</Eq>`: display math equation (KaTeX string as the CHILD, not a prop).
 - `<M>{"\\hbar"}</M>`: inline math.
 - `<KeyConcept label="Short label">...</KeyConcept>`: highlighted callout.
 - `<CollapsibleBlock title="...">...</CollapsibleBlock>`: expandable passage.
@@ -40,7 +40,7 @@ All imported from `@core`. Use only these in the body:
 
 ### KaTeX formatting rule
 
-Inside any KaTeX string (the `m` prop of `<Eq>` or child of `<M>`), use `\\lt` and `\\gt` instead of bare `<` and `>`. Bare angle brackets break the JSX parser. Use dollar delimiters only if you are in plain text, not inside `m={"..."}`.
+Inside any KaTeX string (the string child of `<Eq>` or `<M>`), use `\\lt` and `\\gt` instead of bare `<` and `>`. Bare angle brackets break the JSX parser. Use dollar delimiters only in plain text, never inside the `{"..."}` child.
 
 ### Approval flow
 

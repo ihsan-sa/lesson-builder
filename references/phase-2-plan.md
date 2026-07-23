@@ -40,6 +40,17 @@ Medium choice is a cross-topic coherence decision (media diversity across the le
 
 The decider's per-item briefs become the plan's `execution_brief` fields **copied verbatim** — new mode from `build_brief`, update mode from the action-specific `refine_brief`/`replace_brief`/`add_brief` (the plan row records which action it was; no renaming or transformation between producer and consumer). They become the Phase 3 specialist spawn prompts, so main Claude checks each is self-contained before compiling the plan and sends it back to the decider for revision if it isn't. Every plan media row also carries the decider's immutable `media_id` and an `original_intent` one-liner (what this medium is supposed to show) — `keep` rows included, because Phase 4's no-grandfathering QA briefs are built from exactly these two fields, possibly in a later resumed session.
 
+### Step 2.5: Capability pre-flight (deterministic, before the gate)
+
+Before compiling the plan, verify every capability the decider's selections assume — infeasibility discovered in Phase 3 wastes an approval:
+
+- manim selected → `manim`, `ffmpeg`, `ffprobe` on PATH (the manim-runner `checkDependencies()` one-liner).
+- Desmos selected → `VITE_DESMOS_KEY` present in the workspace-root `.env.local`.
+- Interactive demo selected → required primitives exported by `_lesson-core/ui/`.
+- Web image selected → Step 3 pre-flight below.
+
+For any failed check, either substitute the decider's alternative for that item (log the substitution) or carry the selection with an explicit ordered fallback in the plan row — the user approves a plan that already knows what happens if the capability is absent at build time.
+
 ### Step 3: Web-image pre-flight (only when the decider proposed web images)
 
 Web images are the one medium with a pre-approval blocker: license compliance. For each proposed web image, spawn `web-image-agent` in pre-flight mode — search + license-verify ONLY, no downloads — returning candidates with stable `candidate_id`s, URLs (image + source page), license status, and the target path under `<lesson_root>/public/images/`. An image with unclear provenance does not enter the plan; the approved `candidate_id` rides in the Phase 3 fetch brief. If a request-changes revision adds a web image, re-run this pre-flight for it before re-presenting the gate — no web image reaches Phase 3 unvetted. All other media need no Phase 2 specialist work — their briefs carry enough for the gate, and rendering happens once, in Phase 3, after approval. (Manim entries carry a static note in the plan: a 5-10 s scene renders in roughly 1-3 minutes.)

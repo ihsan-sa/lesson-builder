@@ -530,7 +530,10 @@ const MAX_PORT_ATTEMPTS = 50;
 const PORT_FILE = path.join(process.cwd(), "server", ".proxy-port");
 
 function startServer(port, attempt) {
-  const server = app.listen(port, () => {
+  // Loopback-only bind: this proxy can spend tokens, write files, and run
+  // git — it must never be reachable from the LAN. CORS alone only protects
+  // against browsers; the bind is the real boundary.
+  const server = app.listen(port, "127.0.0.1", () => {
     try { fs.writeFileSync(PORT_FILE, String(port)); } catch (_) {}
     log("SERVER_START", { port, cwd: process.cwd(), tools: ALLOWED_TOOLS });
     console.log(`[proxy] Claude CLI proxy on http://localhost:${port}`);
