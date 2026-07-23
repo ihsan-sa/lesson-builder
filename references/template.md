@@ -259,7 +259,9 @@ export const GRAPH_SCHEMA = {
 // ───────────────────────────────────────────────────────────────
 //
 // Each entry is `{ id, tab, title, subtitle, content }`. `content` is a
-// function `(gp) => JSX` so graph components can receive live params.
+// function `(gp, renderId) => JSX` so graph components can receive live
+// params; the optional second arg is the graphRenderId — key a component on
+// it when it must re-render after an <<EDIT_GRAPH>> (most content ignores it).
 // Topic ids must match TOPIC_CONTEXT keys exactly (test_lesson.cjs checks
 // this). The final tab MUST be `graph-preview`.
 
@@ -320,23 +322,48 @@ function LessonApp() {
   const [theme, setTheme] = useState("light");
   const [graphParams, setGraphParams] = useState(DEFAULT_GRAPH_PARAMS);
   const [graphRenderId, setGraphRenderId] = useState(0);
+  const mouseDownPos = useRef(null);
+  const [ctxMenu, setCtxMenu] = useState(null);
   const [threadTrigger, setThreadTrigger] = useState(null);
   const [threadCtxTrigger, setThreadCtxTrigger] = useState(null);
 
   // Reassign module-level G so graph components pick up the active theme.
   G = THEMES_G[theme];
 
-  // Ctrl-/ toggles the chat panel. Copy the full keyboard handler from an
-  // existing lesson if you need thread-selection support (Ctrl-Shift-F).
+  // Ctrl-/ toggles the chat panel; Ctrl-Shift-F adds the current selection to
+  // the surrounding thread's context (fires only inside a .thread-panel).
   useEffect(() => {
     const handleKey = (e) => {
       if (e.ctrlKey && e.key === "/") {
         e.preventDefault();
         setChatOpen((o) => !o);
       }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+        const sel = window.getSelection();
+        const text = sel ? sel.toString().trim() : "";
+        if (text.length < 3) return;
+        const threadEl = sel.anchorNode?.parentElement?.closest('.thread-panel[data-thread-id]');
+        if (threadEl) {
+          e.preventDefault();
+          const tid = threadEl.getAttribute('data-thread-id');
+          setThreadCtxTrigger({ threadId: tid, text, source: "thread selection", ts: Date.now() });
+          sel.removeAllRanges();
+        }
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  // ?tab=<topic-id> deep link. The chatbot's visual-verify flow navigates to
+  // this URL shape to screenshot a specific tab — do not remove.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabId = params.get('tab');
+    if (tabId) {
+      const idx = TOPICS.findIndex(t => t.id === tabId);
+      if (idx >= 0) setActiveIdx(idx);
+    }
   }, []);
 
   // Chatbot <<EDIT_GRAPH>> callback: shallow-merge per-key param edits.
@@ -369,16 +396,138 @@ function LessonApp() {
 
   const active = TOPICS[activeIdx];
 
-  // Ctrl+Click adds a lesson content block to the chat context. Plain clicks
-  // are intentionally inert — a capture-phase listener in @core stops them
-  // unless Ctrl is held — so this handler only ever fires for Ctrl+clicks
-  // that @core let through. Without it, context capture silently does nothing.
+  // ── Context-capture + thread wiring (canonical; matches the reference
+  // lessons). Plain clicks are stopped by @core's capture-phase listener
+  // unless Ctrl is held, so these handlers only see clicks that should act.
+  // Without this block, click-to-context, selection-to-context, and the
+  // right-click "Reply / Reply in thread" menu all silently do nothing.
+
+  const handleContentMouseDown = useCallback((e) => {
+    mouseDownPos.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  // Ctrl+Click on a content block → add it to chat context.
   const handleContentClick = useCallback((e) => {
-    if (!e.ctrlKey) return;
-    const block = e.target.closest("p, li, h2, h3, h4, .eq-block, .key-concept");
-    if (!block) return;
-    addSnippet(block.innerText, active.title);
-  }, [addSnippet, active.title]);
+    if (!chatOpen) return;
+    if (e.target.closest(".chat-panel, .chat-toggle, .tab-bar, .header")) return;
+    if (mouseDownPos.current) {
+      const dx = Math.abs(e.clientX - mouseDownPos.current.x);
+      const dy = Math.abs(e.clientY - mouseDownPos.current.y);
+      if (dx > 5 || dy > 5) return;   // it was a drag/selection, not a click
+    }
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) sel.removeAllRanges();
+    const el = e.target.closest(".eq-block, .key-concept, .compare-card, .para, .info-list li, .section-title");
+    if (!el) return;
+    let source = "element";
+    if (el.classList.contains("eq-block")) source = "equation";
+    else if (el.classList.contains("key-concept")) source = "concept";
+    else if (el.classList.contains("compare-card")) source = "comparison";
+    else if (el.classList.contains("para")) source = "paragraph";
+    else if (el.tagName === "LI") source = "list item";
+    else if (el.classList.contains("section-title")) source = "section";
+    // Prefer the raw LaTeX over rendered text; strip KaTeX's hidden MathML
+    // duplicate so the snippet isn't doubled.
+    const _cl = el.cloneNode(true); _cl.querySelectorAll(".katex-mathml").forEach(m => m.remove());
+    addSnippet(el.dataset.latex || _cl.textContent, source);
+    setTimeout(() => document.querySelector(".chat-input")?.focus(), 0);
+    el.classList.remove("ctx-flash");
+    void el.offsetWidth;
+    el.classList.add("ctx-flash");
+    setTimeout(() => el.classList.remove("ctx-flash"), 600);
+  }, [chatOpen, addSnippet]);
+
+  // Drag-select text anywhere in the lesson → add the selection to context.
+  const handleContentMouseUp = useCallback((e) => {
+    if (!chatOpen) return;
+    if (e.target.closest(".chat-panel, .chat-toggle")) return;
+    if (mouseDownPos.current) {
+      const dx = Math.abs(e.clientX - mouseDownPos.current.x);
+      const dy = Math.abs(e.clientY - mouseDownPos.current.y);
+      if (dx <= 5 && dy <= 5) return; // it was a click, handled above
+    }
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel ? sel.toString().trim() : "";
+      if (text.length > 2) {
+        addSnippet(text, "selection");
+        setTimeout(() => document.querySelector(".chat-input")?.focus(), 0);
+        try {
+          const range = sel.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          const flash = document.createElement("div");
+          flash.className = "ctx-sel-flash";
+          flash.textContent = "+ added";
+          flash.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top - 24}px;`;
+          document.body.appendChild(flash);
+          setTimeout(() => flash.remove(), 800);
+        } catch (err) {}
+        sel.removeAllRanges();
+      }
+    }, 10);
+  }, [chatOpen, addSnippet]);
+
+  // Right-click on a selection → context menu: Reply (add to context),
+  // Reply in thread (selection inside a chat message), Reply in this thread
+  // (selection inside an open thread panel).
+  const handleContextMenu = useCallback((e) => {
+    if (!chatOpen) return;
+    if (e.target.closest('.chat-input, .chat-input-row, .chat-model-select')) return;
+    const sel = window.getSelection();
+    const text = sel ? sel.toString().trim() : "";
+    if (text.length < 3) return;
+    e.preventDefault();
+    const chatArea = document.querySelector('.chat-messages');
+    const inChatArea = chatArea && chatArea.contains(sel.anchorNode);
+    let chatMsgIdx = null;
+    let chatBlockIdx = null;
+    if (inChatArea) {
+      const msgEl = sel.anchorNode?.parentElement?.closest('.chat-msg[data-msg-idx]');
+      if (msgEl) {
+        chatMsgIdx = parseInt(msgEl.dataset.msgIdx);
+        const block = sel.anchorNode?.parentElement?.closest('[data-chat-block]');
+        if (block) {
+          const bubble = msgEl.querySelector('.chat-msg-rendered');
+          if (bubble) {
+            const allBlocks = bubble.querySelectorAll('[data-chat-block]');
+            chatBlockIdx = Array.from(allBlocks).indexOf(block);
+          }
+        }
+      }
+    }
+    const threadPanel = e.target.closest('.thread-panel[data-thread-id]');
+    const threadId = threadPanel ? threadPanel.getAttribute('data-thread-id') : null;
+    setCtxMenu({ x: Math.min(e.clientX, window.innerWidth - 160), y: Math.min(e.clientY, window.innerHeight - 80), text, chatMsgIdx, chatBlockIdx, threadId });
+  }, [chatOpen]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = (e) => { if (!e.target.closest('.ctx-menu')) setCtxMenu(null); };
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [ctxMenu]);
+
+  const handleCtxReply = useCallback(() => {
+    if (!ctxMenu) return;
+    addSnippet(ctxMenu.text, "selection");
+    setCtxMenu(null);
+    window.getSelection()?.removeAllRanges();
+    setTimeout(() => document.querySelector(".chat-input")?.focus(), 0);
+  }, [ctxMenu, addSnippet]);
+
+  const handleCtxOpenThread = useCallback(() => {
+    if (!ctxMenu || ctxMenu.chatMsgIdx == null) return;
+    setThreadTrigger({ text: ctxMenu.text, msgIdx: ctxMenu.chatMsgIdx, blockIdx: ctxMenu.chatBlockIdx, ts: Date.now() });
+    setCtxMenu(null);
+    window.getSelection()?.removeAllRanges();
+  }, [ctxMenu]);
+
+  const handleCtxReplyInThread = useCallback(() => {
+    if (!ctxMenu || !ctxMenu.threadId) return;
+    setThreadCtxTrigger({ threadId: ctxMenu.threadId, text: ctxMenu.text, source: "thread selection", ts: Date.now() });
+    setCtxMenu(null);
+    window.getSelection()?.removeAllRanges();
+  }, [ctxMenu]);
 
   // KaTeX loads from CDN on mount. Gate the whole app until it is ready so
   // math blocks do not flash unrendered source.
@@ -407,6 +556,10 @@ function LessonApp() {
   return (
     <div
       className={`theme-${theme} ${chatOpen ? "ctx-active" : ""}`}
+      onMouseDown={handleContentMouseDown}
+      onClick={handleContentClick}
+      onMouseUp={handleContentMouseUp}
+      onContextMenu={handleContextMenu}
       style={{
         minHeight: "100vh",
         background: "var(--bg-main)",
@@ -467,9 +620,10 @@ function LessonApp() {
         ))}
       </div>
 
-      {/* Content area: renders the active topic's content(gp) function.
-          onClick powers Ctrl+Click context capture — do not remove. */}
-      <div className="content-area" onClick={handleContentClick}>
+      {/* Content area: renders the active topic's content function. The
+          context-capture handlers live on the ROOT div above (they must also
+          cover chat replies and thread panels, not just lesson content). */}
+      <div className="content-area">
         <div style={{ marginBottom: 8, padding: "16px 24px 0" }}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--text-primary)" }}>
             {active.title}
@@ -485,7 +639,7 @@ function LessonApp() {
             {active.subtitle}
           </p>
         </div>
-        {active.content(graphParams)}
+        {active.content(graphParams, graphRenderId)}
       </div>
 
       {/* Chatbot mount. All chat UI, session management, thread panel,
@@ -521,6 +675,21 @@ function LessonApp() {
         threadTrigger={threadTrigger}
         threadCtxTrigger={threadCtxTrigger}
       />
+
+      {/* Selection context menu (styles ship in @core chat.css). "Reply in
+          thread" appears only for selections inside a chat message; "Reply in
+          this thread" only inside an open thread panel. */}
+      {ctxMenu && (
+        <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+          <button className="ctx-menu-item" onClick={handleCtxReply}>Reply</button>
+          {ctxMenu.chatMsgIdx != null && (
+            <button className="ctx-menu-item" onClick={handleCtxOpenThread}>Reply in thread</button>
+          )}
+          {ctxMenu.threadId && (
+            <button className="ctx-menu-item" onClick={handleCtxReplyInThread}>Reply in this thread</button>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div
