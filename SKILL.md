@@ -63,7 +63,7 @@ See `references/update-mode.md` for the full decision tree and edge cases.
 
 Every run begins with one Glob: does `<workspace_root>/_lesson-core/index.js` exist? `_lesson-core/` is the shared chat + UI + proxy module every lesson imports via the `@core` Vite alias; without it nothing builds, nothing tests, and the chatbot will not start.
 
-- **Exists** → continue directly to Phase 0.
+- **Exists** → run the one-Grep **core-version check**: does `<workspace_root>/_lesson-core/chat/buildSystemPrompt.js` contain `PEDAGOGY_POLICY`? If yes, continue to Phase 0. If no, the workspace core predates the policy-in-core move — new-template lessons built against it would ship with NO tutoring policy anywhere. Offer a core refresh from the payload (per `references/bootstrap.md` § Core-version gate); if declined, Phase 3 must embed the legacy policy text into this lesson's `LESSON_CONTEXT` as a fallback.
 - **Missing** → run the bootstrap procedure in `references/bootstrap.md` before Phase 0. This is mechanical (copy canonical payload, `npm install`, seed workspace-root files including `.claude/agents/`) and needs no approval gate — announce in one sentence and proceed.
 
 The skill ships the canonical payload at `references/bootstrap/`: the full `_lesson-core/` source tree, a placeholder lesson skeleton (`lesson-template/`, including per-lesson `CLAUDE.md` and `.gitignore`), and workspace-root templates (`.gitignore`, `.env.local` example, `build-all.sh`, `netlify.toml`, runtime tutor agents for `.claude/agents/`). Bootstrapping from this payload is the only supported way to stand up a fresh workspace; do **not** pull from the legacy `jsx-lesson` skill, whose copies predate the `@core` refactor.
@@ -141,13 +141,15 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 
 `<workspace_root>` is the monorepo root; `<course>` and `<slug>` are collected at Phase 0. The three-level layout `<workspace_root>/<course>/claude_lessons/<slug>/` is required because the `@core` alias and proxy shim depths are hardcoded to it.
 
+**Filename convention**: the lesson source file is always `src/<slug_snake>.jsx` — the slug with dashes replaced by underscores (slug `fourier-series` → file `src/fourier_series.jsx`). Phase 0 records it as `lesson_file` in the scoping artifact, and every phase, test command, `lessonFile` Chatbot prop, and reviewer brief consumes that one value. Wherever these docs write `src/<slug>.jsx` as shorthand, they mean this file.
+
 **Chat protocols the bot can emit (already implemented in `_lesson-core/chat/`)** — useful when planning which media to author into the lesson vs. leave for the chatbot to produce live:
 
 - `<<EDIT_GRAPH>>`, `<<DEMO>>` (inline SVG), `<<SUGGEST>>` (lesson augmentation), `<<SOURCES>>`, `<<COMMIT_SUGGEST>>`.
 - `<<DESMOS>>` — bot emits a Desmos state JSON; client validates + hydrates a live calculator. Animation control is Desmos's own per-slider Play button inside the expression panel; `isPlaying:true` is stripped upstream so only the student initiates animation. Requires `VITE_DESMOS_KEY` in `.env.local`; fails loud if missing. Authors embed `<DesmosGraph state={...}/>` directly in lesson JSX for pre-authored interactive graphs. State schema is error-prone — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain.{min,max}`, `polarDomain.{min,max}` must be JSON strings, not numbers, or `setState` crashes silently. Read `references/desmos-schema.md` before authoring either surface.
 - `<<REINFORCE>>` — bot records a durable heuristic about the student, covering three first-class trigger categories: (1) MEDIA signals, (2) STATED PREFERENCES on tone/register/analogy use/explanation depth/format, (3) CORRECTIONS of a prior approach. The client accumulates entries into `[REINFORCED BEHAVIORS]` injected back via ACTIVE CONTEXT and the system prompt treats them as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response, not just media choices. Lesson planning implication: seed each topic with a diverse media mix so the media-signal arm has something to learn from; the preference and correction arms work regardless.
 
-**Chat runtime facts** authors and reviewers should know: the chat panel renders only in dev — `import.meta.env.PROD` gates it (and all `/session` fetches) out of static deploys, which have no proxy. The chat opens on `DEFAULT_MODEL`/`DEFAULT_EFFORT` from `constants/models.js` (the `default: true` entry; keyboard-shortcut chars must be unique and avoid j/g). The proxy passes the selected model name to the `claude` CLI unchanged, so a specific version pick runs that exact version. `<Chatbot>` accepts an optional `institution` prop (e.g. `institution="University X"`) that appears in the tutor system prompt; omit it and no institution is mentioned.
+**Chat runtime facts** authors and reviewers should know: the canonical tutoring PEDAGOGY POLICY (retrieval-first, least-help-first hint ladder, task-level feedback) is injected by `@core/chat/buildSystemPrompt.js` — lessons do NOT paste it into `LESSON_CONTEXT`, and legacy lessons that did are marker-detected and not double-injected. The chat panel renders only in dev — `import.meta.env.PROD` gates it (and all `/session` fetches) out of static deploys, which have no proxy. The chat opens on `DEFAULT_MODEL`/`DEFAULT_EFFORT` from `constants/models.js` (the `default: true` entry; keyboard-shortcut chars must be unique and avoid j/g). The proxy passes the selected model name to the `claude` CLI unchanged, so a specific version pick runs that exact version. `<Chatbot>` accepts an optional `institution` prop (e.g. `institution="University X"`) that appears in the tutor system prompt; omit it and no institution is mentioned.
 
 **Ctrl+Click context gate** (client-side UX, added late in the dev loop): clicking a lesson content block or chat reply block to add it to chat context now requires the Ctrl key to be held. `body.ctx-ctrl-held` gates hover highlights and the pointer cursor; a capture-phase document click listener stops non-Ctrl clicks before they reach the per-lesson `handleContentClick`. Author-testing note: mention this in lesson-level CLAUDE.md if a human tester will QA the lesson — they will otherwise wonder why plain clicks stopped adding context.
 
@@ -164,23 +166,25 @@ Browser (Vite dev server :5173)
 
 ## Agent team
 
-All agents are bundled at `agents/` — the skill is self-contained. Claude Code reads `agents/*.md` directly from the skill folder.
+All agents are bundled at `agents/` — the skill is self-contained. Claude Code reads `agents/*.md` directly from the skill folder. Judgment-critical agents (content-orchestrator, medium-decider, content-review, research, scientific-accuracy) omit a `model:` line and therefore inherit the session model — a high-end session should not silently downgrade its judgment layer. Production and rubric agents pin `sonnet`.
 
 **Orchestration and content**:
 - `content-orchestrator-agent` — Phase 1 sub-orchestrator (new: research coordinator; update: diff driver)
 - `content-review-agent` — pedagogical content review (Phase 1 + Phase 4)
-- `research-agent` — topic-area research with source reliability judgment
+- `research-agent` — topic research (equations/concepts with sources) + claim verification
 
 **Media planning and production**:
-- `medium-decider-agent` — ranked recommendations (new); 5-way taxonomy (update)
-- `graphics-agent` — SVG graphs + matplotlib references (update refine: preserve function name)
-- `manim-agent` — animations (update refine: overwrite .py/.mp4 at same paths)
+- `medium-decider-agent` — ONE spawn per lesson, all topics: ranked media + diversity/dedup (new); 5-way taxonomy (update)
+- `graphics-agent` — SVG graph components + matplotlib references (update refine: preserve function name)
+- `manim-agent` — animations (build: `.py` at lesson root + named MP4; update refine: overwrite both at same paths)
 - `interactive-demo-agent` — interactive demos (update refine: preserve `<InteractiveDemo title>`)
-- `web-image-agent` — web-sourced images
+- `web-image-agent` — web-sourced images (license-verified; Phase 2 pre-flight + Phase 3 fetch)
 
 **Review**:
-- `code-review-agent` — template compliance, KaTeX safety, Babel parse
-- Visual-QA: `geometry-agent`, `colour-agent`, `readability-agent`, `scientific-accuracy-agent`, `motion-timing-agent`, `interaction-agent`
+- `code-review-agent` — template compliance, KaTeX safety, Babel parse (read-only; returns `{ok, blockers, majors, minors}`)
+- `visual-qa-agent` — one spawn per artifact, full presentation rubric (geometry, colour/theme, readability, motion for video)
+- `scientific-accuracy-agent` — independent correctness lens per scientific artifact
+- `interaction-agent` — drives interactive demos via Playwright
 
 **Runtime tutor team** (not part of the build pipeline): `breakthrough-gap-agent`, `coordinator-agent`, `curriculum-context-agent` ship at `references/bootstrap/workspace-root/.claude/agents/` and are seeded into `<workspace_root>/.claude/agents/` at bootstrap, alongside copies of the pipeline agents above. The embedded chatbot's spawned `claude` CLI discovers that registry and uses it for in-chat delegation (graphics, QA, coordination) while a student is using the lesson.
 
@@ -190,10 +194,10 @@ Every agent respects `resource_mode: "full" | "limited"`. Absent field → `"ful
 
 ## Execution guidance
 
-- **Launch specialists in parallel** wherever possible (~8 agents per message for bulk similar work).
+- **Scale the fan-out to the lesson.** A 1-2 topic lesson wants single agents per phase (one research pass, no per-resource teams); a 6+ topic lesson justifies the full parallel fan-out. Media DECISIONS always go through one whole-lesson medium-decider spawn — never per-topic deciders, which cannot coordinate diversity or dedup. Independent PRODUCTION (one specialist per media item) parallelizes freely.
 - **One AskUserQuestion approval gate** at the end of Phase 2. No exceptions.
 - **Log every phase transition** to `lesson_build.log.md`. Update mode appends, never overwrites.
-- **Iterate the progress-aware fix loop until the lesson meets the quality bar** under `resource_mode: "full"`. Stop rules halt only on demonstrable regression or stall, not iteration count. Under `"limited"`, tighten stop rules aggressively.
+- **Fix deterministic failures first** (parse, tests, build) — they are unambiguous and other findings are often their symptoms — then iterate the progress-aware fix loop until the lesson meets the quality bar under `resource_mode: "full"`. Stop rules halt on demonstrable regression or stall, with an absolute cap of 6 iterations. Under `"limited"`, tighten stop rules aggressively.
 - **Update mode: always create a branch** before Phase 3 work. Never splice on main.
 - **Never skip the post-splice sanity pass** in update mode Phase 3 step 4.6. Semantic corruption is cheap to cause and expensive to catch later.
 

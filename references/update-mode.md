@@ -1,5 +1,7 @@
 # Update-mode orientation
 
+Contents: §1 Purpose · §2 Quick mental model · §3 Mode-detection decision tree · §4 The 5 media actions · §5 Branch/stash/merge invariants · §6 No-grandfathering · §7 Regression-watch · §8 What update mode does not touch · §9 Common gotchas · §10 Phase cross-reference.
+
 Single-file orientation for lesson-builder's update mode. Read this first whenever an update-mode verb or lesson reference shows up in the user's request. Do not re-stitch update-mode concepts from the six phase docs; come here, get oriented, then dive into the specific phase doc you need.
 
 Cross-reference: `SKILL.md` (the skill root) holds the skill-level mode-detection summary and phase-shell layout. This doc expands only the update-specific concepts.
@@ -31,11 +33,7 @@ Before spawning `content-orchestrator-agent`, main Claude runs a deterministic G
 
 ## 3. Mode detection decision tree
 
-Mode detection runs on the user's initial message before the scoping interview fires. Detection is best-effort; Phase 0 confirmation is mandatory.
-
-**Trigger verbs** (from SKILL.md): `update|updating|updated|rework|reworking|revise|revising|improve|improving|refresh|refreshing|modify|modifying|tweak|tweaking|fix|fixing|enhance|enhancing`.
-
-**Lesson references** (from SKILL.md): course/slug references resolved against the workspace root (derived from cwd, or asked at Phase 0) via `Glob <workspace_root>/*/claude_lessons/*/`, or any path containing `claude_lessons`.
+Mode detection runs on the user's initial message before the scoping interview fires. Detection is best-effort; Phase 0 confirmation is mandatory. Trigger verbs and lesson-reference resolution are canonical in `SKILL.md` § Mode detection.
 
 ```
 User message
@@ -133,16 +131,17 @@ Phase 0's working-tree check runs `git status --short <lesson_root>`. If dirty, 
 
 ```
 git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>
+git rev-parse stash@{0}   # capture the stable OID — positional refs shift if anything else stashes
 ```
 
-The stash ref is logged under `### Phase 0 — Scoping (update) > Working tree state`. Phase 5 prompts for stash pop after a successful merge. On `git stash pop` conflict, the stash stays in place and conflict files are surfaced to the user.
+Phase 0 performs the stash (once — Phase 3 never re-stashes) and logs ref + OID under `### Phase 0 — Scoping (update) > Working tree state`. Phase 5 prompts for stash pop after a successful merge. On `git stash pop` conflict, the stash stays in place and conflict files are surfaced to the user.
 
 ### Merge
 After Phase 4 passes and the local build verification gate (`bash build-all.sh` + headless Playwright on the built output) succeeds:
 
 ```
 git checkout main
-git merge --no-ff lesson-update/<slug>-YYYYMMDD
+git merge --no-ff <branch name recorded in the Phase 3 log>   # incl. any collision suffix
 git push origin main
 ```
 

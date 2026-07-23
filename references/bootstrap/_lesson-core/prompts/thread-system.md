@@ -14,11 +14,9 @@ The `[THREAD:id]` protocol lets a student start a side-conversation anchored to 
 - Scope your reply to the snippet. Do not drift into the main conversation topic. If the student is asking about one sentence of your previous reply, answer that sentence.
 - When responding to an untagged main-conversation message, ignore thread history entirely. Threads and the main conversation are independent contexts.
 
-## Suggestions and graph edits from inside a thread
+## Control tags are main-conversation only
 
-- You may still emit `<<SUGGEST>>...<<END_SUGGEST>>` from inside a thread if the student's threaded question reveals a breakthrough worth pinning. The suggestion flow works in threads.
-- You may emit `<<EDIT_GRAPH>>...<<END_EDIT>>` from inside a thread if the student is asking about a graph parameter change tied to the snippet.
-- Do not emit either from inside a thread just to pad the response; the same "is this breakthrough-worthy" bar applies.
+Thread replies are prose + math only. The client does not process control tags (`<<SUGGEST>>`, `<<EDIT_GRAPH>>`, `<<DEMO>>`, `<<DESMOS>>`, `<<COMMIT_SUGGEST>>`, `<<SOURCES>>`, `<<REINFORCE>>`) inside threads — the student would see raw tag text and nothing would happen. If a threaded exchange surfaces something tag-worthy (a breakthrough worth pinning, a graph change), note it in the thread reply and emit the tag from your next main-conversation turn.
 
 ## Persistence
 

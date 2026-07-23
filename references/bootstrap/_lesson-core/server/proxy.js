@@ -22,8 +22,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = path.dirname(path.dirname(__dirname));
 
 const app = express();
-app.use(cors({ origin: true }));
-app.use(express.json({ limit: "2mb" }));
+// Localhost-only CORS. `origin: true` would reflect ANY origin, letting an
+// arbitrary webpage the user visits drive /chat (token spend), /upload
+// (disk writes), and /commit (repo mutations) on this machine. Requests with
+// no Origin header (curl, same-machine tools) are allowed.
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)) cb(null, true);
+    else cb(new Error("Origin not allowed"));
+  },
+}));
+// 40mb: attachments are base64 JSON (5MB/file client cap -> ~6.8MB encoded,
+// several files per message). The old 2mb limit 413'd documented uploads.
+app.use(express.json({ limit: "40mb" }));
+
+// Values spliced into CLI argv (spawned with shell:true for Windows .cmd
+// compatibility) must be allowlisted — model/effort/sessionId arrive from the
+// client and would otherwise be shell-injectable.
+const SAFE_MODEL_RE = /^[a-zA-Z0-9._-]{1,64}$/;
+const SAFE_SESSION_RE = /^[a-zA-Z0-9-]{8,64}$/;
+const SAFE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const safeModel = (m, fallback) => (typeof m === "string" && SAFE_MODEL_RE.test(m) ? m : fallback);
+const safeEffort = (e, fallback) => (SAFE_EFFORTS.has(e) ? e : fallback);
+const safeSession = (s) => (typeof s === "string" && SAFE_SESSION_RE.test(s) ? s : null);
 
 const sessions = {};
 const _sessionQueues = {}; // sessionId -> Promise chain
@@ -44,6 +65,7 @@ const ALLOWED_TOOLS = [
   "mcp__playwright__browser_hover",
   "mcp__playwright__browser_type",
   "mcp__playwright__browser_press_key",
+  "mcp__playwright__browser_select_option",
   "mcp__playwright__browser_evaluate",
   "mcp__playwright__browser_wait_for",
   "mcp__playwright__browser_console_messages",
@@ -160,8 +182,8 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
 
 app.post("/session/init", async (req, res) => {
   const { model, effort, isolated, system } = req.body;
-  const cliModel = modelAlias(model || "sonnet");
-  const cliEffort = effort || "high";
+  const cliModel = modelAlias(safeModel(model, "sonnet"));
+  const cliEffort = safeEffort(effort, "high");
   const chatNum = nextChatNum++;
 
   log("INIT_START", { chatNum, model: cliModel, effort: cliEffort, isolated: !!isolated });
@@ -172,9 +194,12 @@ app.post("/session/init", async (req, res) => {
     "--allowedTools", ALLOWED_TOOLS,
   ];
 
+  // 28000-char threshold (not 6000): the pedagogy-policy-bearing prompt is
+  // ~8-12k chars, and demoting it to a [System Instructions] user turn drops
+  // its priority. Windows' ~32k command-line limit is the real ceiling.
   const initPrompt = "Session initialized. Ready for questions.";
   let stdinContent = initPrompt;
-  if (system && system.length <= 6000) {
+  if (system && system.length <= 28000) {
     args.push("--system-prompt", system);
   } else if (system) {
     stdinContent = `[System Instructions]:\n${system}\n\n${initPrompt}`;
@@ -214,14 +239,15 @@ app.post("/session/open", (req, res) => {
 });
 
 app.post("/session/transfer", async (req, res) => {
-  const { sessionId, model, effort, isolated, system } = req.body;
-  const oldSession = sessions[sessionId];
+  const { sessionId: rawSessionId, model, effort, isolated, system } = req.body;
+  const sessionId = safeSession(rawSessionId);
+  const oldSession = sessionId && sessions[sessionId];
   if (!oldSession) return res.status(404).json({ error: { message: "Session not found" } });
 
   const chatNum = oldSession.chatNum;
   const newIsolated = !oldSession.isolated;
-  const cliModel = modelAlias(model || oldSession.model);
-  const cliEffort = effort || oldSession.effort;
+  const cliModel = modelAlias(safeModel(model, oldSession.model));
+  const cliEffort = safeEffort(effort, oldSession.effort);
 
   log("TRANSFER_START", { chatNum, from: oldSession.isolated ? "isolated" : "shared", to: newIsolated ? "isolated" : "shared" });
 
@@ -242,13 +268,11 @@ app.post("/session/transfer", async (req, res) => {
     log("TRANSFER_DUMP_ERROR", { chatNum, error: err.message });
   }
 
-  delete sessions[sessionId];
-
   const newArgs = ["-p", "--print", "--output-format", "json", "--model", cliModel, "--effort", cliEffort, "--allowedTools", ALLOWED_TOOLS];
   let initPrompt = summary
     ? `This session was transferred from a previous chat. Here is the context from the previous session:\n\n---\n${summary}\n---\n\nContinue the conversation seamlessly. The user should not notice any disruption.`
     : "Session initialized. Ready for questions.";
-  if (system && system.length <= 6000) newArgs.push("--system-prompt", system);
+  if (system && system.length <= 28000) newArgs.push("--system-prompt", system);
   else if (system) initPrompt = `[System Instructions]:\n${system}\n\n${initPrompt}`;
 
   try {
@@ -258,7 +282,10 @@ app.post("/session/transfer", async (req, res) => {
     if (!newSessionId) throw new Error("No session_id in response");
     const tok = extractTokens(parsed);
     accumulateTokens(tok);
-    sessions[newSessionId] = { chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), messageCount: oldSession.messageCount, open: true };
+    // Delete the old record only after the new session exists — a failed
+    // transfer must leave the original session usable, not orphaned.
+    delete sessions[sessionId];
+    sessions[newSessionId] = { chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true };
     log("TRANSFER_OK", { chatNum, newSessionId: newSessionId.slice(0, 8), isolated: newIsolated, ...tok, totalCost: totalTokens.cost.toFixed(4) });
     res.json({ sessionId: newSessionId, chatNum, isolated: newIsolated, content: [{ type: "text", text: parsed.result || "Session transferred." }] });
   } catch (err) {
@@ -314,9 +341,9 @@ app.post("/chat", async (req, res) => {
         (Array.isArray(m.content) ? m.content.filter(b => b.type === "text").map(b => b.text).join("\n") : String(m.content));
       return `[${role}]: ${text}`;
     }).join("\n\n");
-    const cliModel = modelAlias(model || "sonnet");
-    const args = ["-p", "--print", "--output-format", "json", "--model", cliModel, "--effort", effort || "high", "--no-session-persistence", "--allowedTools", ALLOWED_TOOLS];
-    if (system && system.length <= 6000) args.push("--system-prompt", system);
+    const cliModel = modelAlias(safeModel(model, "sonnet"));
+    const args = ["-p", "--print", "--output-format", "json", "--model", cliModel, "--effort", safeEffort(effort, "high"), "--no-session-persistence", "--allowedTools", ALLOWED_TOOLS];
+    if (system && system.length <= 28000) args.push("--system-prompt", system);
     try {
       const raw = await runClaude(args, prompt);
       const parsed = JSON.parse(raw);
@@ -330,23 +357,24 @@ app.post("/chat", async (req, res) => {
     return;
   }
 
-  const session = sessions[sessionId];
+  const safeId = safeSession(sessionId);
+  const session = safeId && sessions[safeId];
   if (!session) {
-    log("CHAT_404", { sessionId: sessionId.slice(0, 8) });
+    log("CHAT_404", { sessionId: String(sessionId).slice(0, 8) });
     return res.status(404).json({ error: { message: "Session not found. Create a new one." } });
   }
 
   session.messageCount++;
   session.lastSeen = Date.now();
-  const cliModel = modelAlias(model || session.model);
-  const cliEffort = effort || session.effort;
+  const cliModel = modelAlias(safeModel(model, session.model));
+  const cliEffort = safeEffort(effort, session.effort);
   const msgNum = session.messageCount;
 
   log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, model: cliModel, effort: cliEffort, message: message || "" });
 
-  enqueueForSession(sessionId, () => new Promise((resolve) => {
+  enqueueForSession(safeId, () => new Promise((resolve) => {
     const args = [
-      "--resume", sessionId, "-p", "--print", "--output-format", "stream-json", "--verbose",
+      "--resume", safeId, "-p", "--print", "--output-format", "stream-json", "--verbose",
       "--model", cliModel, "--effort", cliEffort, "--allowedTools", ALLOWED_TOOLS,
     ];
 
@@ -406,7 +434,9 @@ app.get("/sessions", (req, res) => {
 // real repo root.
 function runGit(args) {
   return new Promise((resolve, reject) => {
-    const proc = spawn("git", args, { cwd: REPO_DIR, shell: true });
+    // shell:false — commit messages and paths are model-controlled text; with
+    // a shell they would be command-injectable. git.exe spawns fine without one.
+    const proc = spawn("git", args, { cwd: REPO_DIR, shell: false });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (d) => (stdout += d.toString()));
@@ -424,7 +454,20 @@ app.post("/commit", async (req, res) => {
   if (!sessionId || !message || !Array.isArray(paths) || paths.length === 0) {
     return res.status(400).json({ error: { message: "sessionId, message, paths required" } });
   }
-  log("COMMIT_START", { sessionId: sessionId.slice(0, 8), message, paths });
+  // Only a live chat session may commit — an unauthenticated POST with a made-up
+  // id must not drive git.
+  const safeId = safeSession(sessionId);
+  if (!safeId || !sessions[safeId]) {
+    return res.status(403).json({ error: { message: "No active session with that id" } });
+  }
+  // Every path must resolve inside the repo. Rejects ../ escapes and absolute
+  // paths to arbitrary files.
+  const resolvedPaths = paths.map(p => path.resolve(PROJECT_DIR, String(p)));
+  const repoRoot = path.resolve(REPO_DIR) + path.sep;
+  if (!resolvedPaths.every(p => p.startsWith(repoRoot))) {
+    return res.status(400).json({ error: { message: "paths must resolve inside the workspace repo" } });
+  }
+  log("COMMIT_START", { sessionId: safeId.slice(0, 8), message, paths });
 
   // 1. Run test_lesson.cjs from the lesson root. If tests fail, bail out
   //    before touching git. test_lesson.cjs expects the lesson source file
@@ -458,16 +501,24 @@ app.post("/commit", async (req, res) => {
     return res.status(400).json({ error: { message: "tests failed: " + err.message } });
   }
 
-  // 2. git add + commit + push. Paths are resolved to absolute first so they
-  //    work regardless of the cwd passed to spawn.
+  // 2. git add + commit + push. `commit -- <paths>` commits ONLY the declared
+  //    paths even when unrelated files sit pre-staged in the index. Push targets
+  //    the branch actually checked out, never a hardcoded one; a push failure
+  //    (no upstream, offline) is reported but does not undo the local commit.
   try {
-    const gitAddArgs = ["add", ...paths.map(p => path.resolve(PROJECT_DIR, p))];
-    await runGit(gitAddArgs);
-    await runGit(["commit", "-m", message]);
-    const pushResult = await runGit(["push", "origin", "main"]);
+    await runGit(["add", "--", ...resolvedPaths]);
+    await runGit(["commit", "-m", message, "--", ...resolvedPaths]);
     const sha = (await runGit(["rev-parse", "HEAD"])).trim();
-    log("COMMIT_OK", { sha: sha.slice(0, 8), pushResult });
-    res.json({ ok: true, sha, message });
+    const branch = (await runGit(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+    let pushed = false, pushError = null;
+    if (branch && branch !== "HEAD") {
+      try { await runGit(["push", "origin", branch]); pushed = true; }
+      catch (err) { pushError = err.message; }
+    } else {
+      pushError = "detached HEAD — commit created, not pushed";
+    }
+    log("COMMIT_OK", { sha: sha.slice(0, 8), branch, pushed, pushError: pushError || "" });
+    res.json({ ok: true, sha, message, branch, pushed, ...(pushError ? { pushError } : {}) });
   } catch (err) {
     log("COMMIT_GIT_FAIL", { error: err.message });
     res.status(500).json({ error: { message: "git operation failed: " + err.message } });

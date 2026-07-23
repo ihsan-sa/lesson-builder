@@ -1,5 +1,7 @@
 # Phase 3 — Execution
 
+Contents: Shared conventions (scratch dir, private-by-default .gitignore, logging, parallel spawning) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
+
 ## Purpose
 
 Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project files. It is the only phase that modifies `<lesson_root>/` content, hard-branched on mode: **new** spawns specialists in parallel, collects scratch outputs, assembles `src/<slug>.jsx` from `references/template.md`. **Update** stages a git branch + optional stash, then splices specialist outputs into the existing file using edit anchors (function signatures, `DEFAULT_GRAPH_PARAMS` keys, `TOPICS` entries) while preserving `keep` items. Both end with a `.build-scratch/` cleanup and a post-assembly sanity pass.
@@ -51,30 +53,29 @@ Write milestones to `lesson_build.log.md` under `## Phase 3 — Execution` (new)
 
 ### Parallel specialist spawning
 
-One specialist per topic per medium, spawned concurrently in a single message. Wait for all returns before assembling. Spawn prompts come from Phase 2 briefs verbatim.
+One specialist per media item, spawned concurrently. Each spawn prompt = the item's Phase 2 execution brief + the topic's content package (equations, constants, context) + the file-contract line for that specialist (scratch path or on-disk target). Wait for all returns before assembling.
 
-**Degenerate cases**: text-only topics skip specialist spawns; main Claude writes content directly from Phase 1. Fully text-only lessons skip Step 1 entirely.
-
-**Spawn budget**: above ~20 concurrent specialists, split into two batches of ~10. Log batching.
+**Degenerate cases**: text-only topics skip specialist spawns; main Claude writes content directly from Phase 1. Fully text-only lessons skip Step 1 entirely. The harness queues concurrent spawns on its own — no manual batching needed; just log the fan-out count.
 
 ## New-mode execution
 
 ### Step 1: spawn medium specialists
 
-Main Claude reads the Phase 2 execution plan and spawns every specialist concurrently. Typical fan-out for a 6-topic lesson: 6-12 graphics-agents (one per graph), 1-3 manim-agents, 0-2 interactive-demo-agents, 0-4 web-image-agents. Wait for all returns.
+Main Claude reads the approved plan's media list and spawns every specialist concurrently, one per media item (typical 6-topic fan-out: 6-12 graphics, 1-3 manim, 0-2 interactive-demo, 0-4 web-image). Manim spawns follow the build-pipeline file contract in `agents/manim-agent.md`: descriptive snake_case stem, `.py` at `<lesson_root>/<stem>.py`, MP4 at `public/videos/<stem>.mp4` — the persisted `.py` is what keeps future refines possible. Wait for all returns.
 
 ### Step 2: collect scratch outputs
 
-Each specialist writes its assigned portion into `<lesson_root>/.build-scratch/`:
+Each specialist writes its assigned portion into `<lesson_root>/.build-scratch/`, one file per media item named by its immutable `media_id` from the plan (never per topic-medium — two graphs in one topic would collide):
 
 ```
 .build-scratch/
-  topic-1-graphs.jsx
-  topic-1-manim.py
-  topic-2-graphs.jsx
-  topic-2-interactive.jsx
+  topic-1-diode-iv-curve.jsx
+  topic-2-bode-magnitude.jsx
+  topic-2-pole-zero-explorer.jsx        (+ topic-2-pole-zero-explorer-wiring.md)
   ...
 ```
+
+**Exceptions to scratch collection**: manim writes no scratch — its `.py` lands at `<lesson_root>/<stem>.py` and MP4 at `public/videos/<stem>.mp4` per its file contract, and it returns a JSON manifest (`mp4_path`, `py_path`, `effective_action`) that assembly consumes directly. web-image likewise writes straight to `public/images/` and returns paths + provenance.
 
 Main Claude reads each scratch file after the specialist returns and checks for obvious corruption (truncation, unclosed JSX, missing function signature) before moving to assembly. Corrupt output triggers a single respawn of that specialist with the same brief.
 
@@ -149,45 +150,14 @@ None of these files reference `@core` internals beyond the alias; they are stabl
 
 Apply the "Private-by-default `.gitignore`" shared convention above. Step 6 already copied the template's `.gitignore` with the full default block; verify it matches the convention and append any lesson-specific entries for loose materials files that landed under `<lesson_root>/`. If the file is somehow absent, create it with the full default block. Log the file and the entry count under `Phase 3 — Execution`.
 
-### Step 7: tactical wins to preserve from jsx-lesson
+### Step 7: assembly-time quality gate on scratch outputs
 
-The legacy `jsx-lesson` skill accumulated several hard-won graph-quality practices that lesson-builder inherits through the specialist briefs. Main Claude enforces them during assembly by pattern-matching the scratch outputs before pasting them into the lesson file.
+The graph-quality rules (component pattern with `{ params, mid = "" }` props and `.eq-block` wrapper, equation-driven curves with realistic constants, no clamping, split scales, unique marker IDs, IBM Plex Mono labels, responsive `viewBox`) are canonical in `agents/graphics-agent.md` — specialists build to them at generation time. Main Claude re-checks the two cheapest-to-catch violations while pasting scratch outputs, because they are the ones that silently corrupt a lesson:
 
-**SVG graph implementation pattern**: every graph is a React function component taking `{ params, mid = "" }` props and returning an SVG inside an `.eq-block` container. Axes use arrow-marker defs with **unique marker IDs per graph** (collisions break rendering when two graphs share the same `<marker id="arrow"/>`). All text uses `fontFamily="'IBM Plex Mono'"` at 9-11px. The SVG uses `viewBox` for intrinsic size plus `width: "100%"` and an explicit `maxWidth` for responsive scaling. Example skeleton:
+- **Clamp pattern** (`Math.min(value * scale, maxY)` or equivalent hiding overflow): reject the scratch file and respawn the specialist with the violation named. Clamping masks scientific-accuracy bugs downstream review would otherwise catch.
+- **Marker-ID collisions** across the assembled file (two graphs sharing `id="arrow"`): fix during assembly via each component's `mid` suffix.
 
-```jsx
-function MyGraph({ params, mid = "" }) {
-  const p = { ...DEFAULT_GRAPH_PARAMS.myGraph, ...params };
-  const w = 460, h = 260;
-  return (
-    <div className="eq-block" style={{ padding: "16px", overflow: "hidden" }}>
-      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", maxWidth: w, display: "block", margin: "0 auto" }}>
-        <defs>
-          <marker id={`arrow-mygraph-${mid}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-            <path d="M0,0 L6,3 L0,6" fill="none" stroke={G.ax} strokeWidth="1"/>
-          </marker>
-        </defs>
-        {/* axes, curves, labels */}
-      </svg>
-    </div>
-  );
-}
-```
-
-**Equation fidelity**: curves must be generated from the actual governing equation with physically realistic constants. Diode curves need a saturation current `Is` (e.g., `1e-14 A`) so the knee falls at the textbook `~0.6 V`. MOSFET transfer characteristics need `Vth` and the piecewise triode/saturation split. Bode plots use `Math.log10` not hand-drawn asymptotes. **Never use `Math.min(id * scale, maxY)` clamping to hide overflow**; if the curve clips, the scale is wrong, and clamping will mask a scientific-accuracy bug that visual-QA will catch later anyway. Reject any scratch file that uses the clamp pattern and respawn the specialist.
-
-**Scale design**: for mixed-range axes (e.g., diode forward `mA` + reverse `µA`), use **split scales** via two SVG subplots side by side, not a single compressed axis. Distinct curves in a family plot must be separated by at least 150 px at the widest point so the student can visually distinguish them. Y-axis units are always chosen for practical readability: `mA` not `A`, `dB` not linear magnitude, `µA` for reverse-bias, `ps` or `ns` for sub-millisecond timing.
-
-**Matplotlib visual review loop** (for `matplotlib-ref` media):
-
-1. Python specialist writes matplotlib code, saves PNG at `dpi=150` with `bbox_inches='tight'`.
-2. Specialist views the PNG.
-3. Specialist spawns a 3-agent review team in parallel:
-   - **Readability**: font ≥ 9, no overlapping labels, legend in empty space, title present, annotations clear.
-   - **Correctness**: curve shapes match expected physics, critical points correct (diode knee at 0.6 V, -3 dB at ω0), region labels and axis units correct.
-   - **Scale**: nothing clipped/clamped, distinct curves separated, practical units, split panels for multi-scale.
-4. Any flag → fix, re-render, re-review. No iteration cap.
-5. On approval: base64-encode as `const IMG_X = "..."` and pass to `<RefImg data={IMG_X} alt="..." caption="..." />`.
+Matplotlib outputs arrive pre-verified by the specialist's own PNG self-view; full visual QA for every medium happens once, in Phase 4 (no separate in-phase review team). On assembly, base64-encode approved PNGs as `const IMG_X = "..."` for `<RefImg data={IMG_X} alt="..." caption="..." />`.
 
 **Graph Preview tab** (mandatory last tab): renders every graph in one scrollable view. Screenshot target for post-deploy verification and the student's "send this to chat for review" flow. TOPIC_CONTEXT entry is the verbatim template string.
 
@@ -227,16 +197,20 @@ Update mode splices specialist outputs into the **existing** `src/<slug>.jsx` in
 
 ### Step 1: pre-execution git setup
 
-Runs **before any specialist spawns**. Exact commands:
+Runs **before any specialist spawns**. The stash (if any) already happened at Phase 0, which logged `stashed: stash@{0} (<oid>)` — read that ref from the log; do NOT stash again. Exact commands:
 
 ```bash
 cd <workspace_root>
-git status --short <lesson_root>
-# if dirty and user opted to stash in Phase 0:
-git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>
-git checkout -b lesson-update/<slug>-YYYYMMDD
-git status --short
+git status --short <lesson_root>   # expect clean apart from run-owned files (lesson_build.log.md,
+                                   # .gitignore edits this run made — both written since the Phase 0
+                                   # check); anything ELSE dirty → halt and surface, don't stash
+git rev-parse --abbrev-ref HEAD    # must be the workspace default branch (normally main);
+                                   # branching off a feature branch drags unrelated commits into the merge
+git checkout -b lesson-update/<slug>-YYYYMMDD   # collision → append -a/-b per the pre-flight checklist
+git rev-parse HEAD                 # record as base_sha
 ```
+
+Log `Branch:` (the ACTUAL name incl. any collision suffix — Phase 5 consumes this recorded value verbatim, never reconstructs it) and `Base SHA:` alongside the stash ref.
 
 Substitutions:
 - `<workspace_root>` — absolute path to the monorepo root, typically derived from `git rev-parse --show-toplevel` or provided at Phase 0.
@@ -249,35 +223,35 @@ Log the branch name and stash ref as the **first two lines** under `### Phase 3 
 
 ```
 Branch: lesson-update/<slug>-YYYYMMDD
-Stash ref: stash@{0} (lesson-update-stash <slug> <date>) | none
+Stash ref: stash@{0} (<oid>, lesson-update-stash <slug> <date>) | none   # copied from the Phase 0 log
 ```
 
 If the working tree was clean at Phase 0, write `Stash ref: none`. If the user aborted on the dirty-tree question, Phase 3 never starts.
 
 ### Step 2: scratch directory layout (update-specific)
 
-Update mode splits `.build-scratch/` by action so the assembly splice step can dispatch cleanly:
+Update mode splits `.build-scratch/` by action so the assembly splice step can dispatch cleanly; files are named by `media_id`:
 
 ```
 .build-scratch/
-  add/     topic-N-<medium>.jsx     new components
-  refine/  topic-N-<medium>.jsx     refined (same function name preserved)
-  replace/ topic-N-<medium>.jsx     different medium type
+  add/     <media_id>.jsx     new components
+  refine/  <media_id>.jsx     refined (same function name preserved)
+  replace/ <media_id>.jsx     different medium type
 ```
 
 `keep` and `remove` actions produce **no scratch files**. Keep is a no-op; remove is handled by main Claude directly during the splice walk (no specialist input needed).
 
 ### Step 3: per-specialist update-mode input contract
 
-Each specialist receives different inputs depending on the action verdict from Phase 2. The contracts below are strict: main Claude constructs the spawn prompt with exactly these inputs, no more, no less.
+Each specialist receives different inputs depending on the action verdict from Phase 2. The contracts below are strict: main Claude constructs the spawn prompt with exactly these inputs, no more, no less. Naming note: wherever a contract says `refine_brief` / `replace_brief` / `add_brief`, that is the plan row's `execution_brief` for that action — one value, recorded verbatim from the decider, no transformation.
 
 #### graphics-agent
 
-**refine**: existing component source extracted by line range from `src/<slug>.jsx` + current `DEFAULT_GRAPH_PARAMS[<key>]` object + `refine_brief` from Phase 2. Output: revised component with the **same function name** so every call site in the existing `TOPICS` content functions remains valid. For `matplotlib-ref` refines: revised `.py` + new base64 string that will replace the existing `const IMG_X = "..."` constant. Land in `.build-scratch/refine/topic-N-graphs.jsx` (or `topic-N-graphs.py` + `topic-N-graphs.b64` for matplotlib).
+**refine**: existing component source extracted by line range from the lesson file + current `DEFAULT_GRAPH_PARAMS[<key>]` object + `refine_brief` from Phase 2. Output: revised component with the **same function name** so every call site in the existing `TOPICS` content functions remains valid. For `matplotlib-ref` refines: revised `.py` + new base64 string that will replace the existing `const IMG_X = "..."` constant. Land in `.build-scratch/refine/<media_id>.jsx` (or `<media_id>.py` + `<media_id>.b64` for matplotlib).
 
-**replace**: the Phase 2 brief may specify a new function name (e.g., swapping `OldGraphStatic` for `NewGraphAnimated`). Main Claude notes the old-to-new name mapping so the splice step can update call sites. Output to `.build-scratch/replace/topic-N-graphs.jsx`.
+**replace**: the Phase 2 brief may specify a new function name (e.g., swapping `OldGraphStatic` for `NewGraphAnimated`). Main Claude notes the old-to-new name mapping so the splice step can update call sites. Output to `.build-scratch/replace/<media_id>.jsx`.
 
-**add**: same pattern as new mode — fresh component with a fresh function name and a fresh `DEFAULT_GRAPH_PARAMS` entry. Output to `.build-scratch/add/topic-N-graphs.jsx`.
+**add**: same pattern as new mode — fresh component with a fresh function name and a fresh `DEFAULT_GRAPH_PARAMS` entry. Output to `.build-scratch/add/<media_id>.jsx`.
 
 #### manim-agent
 
@@ -285,25 +259,30 @@ Each specialist receives different inputs depending on the action verdict from P
 
 **Source-to-video name mismatch**: if the `.py` for a given `.mp4` cannot be located (e.g., the original Python file was never committed, or the `.mp4` was hand-copied from another lesson), degrade the refine to a replace: spawn a fresh manim-agent with the replace brief instead of the refine brief, write a new `.py` + new `.mp4`, and update the JSX `<video src>` during the splice. Log the degradation under `Degradations: <old-filename>: refine → replace (reason: missing source .py)` in the Phase 3 log section.
 
-**replace**: new `.py` + new `.mp4` with a **new filename** (even if the old one is removed). Main Claude updates the JSX `<video src>` during the splice step to point at the new file, and removes the old `.mp4` from disk. Output the new filename under `.build-scratch/replace/topic-N-manim.txt` so the splice step can read the new path.
+**replace**: new `.py` + new `.mp4` with a **new filename** (even if the old one is removed). The agent's returned manifest (`mp4_path`, `py_path`, `effective_action`) carries the new paths — no scratch file; main Claude updates the JSX `<video src>` from the manifest during the splice and removes the old `.mp4` from disk.
 
 **add**: same as new-mode manim — fresh `.py` + fresh `.mp4` with a fresh filename. The splice step inserts a new `<video src>` reference in the topic's content function.
 
 #### interactive-demo-agent
 
-**refine**: existing JSX fragment extracted by line range (the `<InteractiveDemo>` block plus its referenced `useState` hooks in `LessonApp`) + `refine_brief`. Output: revised JSX fragment + a `wiring_note.md` describing which state hooks change (if any). **Must preserve the outer `<InteractiveDemo title="...">` value** — the title is used as the inventory identifier, and changing it breaks the Phase 2-to-Phase 3 traceability. Output to `.build-scratch/refine/topic-N-interactive.jsx` + `.build-scratch/refine/topic-N-interactive-wiring.md`.
+**refine**: existing JSX (the `<InteractiveDemo>` block plus its referenced `useState` hooks in `LessonApp`) + `refine_brief`. Output: a COMPLETE revised `<InteractiveDemo>` block + wiring note. **Must preserve the `<InteractiveDemo title="...">` value** — the title is the inventory identifier; changing it breaks Phase 2-to-Phase 3 traceability. Output to `.build-scratch/refine/<media_id>.jsx` + `.build-scratch/refine/<media_id>-wiring.md`.
 
-**replace**: source of the medium being replaced (for context) + `replace_brief`. Output: new fragment + wiring note.
+**replace**: source of the medium being replaced (for context) + `replace_brief`. Output: new complete block + wiring note, same file naming.
 
 #### web-image-agent
 
-**refine**: existing image path + `refine_brief` (e.g., "find a clearer labeled version"). Specialist searches the web, downloads, and either replaces the file at the same path on disk or returns `null` (keep original). If the return is `null`, main Claude treats the refine as a no-op. Output (if successful): file at same path, plus a `.build-scratch/refine/topic-N-webimg.txt` with the new image's provenance URL for the log.
+**refine**: existing image path + `refine_brief` (e.g., "find a clearer labeled version"). Specialist searches the web, downloads, and either replaces the file at the same path on disk or returns `null` (keep original). If the return is `null`, main Claude treats the refine as a no-op. Output (if successful): file at same path, plus provenance (source URL, license) in the return for the log.
 
 **replace / add**: specialist fetches the new image and writes it under `<lesson_root>/public/images/`. Main Claude deletes the old file during the splice step (replace) or leaves existing files alone (add). Output: new filename + provenance in `.build-scratch/replace/` or `.build-scratch/add/`.
 
 ### Step 4: splice assembly algorithm
 
 Main Claude performs the splice against the **existing** `src/<slug>.jsx`. The algorithm is sequential; every step must complete before the next starts.
+
+**Two cross-cutting rules before walking:**
+
+1. **Modify-owns-its-content-function.** For any topic marked `modify`, the 4.3 content-function rewrite must already include the topic's FINAL call sites per the approved media actions — apply it before, and instead of, any 4.2 call-site edit inside that topic's content function. For modify topics, 4.2 touches only the component block, `DEFAULT_GRAPH_PARAMS`/`GRAPH_SCHEMA`, and files on disk. (Otherwise a later content rewrite silently erases the call-site splices.) Topics not marked `modify` take 4.2 call-site edits as written.
+2. **Params/schema sub-steps are svg-graph-only.** In the replace/remove/add rules below, the `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA` steps apply only to `svg-graph` items (plus the `const IMG_*` swap for matplotlib-ref). Videos, static images, and interactive demos have no params/schema entries — for them the splice is call-site + file-on-disk only.
 
 #### Edit-anchor reference
 
@@ -356,19 +335,18 @@ Replace the string literal with the new base64. No other edits.
 
 **`refine` static-image**: same as manim-video — file replaced on disk, no JSX edit unless the file extension changed.
 
-**`refine` interactive-demo**: locate the `<InteractiveDemo title="...">` block in the topic's `content` function, replace the inner JSX fragment with the scratch file contents, apply the `wiring_note.md` state-hook changes at the `LessonApp` level.
+**`refine` interactive-demo**: locate the `<InteractiveDemo title="...">` block in the topic's `content` function and replace the ENTIRE block (opening tag through closing tag) with the scratch file contents — the scratch file is always a complete `<InteractiveDemo>` block with the identical title; never insert it inside the existing wrapper. Apply the `-wiring.md` state-hook changes at the `LessonApp` level.
 
-**`replace`** (any kind): more invasive than refine because the function name or component kind may change.
-1. Delete the old component definition (function signature anchor) and any associated `DEFAULT_GRAPH_PARAMS[<old_key>]` entry and `GRAPH_SCHEMA[<old_key>]` entry.
-2. Delete the old call site in the topic's `content` function.
-3. Insert the new component from the scratch file in the component block (alongside existing components, not in a random location).
-4. Insert the new call site in the topic's `content` function at the same approximate position as the old one.
-5. Extend `DEFAULT_GRAPH_PARAMS` with the new `<new_key>` entry.
-6. Extend `GRAPH_SCHEMA` with the matching new entry.
+**`replace`** (any kind): more invasive than refine because the function name or component kind may change. The steps dispatch on the OLD and NEW kinds — jsx-kinds (svg-graph, interactive-demo) come from scratch files; manim and web-image come from returned manifests/paths, not scratch:
+1. Remove the old medium: jsx-kinds → delete the component definition (function signature / `<InteractiveDemo title>` anchor) plus, for svg-graph, its `DEFAULT_GRAPH_PARAMS[<old_key>]` and `GRAPH_SCHEMA[<old_key>]` entries; manim → delete the old `.mp4` AND its paired `.py` from disk; web-image → delete the old file from disk.
+2. Delete the old call site (`<Component/>`, `<video src>`, or `<img src>`) in the topic's `content` function.
+3. Insert the new medium: jsx-kinds → the scratch component into the component block (+ wiring note applied at LessonApp level for demos); manim/web-image → nothing to insert in the component block, the asset is already on disk.
+4. Insert the new call site at the same approximate position (component call, `<video src={VID + "<stem>.mp4"}>`, or `<img src>` per the new kind).
+5. svg-graph only: extend `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA` with the new key.
 
 **`remove`** (any kind): delete the component definition, delete the call site, delete the `DEFAULT_GRAPH_PARAMS[<key>]` entry, delete the `GRAPH_SCHEMA[<key>]` entry. For manim-video / static-image, also delete the file from disk.
 
-**`add`** (any kind): insert the new component (from `.build-scratch/add/`), add the call site in the correct topic's `content` function, extend `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA`.
+**`add`** (any kind): jsx-kinds → insert the new component from `.build-scratch/add/` (demos: apply the `-wiring.md` hooks at LessonApp level) and add the call site in the correct topic's `content` function; manim/web-image → the asset is on disk per the manifest, add only the `<video>`/`<img>` call site. svg-graph only: extend `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA`.
 
 #### 4.3 Walk topic actions
 

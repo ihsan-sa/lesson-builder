@@ -74,6 +74,21 @@ function validateDesmosState(raw) {
           return { ok: false, reason: `expressions[${i}].${prop} must be a STRING (e.g. "2.5" not 2.5) -- Desmos setState crashes on numeric ${prop}` };
         }
       }
+      // parametricDomain / polarDomain bounds are LaTeX strings too — numeric
+      // values blank the calculator exactly like numeric sliderBounds.
+      for (const domProp of ["parametricDomain", "polarDomain"]) {
+        const dom = e[domProp];
+        if (dom !== undefined) {
+          if (typeof dom !== "object" || dom === null || Array.isArray(dom)) {
+            return { ok: false, reason: `expressions[${i}].${domProp} must be an object` };
+          }
+          for (const k of ["min", "max"]) {
+            if (dom[k] !== undefined && typeof dom[k] !== "string") {
+              return { ok: false, reason: `expressions[${i}].${domProp}.${k} must be a STRING (e.g. "0" not 0) -- Desmos setState rejects numeric domain bounds` };
+            }
+          }
+        }
+      }
     }
   }
   const cleaned = stripAutoplay(raw);
@@ -104,6 +119,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError } = {}
   const editRe = /<<EDIT_GRAPH>>([\s\S]*?)<<END_EDIT>>/g;
   let display = text;
   let match;
+  let appliedEdit = false;
   while ((match = editRe.exec(text)) !== null) {
     const raw = match[1].trim();
     let edits;
@@ -122,6 +138,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError } = {}
     }
     if (result.validValue && Object.keys(result.validValue).length > 0) {
       onEditGraph?.(result.validValue);
+      appliedEdit = true;
     }
     display = display.replace(match[0], "");
   }
@@ -237,5 +254,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError } = {}
     if (txt) reinforced.push(txt);
     return "";
   });
-  return { display: display.trim() || "Graph updated.", suggestion, commitSuggest, reinforced };
+  // Fallback for tag-only replies with no prose: name what actually happened —
+  // "Graph updated." only when a graph edit applied, else a neutral "Done."
+  return { display: display.trim() || (appliedEdit ? "Graph updated." : "Done."), suggestion, commitSuggest, reinforced };
 }

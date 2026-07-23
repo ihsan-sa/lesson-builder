@@ -88,8 +88,8 @@ function _formatBody(type, details) {
     const lines = ['The graph was updated. To verify the result:'];
     lines.push(`1. Call mcp__playwright__browser_navigate with url: ${viteUrl || 'http://localhost:5173'}/?tab=${tabId || ''}`);
     lines.push(`2. Call mcp__playwright__browser_take_screenshot targeting the element with selector [data-graph-key="${graphKey}"][data-graph-render-id="${renderId}"]`);
-    lines.push('3. Spawn the visual-QA team in parallel for this medium (graphics-agent produced a lesson graph edit; spawn geometry-agent + scientific-accuracy-agent for review, and colour-agent + readability-agent if the visual changed style).');
-    lines.push('4. Synthesize the specialists reports and tell the student if the result matches intent. If it does not, emit a corrective EDIT_GRAPH.');
+    lines.push('3. Spawn visual-qa-agent and scientific-accuracy-agent in parallel on the screenshot to review the edited graph.');
+    lines.push('4. Synthesize the reviewer reports and tell the student if the result matches intent. If it does not, emit a corrective EDIT_GRAPH.');
     return lines.join('\n');
   }
   if (type === "edit-rejection" && details.errors) {

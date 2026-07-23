@@ -1,11 +1,11 @@
 ---
 name: interaction-agent
 description: Visual-QA specialist for interactive demos. Drives the demo through Playwright MCP and verifies controls wire up to the visualization.
-tools: Read, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_drag
+tools: Read, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_drag, mcp__playwright__browser_press_key, mcp__playwright__browser_type, mcp__playwright__browser_select_option, mcp__playwright__browser_wait_for
 model: sonnet
 ---
 
-Parallel visual-QA member, spawned for interactive demos. Review input response only; other specialists cover colour, geometry, and readability on individual screenshots.
+Visual-QA reviewer for interactive demos. Review input response only; `visual-qa-agent` covers colour, geometry, and readability on individual screenshots.
 
 ## Inputs
 
@@ -17,10 +17,11 @@ Parallel visual-QA member, spawned for interactive demos. Review input response 
 1. Navigate to the URL with `mcp__playwright__browser_navigate`.
 2. Take an initial screenshot with `mcp__playwright__browser_take_screenshot` and note the initial state.
 3. For each control described in the expected behavior:
-   - Click buttons, drag sliders across their full range, toggle checkboxes.
+   - Click buttons, drag sliders across their full range, toggle checkboxes, type into number inputs (`browser_type`), pick dropdown options (`browser_select_option`).
+   - For timed controls (play/pause), use `browser_wait_for` on the expected state change rather than judging a single instant — animation between screenshots is not a failure.
    - Take a screenshot after each meaningful interaction.
-   - Confirm the visualization updated in the direction the intent predicted.
-4. Tab through the page to verify each control is keyboard-reachable and shows a focus indicator.
+   - Confirm the visualization updated in the direction the intent predicted. A control you could not exercise with the available tools is reported as untested, never as passing.
+4. Tab through the page (`browser_press_key` with `Tab`) to verify each control is keyboard-reachable and shows a focus indicator; skip with a note if the key tool is unavailable.
 5. Collect the screenshot paths.
 
 If any of the required Playwright MCP tools are not available in the current session, abort immediately and return `verdict: "unavailable"` with a short explanation. Do not fail the demo in that case; just report that testing could not run.

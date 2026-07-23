@@ -44,56 +44,19 @@ learning goals. Cover:
   - Which lectures / sections / units this lesson covers
   - What the student should walk away able to DO (the topic objectives)
 
-Then append the PEDAGOGY POLICY block verbatim (below). It supersedes the old
-one-line "NEVER solve" directive: the policy already withholds answers and adds
-the retrieval-first / least-help-first teaching moves the bare anti-solution rule
-was a blunt stand-in for. This is the only per-lesson tutor-steering surface the
-author controls — the chatbot's base system prompt lives in @core/chat/
-buildSystemPrompt.js and is shared, not authored here — so the policy rides in
-LESSON_CONTEXT (and is reinforced per-tab via TOPIC_CONTEXT where a topic has a
-known misconception to diagnose).
+Do NOT paste a pedagogy policy here. The canonical PEDAGOGY POLICY (retrieval-
+first, least-help-first hint ladder, step-level interaction, task-level
+feedback, misconception refutation, transfer checks) is injected automatically
+by @core/chat/buildSystemPrompt.js — the shared core is its single source of
+truth, so every lesson runs the same current policy. Legacy lessons that
+embedded the old policy text are detected by marker and not double-injected.
 
-PEDAGOGY POLICY (paste verbatim into LESSON_CONTEXT):
-
-  You are a tutor, not an answer key. These research-backed moves take priority
-  over any instinct to hand over the solution:
-  - Make the learner retrieve and attempt first. For a question on covered
-    material, ask them to recall it before you confirm. For a problem, ask for
-    their next step or a prediction before you solve. Never give the full answer
-    or full solution on a first request.
-  - Least help first; escalate only on need. Offer the smallest hint that
-    unblocks the next move: nudge -> conceptual hint -> pointed prompt -> worked
-    step -> (last resort) the answer. Add one level of specificity per failed
-    attempt; ease off when they succeed. Never loop a stuck beginner — after a
-    few escalating hints, show a worked step, then continue.
-  - Interact at the STEP level, not the answer level. Diagnose and respond to the
-    learner's current step; do not grade only the final answer.
-  - Worked example for a new skill; fade as they improve. For a brand-new
-    procedure, offer to walk one example rather than quizzing cold. Once they
-    handle similar items unaided, stop volunteering steps — a terse confirmation
-    beats re-explaining what they already know.
-  - Feedback on the task, never the person. No "you're smart / a natural / ahead
-    of most." On an error, name the specific mistake and the corrective step, and
-    praise the process. Lead with what was right at the task level, not "Good job!".
-  - Support autonomy and value, informationally. Where it fits, offer a few
-    signposted choices (which example to work, which angle next) and let the
-    learner set the pace. Occasionally connect the material to a goal or problem
-    they care about. Keep it purely informational: NO person-praise, NO points,
-    streaks, badges, levels, or leaderboards. Competence comes from honest
-    task-level feedback, not rewards.
-  - Diagnose misconceptions, then refute. Before correcting, ask one question to
-    locate the faulty idea. Restate it, mark it wrong, give the causal reason, and
-    expect it to resurface — re-check later.
-  - Confirm understanding generatively. After a correct answer, sometimes ask
-    "why does that work?" Before treating something as mastered, pose a transfer
-    variant (same idea, new surface).
-  - Verify; don't fabricate; don't cave. Ground facts and computations in the
-    lesson materials or an explicit check — never invent a worked step. If the
-    learner asserts something false, hold your ground and show why; if unsure, say
-    "let's verify" rather than guessing or agreeing.
-  - Keep turns lean. One focused move per turn; let the learner set the pace.
-  If the learner explicitly insists on a direct answer, give it once and briefly
-  — then return to a check question.
+What DOES belong here as tutor steering: course-specific conventions (notation,
+sign conventions, what the course calls things), the lesson's objectives, and
+anything the tutor should emphasize or avoid for THIS course. Per-topic
+misconceptions go in TOPIC_CONTEXT (below), where the active tab reinforces
+them. Never write steering that weakens the policy ("just give answers") — the
+Phase 4 pedagogy gate flags it.
 */`;
 
 // ───────────────────────────────────────────────────────────────
@@ -252,10 +215,10 @@ export const GRAPH_SCHEMA = {
 // same: statement visible by default, solution collapsed behind a toggle so
 // students attempt first and then check.
 //
-// This coexists with the PEDAGOGY POLICY above rather than contradicting
-// it: the policy governs the CHATBOT, which still withholds answers and
-// escalates hints (withhold-first). Practice cards may carry full worked
-// solutions because they are (a) collapsed by default — leave defaultOpen
+// This coexists with the core-injected PEDAGOGY POLICY rather than
+// contradicting it: the policy governs the CHATBOT, which still withholds
+// answers and escalates hints (withhold-first). Practice cards may carry full
+// worked solutions because they are (a) collapsed by default — leave defaultOpen
 // false, (b) provenance-marked — the card badges OFFICIAL SOLUTION vs
 // AI-WORKED SOLUTION, and (c) sourced — official solutions come verbatim
 // from the materials; derived ones must pass the two-source cross-reference
@@ -406,6 +369,17 @@ function LessonApp() {
 
   const active = TOPICS[activeIdx];
 
+  // Ctrl+Click adds a lesson content block to the chat context. Plain clicks
+  // are intentionally inert — a capture-phase listener in @core stops them
+  // unless Ctrl is held — so this handler only ever fires for Ctrl+clicks
+  // that @core let through. Without it, context capture silently does nothing.
+  const handleContentClick = useCallback((e) => {
+    if (!e.ctrlKey) return;
+    const block = e.target.closest("p, li, h2, h3, h4, .eq-block, .key-concept");
+    if (!block) return;
+    addSnippet(block.innerText, active.title);
+  }, [addSnippet, active.title]);
+
   // KaTeX loads from CDN on mount. Gate the whole app until it is ready so
   // math blocks do not flash unrendered source.
   if (!katexReady) {
@@ -493,8 +467,9 @@ function LessonApp() {
         ))}
       </div>
 
-      {/* Content area: renders the active topic's content(gp) function */}
-      <div className="content-area">
+      {/* Content area: renders the active topic's content(gp) function.
+          onClick powers Ctrl+Click context capture — do not remove. */}
+      <div className="content-area" onClick={handleContentClick}>
         <div style={{ marginBottom: 8, padding: "16px 24px 0" }}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--text-primary)" }}>
             {active.title}

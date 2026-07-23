@@ -14,7 +14,7 @@ You read the active lesson's source and return a focused summary of its coverage
 
 ## Procedure
 
-1. Locate the lesson file: `claude_lessons/<slug>/src/<slug>.jsx` (or the path the tutor gave you).
+1. Locate the lesson file: the path the tutor gave you, else `claude_lessons/<slug>/src/<slug_snake>.jsx` (slug dashes → underscores); when unsure, Glob `src/*.jsx` in the lesson root — never assume the dashed form.
 2. Read the full file once. Identify:
    - The `TOPICS` array (section titles and ids).
    - The `TOPIC_CONTEXT` object (per-topic prose context passed to the tutor).

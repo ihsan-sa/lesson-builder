@@ -1,19 +1,14 @@
 # Phase 0 — Scoping Interview
 
+Contents: Mode detection recap · Resource-mode detection · New-mode questions · Update-mode questions · Scoping artifact format · Aggressive defaults for one-liners · Log output · Handoff.
+
 ## Purpose
 
 Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short AskUserQuestion interview whose questions adapt to the detected mode and to whatever materials the user provided. Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes. Phase 0 assumes the fresh-workspace bootstrap gate has already run — if `<workspace_root>/_lesson-core/` is missing, the bootstrap procedure in `references/bootstrap.md` installs it before any Phase 0 question fires (see `SKILL.md`).
 
 ## Mode detection recap
 
-Detection fires before the scoping interview. Best-effort; Phase 0's first question confirms.
-
-- **Update verbs**: `update|updating|updated|rework|reworking|revise|revising|improve|improving|refresh|refreshing|modify|modifying|tweak|tweaking|fix|fixing|enhance|enhancing`.
-- **Lesson references**: course + slug via Glob over `<workspace_root>/*/claude_lessons/*/`, or any path containing `claude_lessons`.
-- **Candidate resolution**: full path → use directly; course + slug → resolve to `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob; use if exactly one match.
-- **Mode assignment**: verb + resolved → `update`; verb + unresolved → `update` with `candidate_root=null`; no verb → `new`; verb + new-sounding intent → `new` with logged ambiguity.
-
-Full decision tree, edge cases, and the update-verb table live in `references/update-mode.md`; a high-level summary lives in `SKILL.md`. Do not duplicate that detail here — cross-link it.
+Detection fires before the scoping interview; best-effort, Phase 0's first question confirms. The verb list and mode-assignment rules are canonical in `SKILL.md` § Mode detection; the full decision tree and edge cases live in `references/update-mode.md` §3. Candidate resolution: full path → use directly; course + slug → `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob, use if exactly one match.
 
 Main Claude writes the detection result as the first line under `## Phase 0 — Scoping` in the log doc:
 
@@ -34,14 +29,16 @@ Alongside mode detection, scan the initial message for resource-conscious signal
 
 New mode asks a fixed set of **always-asked** questions, plus one branch of **conditional** questions depending on whether the user already provided source material (textbook chapter, slide deck, problem set, lecture notes) or nothing at all.
 
+Batch the interview into as few `AskUserQuestion` calls as possible (the tool takes up to 4 questions per call) rather than firing one call per question — two calls usually cover the whole new-mode interview.
+
 ### Always asked (new mode)
 
-1. **Course code** — "Which course directory should this lesson live under?" Main Claude runs `Glob <workspace_root>/*/claude_lessons/` to enumerate existing course directories, presents them as options, and appends `Other (specify)` for a new course directory. The course code the user picks for display (e.g., in headers and commit messages) is asked as a separate free-text follow-up.
+1. **Course code** — "Which course directory should this lesson live under?" Main Claude runs `Glob <workspace_root>/*/claude_lessons/` to enumerate existing course directories, presents them as options, and appends `Other (specify)` for a new course directory. A free-text follow-up collects the display code AND the full course name (e.g. "MATH 239 — Introduction to Combinatorics") — the full name becomes the artifact's `course_name`, which Phase 3 wires into the Chatbot's `courseName` prop; for existing courses, default it from a sibling lesson's JSX instead of re-asking.
 2. **Lesson slug** — "What directory slug should the lesson live under (kebab-case, e.g. `topic-name`)?" Free-text.
 3. **Audience level** — "What's the target audience?" Options: `First-year undergrad`, `Second-year undergrad`, `Upper-year undergrad`, `Graduate / review`, `Mixed (specify)`.
 4. **Pedagogical goal** — "How deep should this lesson go?" Options: `Survey (broad tour, minimal derivations)`, `Working knowledge (standard course coverage)`, `Mastery (derivations, edge cases, exam-level)`.
 5. **Single vs multi-lesson** — "Is this one lesson or a multi-lesson unit?" Options: `Single lesson`, `Multi-lesson unit (specify count)`.
-6. **Deploy target** — "Is this a brand-new lesson, or replacing an existing one at the same slug?" Options: `Brand-new lesson`, `Replacing existing lesson at <course>/<slug>`.
+6. **Deploy target** — "Is this a brand-new lesson, or replacing an existing one at the same slug?" Options: `Brand-new lesson`, `Replacing existing lesson at <course>/<slug>`. A replacement is still a new-mode build, but the old lesson must be recoverable: before Phase 3 scaffolds over it, require a clean working tree at the lesson root and create a safety branch (`git branch backup/<slug>-<YYYYMMDD>`) so the previous lesson survives the overwrite.
 7. **Deploy destination** — "When the lesson is ready, how should it go live?" Options:
    - `Push to GitHub (default)` — commits + `git push origin main`; workspace's hosted deploy (Netlify / Vercel / Cloudflare Pages per workspace config) auto-triggers.
    - `Push to a different git remote` — commits + pushes to a user-specified remote URL.
@@ -71,7 +68,7 @@ If no material was provided, ask:
 
 ## Question taxonomy — update mode
 
-Update mode asks **5 questions**. Course code, slug, and deploy target are auto-populated from `candidate_root`. Audience level, pedagogical goal, and single-vs-multi are asked because they may have shifted.
+Update mode asks **5 update-specific questions** (below) plus the 4 carried-over standard ones listed under "Still asked in update mode" — batch them into 2-3 `AskUserQuestion` calls. Course code, slug, and deploy target are auto-populated from `candidate_root`. For terse one-liners, skip the interview entirely via the aggressive-defaults policy at the end of this doc.
 
 Pre-checks run first:
 
@@ -90,6 +87,8 @@ Pre-checks run first:
 1. **Mode confirmation** — "I detected an update to `<course>/claude_lessons/<slug>` at `<workspace_root>/<course>/claude_lessons/<slug>/`. Is that the lesson to revise?" Options: `Yes, update that lesson`, `Different lesson (specify course and slug)`, `Actually a brand-new lesson (switch to new mode)`. If `candidate_root` is null, rephrase as "Which existing lesson should I update?" with free-text or a Glob-enumerated option list.
 
 2. **Working-tree check** — only surfaced if `git status --short <lesson_root>` returned non-empty. "Your working tree has uncommitted changes in `<lesson_root>`. How should I proceed?" Options: `Stash them and continue (I'll record the stash ref for recovery)`, `Abort — I'll commit first and rerun`, `Discard them (destructive, requires explicit confirm)`. If clean, skip the question entirely and log `Working tree: clean`.
+
+   **Phase 0 owns the stash.** On the stash choice, run it now — `git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>` — then capture the stable OID via `git rev-parse stash@{0}` and log both (`stashed: stash@{0} (<oid>)`). Phase 3 consumes this ref and never stashes again; positional `stash@{0}` alone is not durable if anything else stashes in between, which is why the OID rides along.
 
 3. **Research depth** — "How deep should the research re-sweep be?" Options: `Full (comprehensive re-research — treats the lesson like a new build; default when resource_mode is full and quality is the priority)`, `Targeted (re-research specific topics you name — good balance when only part of the lesson needs a fresh look)`, `Light (minimal re-research — work from existing content, your concerns, and any new materials; default when resource_mode is limited)`. Default is `full` when `resource_mode: "full"` and the update scope is broad; `targeted` when the scope is narrow; `light` only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
 
@@ -120,8 +119,14 @@ Phase 0 output is a structured artifact written to the log and passed to Phase 1
 mode: "new" | "update"
 resource_mode: "full" | "limited"   # default "full"; "limited" only if user explicitly signalled a quick pass
 course: "<course display code>"
+course_name: "<full course name>"   # wired into the Chatbot courseName prop at Phase 3
 course_dir: "<course>"
 slug: "<slug>"
+lesson_file: "src/<slug_snake>.jsx"  # slug with dashes replaced by underscores.
+                                     # THE canonical lesson filename — every later
+                                     # phase, test command, chatbot lessonFile prop,
+                                     # and reviewer brief consumes this value.
+                                     # Docs writing src/<slug>.jsx mean this file.
 audience_level: "..."
 pedagogical_goal: "survey" | "working" | "mastery"
 scope_of_lesson: "single" | "multi (count: N)"

@@ -41,9 +41,9 @@ flowchart TD
 |---|---|---|
 | 0 — Scoping | AskUserQuestion interview: course, slug, audience, depth, materials, **materials scope** (course-only / fill-gaps / extensions), **deploy destination** (GitHub / custom service / commit-only / skip). | Confirm detected lesson, working-tree check, research-depth, scope-of-change, media hints, deploy destination (defaults to last recorded). |
 | 1 — Content Analysis | `content-orchestrator-agent` runs per-resource deep-review teams + topic-area research + gap-fill, capped by `materials_scope`. | Pre-scan existing media inventory (Grep/Glob), diff against user concerns, classify drift / gaps / redundancies. |
-| 2 — Plan | Compile a Lesson Plan with ranked media per topic; plan surfaces a `DEPLOY:` block (action / service / materials-in-commit). | Emit a 5-way change-list: `keep / refine / replace / remove / add`, plus structural drift repairs and the `DEPLOY:` block. |
+| 2 — Plan | One whole-lesson `medium-decider-agent` spawn ranks media per topic with a cross-topic diversity check; web images get a license pre-flight; plan surfaces a `DEPLOY:` block (action / service / materials-in-commit). | Emit a 5-way change-list: `keep / refine / replace / remove / add`, plus structural drift repairs and the `DEPLOY:` block. |
 | 3 — Execution | Parallel specialists write to `.build-scratch/`; main Claude assembles `src/<slug>.jsx` from the skeleton. Writes private-by-default `.gitignore` covering `materials/`, `source/`, `notes/`, `*.local`, `.env*`. | Create `lesson-update/<slug>-YYYYMMDD` branch + optional stash, splice specialist outputs into the existing JSX using pattern anchors, run post-splice sanity pass. Ensures the lesson `.gitignore` covers any newly attached private paths. |
-| 4 — Review + Fix | Parallel code / content / test / visual-QA reviewers. Progress-aware fix loop with hard stop rules. | Same mechanism. Two extra rules: **no-grandfathering** (every final medium runs through visual-QA, including `keep`) and **regression-watch** (halt a fix thread if a refine regresses a previously-clean `keep` medium). |
+| 4 — Review + Fix | Parallel code / content / test reviewers plus two independent lenses per artifact (`visual-qa-agent` rubric + `scientific-accuracy-agent`). Progress-aware fix loop, deterministic failures first, hard stop rules. | Same mechanism. Two extra rules: **no-grandfathering** (every final medium runs through visual-QA, including `keep`) and **regression-watch** (halt a fix thread if a refine regresses a previously-clean `keep` medium). |
 | 5 — Deploy | Branches on `deploy_action`. `build-all.sh` + headless Playwright smoke check always runs (sanity check). Ask **override the gitignore for this commit?** (default: no — private paths stay out). Commit, then push-to-github / push-to-custom / commit-only per plan. | Same build gate, commit to update branch, `git merge --no-ff` to `main` (skipped under `commit-only`), push per `deploy_action`, stash recovery prompt. Branch and stash are preserved on any failure. |
 
 ## Quality policy
@@ -52,14 +52,14 @@ flowchart TD
 
 For a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*. The skill flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced at Phase 0 for explicit override.
 
-Teaching quality is evidence-based: lessons are planned backward from measurable objectives, the embedded tutor follows a withhold-first pedagogy policy (hint ladder before answers), a Phase 4 pedagogy gate checks every objective is assessed, and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
+Teaching quality is evidence-based: lessons are planned backward from measurable objectives, the embedded tutor follows a withhold-first pedagogy policy (hint ladder before answers, injected from the shared `_lesson-core` so every lesson runs the same current policy), a Phase 4 pedagogy gate checks every objective is assessed, and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
 
 ## Key invariants
 
 - **Quality-first default**: `resource_mode: "full"` unless the user signalled otherwise.
 - **One human gate**, at Phase 2. No exceptions.
-- **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently.
-- **Self-contained agents**: all 15 agents bundled at `agents/`. No workspace or machine-global dir required.
+- **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently. Media decisions go through one whole-lesson decider spawn.
+- **Self-contained agents**: all 12 agents bundled at `agents/`. No workspace or machine-global dir required. Judgment agents inherit the session model; production/rubric agents pin sonnet.
 - **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code.
 - **Per-lesson log** at `<lesson_root>/lesson_build.log.md`. Main Claude owns it; updates append rather than overwrite.
 - **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, TOPIC_CONTEXT invariants, template compliance, no inlined chat, no emojis, no direct API calls).
@@ -69,7 +69,7 @@ Teaching quality is evidence-based: lessons are planned backward from measurable
 
 ```
 SKILL.md                       Entry point — quality policy, mode detection, phase shell, agent team
-agents/                        Bundled agent definitions (15 agents, self-contained)
+agents/                        Bundled agent definitions (12 agents, self-contained)
   content-orchestrator-agent.md
   content-review-agent.md
   research-agent.md
@@ -79,11 +79,8 @@ agents/                        Bundled agent definitions (15 agents, self-contai
   interactive-demo-agent.md
   web-image-agent.md
   code-review-agent.md
-  geometry-agent.md
-  colour-agent.md
-  readability-agent.md
+  visual-qa-agent.md
   scientific-accuracy-agent.md
-  motion-timing-agent.md
   interaction-agent.md
 references/
   bootstrap.md                 Workspace bootstrap procedure (fresh-workspace gate)

@@ -1,6 +1,6 @@
 ---
 name: interactive-demo-agent
-description: Spawn when a concept benefits from live parameter manipulation (convergence, sensitivity, phase evolution, thresholds). By default prefer interactive demos over static graphs when manipulation reveals behavior; fall back to static only when the caller flagged `resource_mode: "limited"` and a static graph is genuinely sufficient.
+description: Composes interactive demos from @core primitives when live parameter manipulation teaches what a static figure cannot (convergence, sensitivity, phase evolution, thresholds). Used by the Phase 3 build pipeline and the runtime tutor.
 tools: Read, Grep, Glob, Edit, Write
 model: sonnet
 ---
@@ -34,7 +34,10 @@ Do not build substitutes.
 
 ## Return format
 
-A JSX fragment plus a brief integration note:
+**Build pipeline (any mode)**: write two scratch files and return their paths —
+`.build-scratch/<action>/<media_id>.jsx` containing the COMPLETE `<InteractiveDemo title="...">...</InteractiveDemo>` block, and `.build-scratch/<action>/<media_id>-wiring.md` listing the `useState` hooks (name, type, initial) LessonApp must declare and how props flow. Main Claude splices the block wholesale and applies the wiring; write "no state bindings changed" when none did.
+
+**Runtime chat**: no files; return inline:
 
 ```
 {
@@ -69,8 +72,4 @@ Also preserve:
 
 ### Output
 
-- `refine` → `.build-scratch/refine/topic-N-<title>.jsx` + `wiring_note.md` describing LessonApp state-hook updates. Main Claude applies wiring during splice.
-- `replace` → `.build-scratch/replace/topic-N-<title>.jsx` + wiring note.
-- `add` → `.build-scratch/add/topic-N-<title>.jsx` + wiring note.
-
-If no state-binding changes, the wiring note says "no state bindings changed".
+All actions follow the build-pipeline return format above (`.build-scratch/<action>/<media_id>.jsx` + `-wiring.md`). The scratch JSX is always the COMPLETE `<InteractiveDemo>` block — on refine, main Claude replaces the existing block wholesale with yours (title identical), never inserts yours inside it.

@@ -1,8 +1,10 @@
 # Phase 2: Plan
 
+Contents: Purpose · Inputs · Objectives-first backward design · Procedure (6 steps) · medium-decider driving · Lesson Plan artifact formats · Human approval gate · Request-changes loop · Handoff to Phase 3.
+
 ## Purpose
 
-Phase 2 is the planning phase. Main Claude drives it directly and produces the **Lesson Plan** artifact. This phase runs the pipeline's single mandatory human approval gate; all Phase 3 specialist work is constrained by the approved plan. Phase 2 also selects medium specialists (graphics, manim, interactive-demo, web-image, inline prose) and seeds their briefs — the plan doubles as a spawn manifest for Phase 3.
+Phase 2 is the planning phase. Main Claude drives it directly and produces the **Lesson Plan** artifact. This phase runs the pipeline's single mandatory human approval gate; all Phase 3 specialist work is constrained by the approved plan. The plan doubles as Phase 3's spawn manifest: each media item carries the medium-decider's specialist brief, which becomes the Phase 3 spawn prompt.
 
 ## Inputs
 
@@ -32,32 +34,27 @@ This objective → evidence → ordering skeleton is the contract Step 1 partiti
 
 Main Claude reads the compiled content package and partitions it into topics matching the user's scope from Phase 0. One topic per tab in the final lesson. The split follows the objective skeleton above — each topic owns its objectives, their checks, and its place in the prerequisite ordering, so the `TOPICS` order reflects prerequisites rather than source sequence. In update mode, topic boundaries are already determined by the Phase 1 verdicts (`keep`, `modify`, `add`, `remove`, `reorder`), so Step 1 reconciles them against the scoping artifact's `scope_of_change` — if the user asked for "specific topics", topics outside that list default to `keep` regardless of drift unless the drift is severe enough to block the lesson.
 
-### Step 2: Spawn medium-decider-agent in parallel
+### Step 2: Spawn medium-decider-agent — ONE spawn for the whole lesson
 
-One spawn per topic. All spawns fire in a single message to maximize parallelism. The inputs and outputs branch on mode; see the "medium-decider-agent driving" section below for the full contract.
+Medium choice is a cross-topic coherence decision (media diversity across the lesson, shared-component dedup, consistent judgment on similar topics), so the decider sees **all topics in one spawn** — never one spawn per topic. Inputs and outputs branch on mode; see "medium-decider-agent driving" below.
 
-### Step 3: Spawn medium specialists in parallel to draft execution plans
+The decider's per-item briefs become the plan's `execution_brief` fields **copied verbatim** — new mode from `build_brief`, update mode from the action-specific `refine_brief`/`replace_brief`/`add_brief` (the plan row records which action it was; no renaming or transformation between producer and consumer). They become the Phase 3 specialist spawn prompts, so main Claude checks each is self-contained before compiling the plan and sends it back to the decider for revision if it isn't. Every plan media row also carries the decider's immutable `media_id` and an `original_intent` one-liner (what this medium is supposed to show) — `keep` rows included, because Phase 4's no-grandfathering QA briefs are built from exactly these two fields, possibly in a later resumed session.
 
-Important: Phase 2 specialists draft **execution plans**, not final artifacts. They return structured briefs that describe what they would build in Phase 3. Nothing is rendered, written to disk, or compiled into the lesson yet.
+### Step 3: Web-image pre-flight (only when the decider proposed web images)
 
-Parallelism pattern: one specialist per topic per medium verdict, all spawned concurrently. Main Claude waits for all to return before proceeding to Step 4.
+Web images are the one medium with a pre-approval blocker: license compliance. For each proposed web image, spawn `web-image-agent` in pre-flight mode — search + license-verify ONLY, no downloads — returning candidates with stable `candidate_id`s, URLs (image + source page), license status, and the target path under `<lesson_root>/public/images/`. An image with unclear provenance does not enter the plan; the approved `candidate_id` rides in the Phase 3 fetch brief. If a request-changes revision adds a web image, re-run this pre-flight for it before re-presenting the gate — no web image reaches Phase 3 unvetted. All other media need no Phase 2 specialist work — their briefs carry enough for the gate, and rendering happens once, in Phase 3, after approval. (Manim entries carry a static note in the plan: a 5-10 s scene renders in roughly 1-3 minutes.)
 
-Per-specialist draft plan contents:
-
-- **`graphics-agent`** — returns an SVG component sketch (function name, props list, expected data flow, rough geometric outline) plus matplotlib reference image parameters (any `RefImg` base64 constants that should be pre-rendered, the `.py` script shape, expected colour and axis scheme). In update mode, also returns a diff against the existing component it is refining or replacing.
-- **`manim-agent`** — returns a scene outline (which objects appear, how they transform, what the camera does), an expected render time estimate (so main Claude can flag long renders at the approval gate), and the asset filename that will land under `<lesson_root>/public/videos/<filename>.mp4`. In update mode, notes whether an existing `.py` script is being overwritten or a new filename is introduced.
-- **`interactive-demo-agent`** — returns the list of primitives it will use (from `@core/ui` or composed locally), the state wiring plan (which `useState` hooks, which derived values), and the expected user-visible behavior (what the student does, what changes in response). In update mode, returns whether the outer `<InteractiveDemo title>` stays the same (required for refine).
-- **`web-image-agent`** — returns draft search queries, candidate URLs (image URL plus source page URL), license requirements (the agent must only return images with explicit license compatibility), and the target path under `<lesson_root>/public/images/<filename>`. License compliance is blocking: an image with unclear provenance must not advance past this step.
-- **Main Claude direct draft** — no specialist spawn. Main Claude writes inline prose snippets, KaTeX equation blocks, and key-concept bullets directly into the draft plan. These are fast and don't benefit from delegation.
+Inline prose, KaTeX blocks, key-concept bullets, and `<DesmosGraph>` embeds never spawn a specialist in any phase — main Claude authors them directly during Phase 3 assembly.
 
 ### Step 4: Main Claude compiles the Lesson Plan artifact
 
-Main Claude merges all draft execution plans into a single Lesson Plan artifact using the format appropriate to the mode (see "Lesson Plan artifact formats" below). Compilation includes:
+Main Claude merges the decider's verdicts and briefs (plus web-image pre-flight results) into a single Lesson Plan artifact using the format appropriate to the mode (see "Lesson Plan artifact formats" below). Compilation includes:
 
-- Deduplicating shared components (e.g., a helper SVG graph referenced by two topics appears once in the plan with both topic references).
+- Deduplicating shared components using the decider's `shared_components` list (a helper SVG graph referenced by two topics appears once in the plan with both topic references).
 - Reconciling the `GRAPH_SCHEMA` draft so every interactive graph has a schema entry with matching keys to its `DEFAULT_GRAPH_PARAMS`.
 - Tallying change-list counts (update mode) so the approval-gate summary can show honest `keep/refine/replace/remove/add` totals.
 - Flagging any internal inconsistencies (e.g., a topic marked `add` that depends on an equation marked `remove`).
+- **Persisting the objective skeleton** (the `objectives:` blocks from the backward-design step, checks tagged recall/transfer) into the plan and log — the Phase 4 pedagogy gate verifies the shipped lesson against exactly these, so a plan without them leaves the gate nothing to check. Update mode: objectives ride on `modify`/`add` topics; `keep` topics inherit theirs from the existing `TOPIC_CONTEXT`.
 - **Forwarding `PRACTICE_PROBLEMS_INDEX`** from the Phase 1 package into the plan's `Practice problems index:` section so the user sees per-topic problem totals and solution provenance at the approval gate without reading every problem body.
 - **Forwarding deploy intent from the scoping artifact** into a `DEPLOY:` section of the plan. Every Lesson Plan (both modes) includes `Action: <deploy_action>`, `Service: <deploy_service>` (or "GitHub → workspace-configured host auto-deploy" when `deploy_action == "push-to-github"`), and `Course materials in commit: asked at Phase 5` (or "N/A — no materials provided" when `provided_materials` is empty). The user sees deploy intent at the approval gate alongside the content plan so approval covers both.
 - **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
@@ -67,7 +64,7 @@ Main Claude merges all draft execution plans into a single Lesson Plan artifact 
 Main Claude writes the full Lesson Plan artifact to `<lesson_root>/lesson_build.log.md` under the appropriate heading:
 
 - **New mode**: `## Phase 2 — Plan` section with `Plan artifact: [...]` and an `Approval:` line that starts `PENDING` and flips to `APPROVED by user at <timestamp>` on gate pass.
-- **Update mode**: `### Phase 2 — Plan (update)` nested under the day's `## Update YYYY-MM-DD (run-id: <short-hash>)` heading. Contains both `Change-list view: [...]` and `Full Lesson Plan: [...]`.
+- **Update mode**: `### Phase 2 — Plan (update)` nested under the day's `## Update YYYY-MM-DD (run-id: <short-hash>)` heading. Contains both `Change-list view: [...]` and `Full Lesson Plan: [...]`, plus the same `Approval:` line as new mode (`PENDING` → `APPROVED by user at <timestamp>` / `ABORTED ...`) — after an interruption at the gate, this line is the only proof Phase 3 may run.
 
 The log is source of truth. Long change-lists go into the log first, then the approval gate points at the log. This avoids AskUserQuestion body truncation.
 
@@ -77,101 +74,56 @@ Main Claude presents the Lesson Plan with three options: approve, request change
 
 ## medium-decider-agent driving
 
+The decision heuristics (medium-to-content matching, high/low-value interactive patterns, tie-breaks, resource-mode behavior) are canonical in `agents/medium-decider-agent.md` — do not restate them in spawn briefs; the agent already knows them.
+
 ### New mode
 
-**Inputs passed to each spawn**:
-- Topic content (id, title, equations, key concepts, context string)
-- User media preferences from the Phase 0 scoping artifact (e.g., "prefer interactive where possible", "avoid manim, slow to render", "no web images")
+**Inputs (one spawn, whole lesson)**: the full topic list — per topic: id, title, equations, key concepts, context string, `practice_problems` count — plus user media preferences from the Phase 0 scoping artifact (e.g., "prefer interactive where possible", "avoid manim", "no web images") and `resource_mode`.
 
-**Return**: a ranked recommendation across the full medium space (inline prose, SVG graph, matplotlib reference, manim animation, interactive demo, web image, Desmos graph) with a written rationale per rank. Main Claude uses the top-ranked medium per topic but can fall back to lower ranks if a specialist's draft plan in Step 3 reveals the top choice isn't viable (e.g., manim render time estimate is prohibitive).
-
-Desmos embeds do not spawn a specialist — main Claude authors the `<DesmosGraph state={...}/>` JSX directly into the content function. Treat them the same as inline prose / KaTeX equations for spawn purposes: no delegation, written inline during assembly.
+**Return**: per-topic ranked recommendations (1-3 entries with rationale + confidence), a `practice_block` flag per topic, a lesson-level `diversity_note`, and a `shared_components` list. Main Claude uses the top-ranked medium per topic and may fall back to a lower rank when compilation reveals the top choice isn't viable; log any fallback with its reason.
 
 ### Update mode
 
-**Extra inputs** (passed in addition to topic content and user preferences):
+**Extra inputs** (one spawn covering all topics; per topic, in addition to topic content and user preferences):
 
 ```
 mode: "update"
-topic: { id, title, content_preview, equations, key_concepts, pedagogical_goal }
-existing_media: [
-  {
-    kind: "svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo",
-    name: <function name | asset filename | demo title>,
-    current_purpose, current_parameters, source_file, line_range,
-    rendered_preview: null | <base64 snapshot from graph-preview tab>,
-    content_orchestrator_preverdict
-  }
+topics: [
+  { id, title, content_preview, equations, key_concepts, pedagogical_goal,
+    existing_media: [
+      { kind: "svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo",
+        name: <function name | asset filename | demo title>,
+        current_purpose, current_parameters, source_file, line_range,
+        rendered_preview: null | <base64 snapshot from graph-preview tab>,
+        content_orchestrator_preverdict }
+    ],
+    gaps: [ { concept, reason_existing_media_insufficient, orchestrator_preverdict: "add" } ] }
 ]
-gaps: [ { concept, reason_existing_media_insufficient, orchestrator_preverdict: "add" } ]
 user_media_hints: [ { concept, hint } ]
+resource_mode: "full" | "limited"
 ```
 
-**5-way taxonomy** (see `references/update-mode.md` §4 for full details):
-
-1. **keep**: type right, content accurate, teaches well as-is.
-2. **refine**: type right but content stale. Function name / asset filename preserved.
-3. **replace**: a different medium type serves better.
-4. **remove**: concept cut, user-flagged, or low-value.
-5. **add**: gaps only.
-
-User hints override only when they do not violate scientific accuracy or pedagogical correctness. Conflict with orchestrator pre-verdict → safer action with a note.
-
-**Tie-break**: on genuine ties, less invasive wins (`keep` > `refine` > `replace` > `remove`); `add` sits outside (gaps only). Tie-break protects correct work, not effort. Under `resource_mode: "limited"`, extends to cheaper actions on near-ties.
-
-**Return format** (the agent's response contract):
-
-```
-{
-  "existing_verdicts": [
-    { medium_name, kind, action, rationale, specialist, refine_brief | replace_brief | null }
-  ],
-  "gap_verdicts": [
-    { concept, action: "add", rationale, specialist, add_brief }
-  ]
-}
-```
-
-Main Claude aggregates verdicts across all topics. The `specialist` field routes each verdict to the right specialist in Step 3: `graphics-agent` for svg-graph and matplotlib-ref, `manim-agent` for manim-video, `interactive-demo-agent` for interactive-demo, `web-image-agent` for static-image. `keep` verdicts bypass Step 3 entirely (nothing to draft). `remove` verdicts also bypass Step 3; main Claude records them for the Phase 3 assembly phase.
+The 5-way taxonomy (`keep / refine / replace / remove / add`), tie-breaks, hint-override rules, and the verdict return format are canonical in `agents/medium-decider-agent.md`; a student-facing summary lives in `references/update-mode.md` §4. Each verdict's `specialist` field routes it in Phase 3: `graphics-agent` (svg-graph, matplotlib-ref), `manim-agent` (manim-video), `interactive-demo-agent` (interactive-demo), `web-image-agent` (static-image). `keep` and `remove` verdicts spawn nothing — keeps persist untouched, removes are handled by main Claude during the splice.
 
 ## Medium selection criteria
 
-`medium-decider-agent` uses these to rank options. Every interactive demo must answer: "what does the student learn by manipulating this that they could not from a static figure?" Nothing → static graph.
+Canonical in `agents/medium-decider-agent.md` (medium-to-content matching, high/low-value interactive patterns, per-medium fit, tie-breaks). Two things main Claude still enforces at plan compilation:
 
-**Match the medium to the content, never to a learner "style."** Pick a graph because the concept is spatial, an animation because the temporal dimension is essential — not because a learner is "a visual learner" (a debunked premise). The medium ranking and any copy it produces must clear the "Do NOT build these" myth guardrail in `SKILL.md`: no learning-styles routing, no Dale's-cone "remember X%" justifications for interactivity (justify via the testing/doer effect), and no gamification (points / badges / leaderboards) as a motivation medium. When a choice is tempting for one of those reasons, drop it.
-
-**High-value interactive patterns**:
-- **Convergence**: iterative algorithms; let the user step through or adjust initial conditions.
-- **Parameter sensitivity**: physical properties reshape I-V curves, frequency responses, transfer functions in real time.
-- **Phase evolution**: animations when the temporal dimension is essential.
-- **Threshold/boundary**: user drags a parameter across a critical transition.
-
-**Low-value patterns — avoid**:
-- Sliders that just scale an axis or shift a curve.
-- Interactivity on obvious relationships (V = IR).
-- Animated decorations.
-- Toggles that hide/show what the legend already shows.
-
-**Manim** is right when: smooth geometric transformations, vector field flows, or 3D rotations that SVG cannot represent; step-by-step animated proofs; one-time assets, not runtime-parameterized.
-
-**Static SVG** is right when: runtime-parameterized (slider, toggle); simple geometry where inline paths beat raster load cost; simple curves (exponential, sinusoid, linear) that benefit from crisp vector rendering.
-
-**Matplotlib `RefImg`** supplements SVG when: the figure needs scientifically accurate reference rendering (validated axis labels, gridlines); the figure is complex enough that matplotlib primitives win over hand-authored SVG.
-
-**Desmos graph (`<DesmosGraph>`)** is right when: the teaching story is function shape under continuous parameters (e.g., plot a Taylor approximation vs. the true function, root-finding convergence as a slider sweeps the initial guess, filter magnitude response with slider-tuned pole/zero); the student benefits from zoom, pan, and typing arbitrary expressions; multiple curves need to be layered. Each `<DesmosGraph>` costs a ~1.3 MB CDN fetch the first time any embed renders in a page. Do NOT reach for Desmos when a static SVG with 1-3 curves already tells the story — stick with `<<DEMO>>` / `graphics-agent` output there. A lesson may embed multiple Desmos graphs; the second onwards is free (bundle already loaded).
+- **Myth guardrail**: the ranking and any plan copy must clear the `SKILL.md` "Do NOT build these" list — no learning-styles routing, no Dale's-cone "remember X%" justification for interactivity (justify via the testing/doer effect), no gamification as a motivation medium.
+- **Desmos authoring**: `<DesmosGraph>` embeds spawn no specialist — main Claude authors the `state` JSX during Phase 3 assembly (read `references/desmos-schema.md` first). First embed on a page costs ~1.3 MB; don't plan one where a static SVG with 1-3 curves tells the story.
 
 ## Lesson Plan artifact formats
 
 ### New mode — full Lesson Plan
-
-Quoted verbatim from `lesson-builder.md` Phase 2, new mode:
 
 ```
 LESSON PLAN
 Course/Slug: ...
 Topics:
   - id, title, subtitle, tab label
-  - media: [{ type, specialist, execution_plan_summary }]
+  - objectives: [{ objective: "<observable verb on content>",
+                   checks: [{ type: recall | transfer, description }] }]
+  - media: [{ media_id, type, specialist, original_intent, execution_brief }]
   - equations, key concepts
   - practice_problems: N (sources: "Final 2024 — Q3", "PS4 — Q2", ...) | none (no matching problems in materials)
 Graph schema draft:
@@ -201,8 +153,6 @@ The `Private paths` line lists the gitignore categories that will exist after Ph
 The `Service:` line renders `GitHub → workspace-configured host auto-deploy` when `deploy_action == "push-to-github"` (the concrete host depends on `netlify.toml` / `vercel.json` / CI config in the workspace; the skill does not try to infer). For `push-to-custom`, render the verbatim `deploy_service` value, prefixed with `git-remote: ` or `cli: ` per `deploy_service_kind`. For `commit-only` and `skip`, render `null` (nothing is going out).
 
 ### Update mode — change-list format
-
-Quoted verbatim from `lesson-builder.md` Phase 2, update mode:
 
 ```
 LESSON UPDATE PLAN — <Course>/<slug>
@@ -399,8 +349,8 @@ Question: Which items need revision?
 
 Options:
   [Topic-2 content] — re-run content-orchestrator-agent on topic-2
-  [Topic-2 media]   — re-run medium-decider-agent on topic-2 only
-  [Global media mix] — re-run medium-decider-agent on all topics
+  [Topic-2 media]   — re-run medium-decider-agent, revising topic-2 only
+  [Global media mix] — re-run medium-decider-agent across all topics
   [Structural drift items] — adjust GRAPH_SCHEMA backfill plan
   [Orphan assets] — flip keep/remove pre-verdicts on one or more orphans
   [Deploy preferences] — change deploy action / service / materials-in-commit default
@@ -408,10 +358,10 @@ Options:
 ```
 
 Routing:
-- **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, then re-run the affected `medium-decider-agent` spawn.
-- **Media-only changes** (medium type wrong, specialist brief wrong): loop back through `medium-decider-agent` for the affected topic only. Cheaper than re-running content orchestration.
+- **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, then re-run `medium-decider-agent` with the revised topic flagged (the spawn still sees all topics so diversity and dedup stay coherent; it revises only what changed).
+- **Media-only changes** (medium type wrong, specialist brief wrong): re-run `medium-decider-agent` with the user's revision noted. Cheaper than re-running content orchestration.
 - **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
-- **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates `deploy_action` / `deploy_service` on the scoping artifact in place, rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
+- **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates the full deploy triple — `deploy_action` / `deploy_service_kind` / `deploy_service` — on the scoping artifact in place (dropping `deploy_service_kind` breaks Phase 5's push branching), rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
 
 In every case, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same AskUserQuestion pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
 
@@ -429,8 +379,8 @@ If the user selects **abort**, main Claude:
 On approval, main Claude has:
 
 1. An **approved Lesson Plan artifact** written to `<lesson_root>/lesson_build.log.md` with an `Approval: APPROVED by user at <timestamp>` line.
-2. A **per-topic medium-decider verdict list** aggregated across all Step 2 spawns. Each verdict carries its `specialist` routing field so Phase 3 knows which agent to spawn.
-3. **Draft execution plans** from each specialist spawn in Step 3. These become the starting inputs for Phase 3 specialist builds; a specialist spawned in Phase 3 receives its own Phase 2 draft plan plus any refinements from the approval loop.
+2. The **medium-decider verdict list** (all topics, from the single Step 2 spawn). Each verdict carries its `specialist` routing field and its execution brief — the brief plus the topic's content package is the Phase 3 spawn prompt, refined by anything the approval loop changed.
+3. **Web-image pre-flight results** (when applicable): license-verified candidate URLs and target paths that the Phase 3 `web-image-agent` spawns consume.
 4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create and what stash ref (if any) to honor. Phase 3 Step 1 runs `git checkout -b <branch>` before any specialist spawns.
 5. **(Update mode only) An orphan asset verdict list**: the approved `ORPHAN ASSETS` block (if non-empty) hands Phase 3 a concrete `keep | remove` decision per file. Phase 3's orphan-asset-cleanup drift repair (`phase-3-execution.md` drift repair category 3) reads this list — files marked `remove` get deleted, files marked `keep` are left alone and logged as "kept orphans". No orphans list means nothing to do; an all-`keep` list means the cleanup step is a no-op and still logs the skipped category for trace.
 6. **Approved deploy intent**: the `DEPLOY:` block's `Action` and `Service` fields are binding for Phase 5. Phase 5 reads them from the plan (not by re-asking) and branches its commit/push logic accordingly. If the user wants to change deploy intent after approval, they interrupt during Phase 3 or 4 and main Claude reopens Phase 2 rather than mutating the contract silently.

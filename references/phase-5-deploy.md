@@ -1,5 +1,7 @@
 # Phase 5 — Deploy
 
+Contents: Ordering (branch on deploy_action) · Step 1 build verification · Step 1.5 gitignore-override question · Step 2a new-mode deploy · Step 2b update-mode deploy · Rollback on failure · Hosted deploy · Final report format · Log output.
+
 ## Purpose
 
 Phase 5 runs local build verification as a gate, commits, pushes to `main` (directly in new mode, via `--no-ff` merge from the update branch in update mode), logs deploy metadata, and surfaces the final report. Update-mode commits land on `lesson-update/<slug>-YYYYMMDD` and merge only after build verification. Update mode also handles stash recovery; branch + stash stay untouched on any failure.
@@ -18,7 +20,7 @@ Phase 5 runs local build verification as a gate, commits, pushes to `main` (dire
 4. Log append
 5. Final report to user
 
-Build verification failure halts steps 1.5 through 3 regardless of `deploy_action` — if the lesson doesn't build, committing or pushing is unsafe. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Stash recovery always runs in update mode (even after a build failure) so the user's uncommitted work doesn't get stranded.
+Build verification failure halts steps 1.5 and 2 regardless of `deploy_action` — if the lesson doesn't build, committing or pushing is unsafe. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Step 3 (stash recovery) always runs in update mode — even after a build failure — so the user's uncommitted work doesn't get stranded.
 
 ## Step 1 — Local build verification (gate)
 
@@ -30,18 +32,19 @@ Runs first and gates everything else. Uses the existing project build pipeline p
 cd <workspace_root> && bash build-all.sh
 ```
 
-The workspace's `build-all.sh` runs `npm install` + `npx vite build --base="/<course>/<slug>/"` per lesson and copies each per-lesson `dist/` into the root `dist/<course>/<slug>/`. Full-workspace rebuild time scales with lesson count (typically a few minutes; local times vary). The skill only needs to confirm the target lesson's output exists:
+The workspace's `build-all.sh` runs `npm install` + `npx vite build --base="/<course>/<slug>/"` per lesson and copies each per-lesson `dist/` into the root `dist/<course>/<slug>/`. Full-workspace rebuild time scales with lesson count (typically a few minutes; local times vary).
+
+**New-mode ordering**: `build-all.sh` builds only lessons registered in its inventory — a brand-new lesson isn't there yet, so the Step 2a.1 build-config edit (registering the lesson) happens BEFORE this verification, not after. Then confirm the target output exists at the path build-all actually writes:
 
 ```
-<workspace_root>/dist/<course>/<slug>/index.html
+<workspace_root>/dist/<deploy_code>/<slug>/index.html
 ```
+
+where `<deploy_code>` is the lesson's URL code from the `build-all.sh` inventory entry (often lowercase, e.g. `math101`) — read it from the inventory rather than assuming it equals the `<course>` directory name's casing. A successful build "missing" at the guessed path is almost always this mismatch.
 
 ### Headless browser smoke check
 
-After `build-all.sh` exits 0 and the target `index.html` is present, launch a headless Playwright check against the built file. Two acceptable loading strategies:
-
-- `file://<workspace_root>/dist/<course>/<slug>/index.html` direct load.
-- Small local static server rooted at `<workspace_root>/dist/` serving on an ephemeral port, loaded via `http://localhost:<port>/<course>/<slug>/`.
+After `build-all.sh` exits 0 and the target `index.html` is present, launch a headless Playwright check against the built output, served from a small local static server rooted at `<workspace_root>/dist/` on an ephemeral port: `http://localhost:<port>/<deploy_code>/<slug>/`. Never load via `file://` — the build's absolute `base` path makes assets resolve against the filesystem root, so a valid deploy renders blank and falsely halts.
 
 Prefer `@playwright/mcp` if it is available. Otherwise fall back to a Node script using the `playwright` npm package directly.
 
@@ -138,15 +141,20 @@ Example body:
 Stage only the specific paths touched by the new lesson. Do **not** use `git add -A` or `git add .`.
 
 ```bash
-git add <lesson_root>/src/<slug>.jsx
+git add <lesson_root>/src/<slug_snake>.jsx
 git add <lesson_root>/package.json
 git add <lesson_root>/vite.config.js
 git add <lesson_root>/index.html
 git add <lesson_root>/src/main.jsx
 git add <lesson_root>/server/proxy.js
 git add <lesson_root>/test_lesson.cjs
+git add <lesson_root>/CLAUDE.md
 git add <lesson_root>/public/
+git add <lesson_root>/*.py          # manim scene sources (paired with public/videos/*.mp4)
+git add <lesson_root>/figures/      # matplotlib reference-image sources (if present)
 ```
+
+The `.py` sources ride along deliberately: without them a clean clone cannot refine the committed animations or reference figures — the mp4/png alone is a dead end.
 
 If the workspace `build-all.sh` or any deploy config (e.g. `netlify.toml`, `vercel.json`, CI workflow) was modified:
 
@@ -205,12 +213,14 @@ If a pre-commit hook fails, the commit did not happen. Fix the underlying issue,
   ```bash
   git push origin main
   ```
-- `push-to-custom` with `deploy_service_kind == "git-remote"`: add the remote if it's not already present, then push:
+- `push-to-custom` with `deploy_service_kind == "git-remote"`: ensure the remote exists AND points at the recorded URL — a pre-existing `custom-deploy` remote from an earlier run may target a different repo, and pushing there is publishing to the wrong place:
   ```bash
-  git remote | grep -qx custom-deploy || git remote add custom-deploy <deploy_service>
+  git remote get-url custom-deploy 2>/dev/null   # compare to <deploy_service>
+  # absent → git remote add custom-deploy <deploy_service>
+  # mismatched → git remote set-url custom-deploy <deploy_service>
   git push custom-deploy main
   ```
-  Name the remote `custom-deploy` by convention so repeated runs reuse it. Non-zero exit from `git push` is a failure; log and surface stderr.
+  Non-zero exit from `git push` is a failure; log and surface stderr.
 - `push-to-custom` with `deploy_service_kind == "cli"`: run `deploy_service` as a shell command from `<workspace_root>` after the commit. Surface stdout/stderr back to the user; non-zero exit is a failure for reporting purposes but does not roll back the commit (the user can inspect, fix, and re-run the CLI manually). No remote is added.
 - `commit-only`: skip the push. Log `Push: skipped (deploy_action=commit-only)` and continue to step 6.
 - `skip` never reaches this step — Step 0 diverted the flow.
@@ -233,13 +243,13 @@ See "Final report format" below.
 
 ### 1. Verify current branch
 
-Before anything else, confirm the current branch is the update branch created in Phase 3:
+Before anything else, confirm the current branch equals the `Branch:` value RECORDED in the Phase 3 log (which includes any collision suffix like `-a` — never reconstruct the name from slug + date):
 
 ```bash
 git rev-parse --abbrev-ref HEAD
 ```
 
-Expected output: `lesson-update/<slug>-YYYYMMDD`. If the output is anything else (especially `main`), halt the phase immediately — Phase 3 did not create the branch, or the branch was switched away in an earlier phase, or the stash/branch state is corrupted. Surface this to the user with the actual branch name and instructions to inspect Phase 3's log entries.
+If the output differs from the recorded value (especially `main`), halt the phase immediately — Phase 3 did not create the branch, or the branch was switched away in an earlier phase, or the stash/branch state is corrupted. Surface this to the user with the actual branch name and instructions to inspect Phase 3's log entries. All later merge/log steps in this phase consume the same recorded branch name.
 
 ### 2. Draft commit message
 
@@ -315,9 +325,9 @@ This commit lands on `lesson-update/<slug>-YYYYMMDD`, not `main`. Pre-commit hoo
 - `push-to-github` or `push-to-custom`:
   ```bash
   git checkout main
-  git merge --no-ff lesson-update/<slug>-YYYYMMDD
+  git merge --no-ff <recorded branch name from the Phase 3 log>
   ```
-  `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history. Default message: `Merge branch 'lesson-update/<slug>-YYYYMMDD'`.
+  `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history.
 - `commit-only`: skip the merge. The commit stays on the update branch; `main` is not touched. Log `Merge: skipped (deploy_action=commit-only) — branch: lesson-update/<slug>-YYYYMMDD` so the user can merge manually later.
 
 On conflict (should not happen from a clean branch): halt, surface conflict files, do not auto-resolve. The user resolves manually. Branch and stash stay intact.
@@ -333,22 +343,22 @@ On conflict (should not happen from a clean branch): halt, surface conflict file
 
 ### 7. Stash recovery
 
-If Phase 3 stashed local changes before creating the update branch (`Stash ref: <ref>` in the Phase 3 log), prompt the user via AskUserQuestion:
+If Phase 0 stashed local changes (`stashed: stash@{0} (<oid>)` in the Phase 0 log, echoed in Phase 3's `Stash ref:`), prompt the user via AskUserQuestion:
 
-> "Restore stashed changes from `<stash-ref>`? The stash was created before this update run to protect your uncommitted work."
+> "Restore stashed changes from `<oid>`? The stash was created before this update run to protect your uncommitted work."
 
 Options:
 
-- `Yes, pop the stash now` — run `git stash pop`
-- `No, leave it stashed for later` — log the stash ref for manual recovery
+- `Yes, restore now` — first confirm the current branch is where the user wants the work restored (after a merge that is `main`; under `commit-only`/`skip` offer to `git checkout` back to the branch the stash was taken on before applying — restoring user work onto the update branch strands it there). Then run `git stash apply <oid>` — apply by the recorded OID, never bare `git stash pop`, which grabs whatever happens to be stash@{0} (possibly a newer, unrelated stash). On clean apply, `git stash drop <oid>`.
+- `No, leave it stashed for later` — log the OID for manual recovery.
 
 Outcomes:
 
-- **Yes → clean pop**: log `Stash recovery: auto-popped`.
-- **Yes → conflict on pop**: `git stash pop` exits non-zero with conflict markers in working tree. Surface the conflict files to the user with clear instructions: "Stash pop produced conflicts in `<files>`. The stash is still available under `<stash-ref>` — resolve the conflicts manually, then `git stash drop <stash-ref>` when done." Halt Phase 5 cleanly (the merge is already pushed so deploy succeeded). Log `Stash recovery: conflict (manual)`.
-- **No**: leave the stash in place. Log `Stash recovery: manual (stash ref: <ref>)`.
+- **Yes → clean apply**: log `Stash recovery: applied + dropped (<oid>)`.
+- **Yes → conflict**: conflict markers land in the working tree and the stash entry is untouched (that is why `apply`, not `pop`). Surface the conflict files: "Stash apply produced conflicts in `<files>`. The stash is still intact at `<oid>` — resolve manually, then `git stash drop <oid>`." Halt Phase 5 cleanly (the merge is already pushed so deploy succeeded). Log `Stash recovery: conflict (manual)`.
+- **No**: leave the stash in place. Log `Stash recovery: manual (oid: <oid>)`.
 
-If Phase 3 did not stash (`Stash ref: none`), skip this step entirely and log `Stash recovery: none`.
+If Phase 0 did not stash (`Stash ref: none`), skip this step entirely and log `Stash recovery: none`.
 
 ### 8. Log deploy metadata
 

@@ -1,5 +1,7 @@
 # Phase 1: Content Analysis
 
+Contents: New-mode orchestration (inputs, procedure, PDF handling, practice-problem extraction, package schema) · Update-mode orchestration (inventory pre-scan, inputs, research-depth branches, drift classification, package schema) · Post-orchestrator review · Handoff to Phase 2.
+
 ## Purpose
 
 Phase 1 produces a compiled content package for Phase 2. Driven by `content-orchestrator-agent`, spawned with the Phase 0 scoping artifact. New mode: fresh research across materials and topic-area sources. Update mode: drift/gap diff against existing lesson, branching on `research_depth`. Main Claude reviews the returned package for consistency before Phase 2 handoff.
@@ -21,11 +23,11 @@ Main Claude passes the following from the scoping artifact:
 
 ### Procedure
 
-1. **Initial sweep (pure-research only)**: if `provided_materials` is empty, do a rough sweep, report a draft topic list for scope confirmation, then commit to deep research. This prevents wasted agent time on misaligned scope.
+1. **Initial sweep (pure-research only)**: if `provided_materials` is empty and `research_depth` is `rough-sweep-first`, the orchestrator spawn does ONLY the rough sweep and returns a package marked `STATUS: PRELIMINARY` with the draft topic list; main Claude confirms scope with the user, then re-spawns the orchestrator for the deep pass. Subagents cannot pause mid-run for confirmation.
 2. **Per-resource deep-review teams in parallel**: one per resource. Extract equations, concepts, constants, candidate topic groupings.
 3. **Topic-area research via `research-agent`**: parallel with step 2 for topics needing coverage beyond provided materials. Each `research-agent` makes its own source reliability judgment.
-4. **Content dialogue loop with `content-review-agent`**: check alignment with scope/goal/audience. Misalignment triggers corrective rounds.
-5. **Gap-fill**: narrow `research-agent` spawns for remaining concepts.
+4. **Gap-fill**: narrow `research-agent` spawns for remaining concepts.
+5. **Content review pass with `content-review-agent`** over the full compiled findings, gap-fills included, against the scoping artifact. Misalignment triggers corrective rounds — at most 2, with each round's new material covered by the next round's review; remaining issues return in `GAPS_REMAINING` for main Claude to judge.
 6. **Compile and return**.
 
 ### Tactical input-handling notes
@@ -63,8 +65,8 @@ If the source material embeds solutions (e.g., a past-final PDF with a solutions
 **Research-fabricated practice problems are forbidden.** Research agents do not make up new exam questions. They may include *textbook* end-of-chapter problems if the user picked `materials_scope: "extensions"` AND the textbook is clearly cited — treat those as practice problems with source tag `"<Textbook> Ch<N> — P<M>"` and the textbook's published solution (if available) or an orchestrator-derived solution with the `"orchestrator-derived"` provenance tag. Under `course-only` and `fill-gaps`, practice problems come exclusively from the user's provided materials.
 
 **Topic-based research (no files)**:
-1. `project_knowledge_search` first — highest priority.
-2. `web_search` for standard equations, definitions, constants.
+1. Workspace materials first — Glob/Grep sibling lessons, course notes, and any workspace-level references before reaching for the web; the course's own conventions and notation win.
+2. Web search for standard equations, definitions, constants (`research-agent` topic-research mode).
 3. **Two-source cross-reference**: every non-trivial equation confirmed against ≥2 independent sources before inclusion.
 
 **Quality gate**:
@@ -86,7 +88,7 @@ TOPIC 1:
   equations, concepts, constants, comparisons
   graphs_needed, manim_opportunities, interactive_opportunities
   practice_problems: [
-    { statement, source, difficulty, approach_hint }
+    { statement, source, difficulty, approach_hint, solution, solution_provenance }
   ]
   context_string
 
@@ -223,6 +225,7 @@ Cross-reference each filename against the JSX src= hits from steps 5-6 and the m
 Two contract notes that matter when `references/phase-2-plan.md` hands items to `medium-decider-agent`:
 
 1. **Every media entry carries a `kind` field** matching the `medium-decider-agent` enum: `"svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo"`. Main Claude passes the entries verbatim; no translation step needed.
+1b. **Every media entry gains a `purpose` field** — one line on what the medium teaches. The mechanical pre-scan leaves it `null`; the orchestrator fills it during its end-to-end read of the JSX (from surrounding prose, captions, and the component itself). Phase 2 forwards it to the decider as `current_purpose` and it seeds the plan's `original_intent` for kept media.
 2. **Every media entry carries `source_file` and `line_range`**. `source_file` is the absolute path to the JSX file containing the reference (identical to `lesson_file` for all entries in the current single-file lesson architecture, but included per-entry so specialists can extract source without an extra lookup). `line_range` is `[start, end]` — for components (graph_components, interactive_demos) it spans the full definition; for constants (ref_img_constants) it spans the `const IMG_X = "..."` declaration; for JSX-embedded references (static_images, videos) it is `[line, line]` marking the `<img>` / `<video>` tag.
 3. **`interactive_demos` entries also carry `state_hooks`**: a list of `useState` state variable names referenced inside the `<InteractiveDemo>` body. Main Claude Greps the surrounding LessonApp for these when building the `interactive-demo-agent` refine brief (so the agent knows which state is in scope and must not be renamed).
 
@@ -236,8 +239,10 @@ Main Claude passes:
 - `existing_media_inventory`: the structured dict above
 - `existing_topics`: the `TOPICS` list extracted from the existing JSX
 - `research_depth`: `"light"` | `"targeted"` | `"full"`
-- `scope_of_change`: `"any"` | `"specific"` | `{ topics: [...] }`
+- `scope_of_change`: `"any"` | `"specific"` | `"full-replace"`
+- `scope_topics`: the approved topic list from the scoping artifact (required when `scope_of_change == "specific"` — without it the orchestrator cannot know which topics to research)
 - `new_materials`: any new file paths the user provided with this update
+- `materials_scope`: forwarded verbatim whenever `new_materials` is non-empty (applies at every research depth, including `full`)
 - `concerns`: free-text user concerns captured in scoping
 - `lesson_context`: existing `LESSON_CONTEXT` string
 - `topic_context`: existing `TOPIC_CONTEXT` map

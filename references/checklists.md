@@ -1,8 +1,10 @@
 # Lesson Builder Checklists
 
+Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Chat reinforcement awareness · Ctrl+Click gate · Chatbot props · Automated checks T1-T3 · 17-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
+
 ## Purpose
 
-Tactical-wins reference. Phase 3 and Phase 4 consume pointers into this doc; agents receive relevant sections by pointer, not full copy. Items flagged **NEW** apply only to update mode or depend on the graph-schema feature.
+Tactical-wins reference. Phase 3 and Phase 4 consume pointers into this doc; agents receive relevant sections by pointer, not full copy. Sections marked *(update mode)* apply only there.
 
 ---
 
@@ -65,8 +67,7 @@ Run against generated or spliced JSX before handing to Phase 4.
 - [ ] `export default` present on the main component (`LessonApp`).
 - [ ] `TOPICS` array is non-empty; every topic `id` has a matching key in `TOPIC_CONTEXT`.
 - [ ] `TOPIC_CONTEXT` keys are one-to-one with `TOPICS` ids — no orphans, no missing entries.
-- [ ] `LESSON_CONTEXT` is non-empty and embeds the PEDAGOGY POLICY block (see `references/template.md`). The policy supersedes the bare "NEVER solve" line: it withholds the answer AND adds the retrieval-first / least-help-first / task-focused-feedback moves. A lone "NEVER solve" with no policy is a downgrade — flag it.
-- [ ] `MODELS` array is defined with at least one model, using the `model:` field (not `id:`) to avoid T14 false positives.
+- [ ] `LESSON_CONTEXT` is non-empty, covers course/unit/objectives, and does NOT weaken or contradict the tutoring policy. The canonical PEDAGOGY POLICY is injected by `@core/chat/buildSystemPrompt.js` — lessons no longer paste it. Legacy lessons that embed the old policy text verbatim are fine (core detects the marker and skips double-injection); a lesson whose context says "just give answers" or equivalent is a pedagogy failure — flag it.
 - [ ] Header `<h1>` is updated to match the actual lesson topic (not placeholder text from the template).
 - [ ] Every `<Eq>` and `<M>` uses `{"..."}` with double-escaped backslashes.
 - [ ] No emojis anywhere in the file. No `localStorage`. No `sessionStorage` (except intentional KC feature state, which is a legacy exception).
@@ -75,25 +76,20 @@ Run against generated or spliced JSX before handing to Phase 4.
 
 ## Theming checklist
 
-Theme failures are visually obvious; Phase 4 visual-QA catches regressions if skipped here.
+Theme failures are visually obvious; Phase 4 visual-QA catches regressions if skipped here. The CSS itself (selectors, chatbot vars, palettes) lives in `@core` (`chat/chat.css.js`, `constants/themes.js`) — lessons only wire it up; per-lesson checks are:
 
-- [ ] CSS uses custom properties; no hardcoded hex values in the `<style>` block or inline styles.
-- [ ] CSS block contains expected selectors: `.eq-block`, `.key-concept`, `.chat-panel`, `.chat-toggle`, and the gold accent `#c8a45a` must appear in the CSS variable definitions.
-- [ ] CSS variables include the chatbot-required vars: `--chat-stop-color`, `--ctx-hover-outline`, `--ctx-hover-bg`, `--ctx-flash-bg`. Both dark and light palettes must define them.
-- [ ] `THEMES_G` is defined with dark and light palettes covering `bg`, `ax`, `gold`, `blue`, `red`, `grn`, `txt`, `ltxt`.
-- [ ] Theme toggle button is present in the header and correctly wired to `setTheme`.
-- [ ] Root div inline style uses `var(--bg-main)` and `var(--text-primary)`, not hardcoded hex.
-- [ ] Loading screen and topic title/subtitle inline styles use CSS variables, not hardcoded hex.
-- [ ] `RefImg` component uses `var(--bg-card)` and `var(--border)` (inherited from `@core` in refactored lessons; verify for non-`@core` lessons).
+- [ ] `STYLES` imported from `@core` and injected as `<style>{STYLES}</style>` at the top of `LessonApp`; no per-lesson CSS blocks redefining core selectors.
+- [ ] No hardcoded hex values in lesson inline styles — root div, loading screen, and title/subtitle styles use CSS variables (`var(--bg-main)`, `var(--text-primary)`, `var(--text-dim)`, ...).
+- [ ] Theme state + toggle button present in the header and wired to `setTheme`; root div `className={`theme-${theme} ...`}` drives the variable cascade.
+- [ ] `let G = THEMES_G.light;` at module level (mutable — graph components close over it) and `G = THEMES_G[theme];` inside `LessonApp` each render.
+- [ ] Graph components color exclusively through `G` (`G.gold`, `G.ax`, `G.txt`, ...) so both themes render correctly.
 
 ---
 
 ## Graphs checklist
 
-Includes a **NEW** item for the graph-schema feature.
-
 - [ ] `DEFAULT_GRAPH_PARAMS` is defined at module scope; every graph component accepts a `params` prop with defaults via `const p = { ...DEFAULT_GRAPH_PARAMS.myGraph, ...params };`.
-- [ ] **NEW**: `GRAPH_SCHEMA` is defined alongside `DEFAULT_GRAPH_PARAMS` with matching keys one-to-one. Each entry describes the editable fields so the chatbot can offer typed edits. See `references/graph-schema-guide.md` for the derivation procedure and backfill rules for lessons that predate the graph-schema feature.
+- [ ] `GRAPH_SCHEMA` is defined alongside `DEFAULT_GRAPH_PARAMS` with matching keys one-to-one. Each entry describes the editable fields so the chatbot can offer typed edits. See `references/graph-schema-guide.md` for the derivation procedure and backfill rules for lessons that predate the graph-schema feature.
 - [ ] Every SVG is wrapped in `<div className="eq-block">` with `viewBox` set and `width: "100%"` on the SVG so it scales responsively.
 - [ ] Graph marker IDs are unique across the entire file (no duplicate `id="ah"` or `id="arrowId"`). Clashing IDs silently break arrow rendering.
 - [ ] All graph text uses `fontFamily="'IBM Plex Mono'"`. No system fonts, no sans-serif in SVG labels.
@@ -131,7 +127,7 @@ Applies to lessons that import `DesmosGraph` from `@core/ui/DesmosGraph` or that
 - [ ] `.env.local` exists at the **workspace root** with `VITE_DESMOS_KEY=<key>` — the lesson's `vite.config.js` resolves it via `envDir`, so one key serves every lesson. Obtain at https://www.desmos.com/api (free for educational use); register the allowed origins in the Desmos dashboard (`http://localhost:*` dev, deploy domain prod).
 - [ ] `.env.local` is gitignored at the repo root. Never commit the key.
 - [ ] The `state` prop passed to `<DesmosGraph>` is stable across renders. If it's built from component state, wrap in `useMemo` so the calculator does not remount every render.
-- [ ] Do NOT pass `isPlaying: true` in the state. The component strips it. Animation is always student-initiated: `DesmosGraph` (lesson path) renders a top-right Play overlay AND Desmos's native per-slider Play button is visible when `expressionsCollapsed: false`; `ChatBubble` (chat path) shows no overlay and the student taps the native Play button after expanding the (initially collapsed) expression panel.
+- [ ] Do NOT pass `isPlaying: true` in the state. The component strips it. Animation is always student-initiated via Desmos's native per-slider Play button in the expression panel — there is NO custom overlay play button in either path (`DesmosGraph` shows the expression panel expanded; `ChatBubble` shows it collapsed until the student expands it). Do not add an overlay, and do not flag its absence.
 - [ ] `height` prop is set (default 400 px). Avoid `100%` unless the parent has a fixed height.
 - [ ] Cap at 3 Desmos embeds per visible topic. Subsequent embeds on the same page are free (CDN bundle already loaded) but visual density still matters.
 - [ ] For lessons NOT using Desmos: the key check does nothing; the hook is a no-op until a component calls it with `{ enabled: true }` (the chat path gates on the presence of a `.chat-desmos-block`).
@@ -145,7 +141,7 @@ Run against the assembled lesson (Phase 4) and against the Phase 2 plan. The les
 - [ ] **Objectives stated and assessed.** Every topic states what the learner should be able to DO (an observable verb — derive / predict / compare / classify, not "understand" / "know"). Every objective maps to at least one active check in the same topic. A topic with content but no check is a constructive-alignment failure.
 - [ ] **Retrieval / active practice present per topic.** Each topic has at least one retrieval-first or active-practice primitive (a prediction-before-reveal, a recall prompt, a worked-then-faded example, a self-check question) — not pure exposition. Reading and watching alone are the weakest modes; build in doing.
 - [ ] **At least one transfer item.** Beyond recall of what was just shown, at least one check applies the idea to a new surface (same deep structure, different problem). Tag each check recall vs transfer.
-- [ ] **Hint ladder, not answer dump.** The `LESSON_CONTEXT` PEDAGOGY POLICY encodes least-help-first (nudge -> hint -> step -> answer as last resort) and step-level interaction. Confirm it is present and not weakened to "just give the answer."
+- [ ] **Hint ladder, not answer dump.** The PEDAGOGY POLICY (injected by `@core/chat/buildSystemPrompt.js`) encodes least-help-first (nudge -> hint -> step -> answer as last resort) and step-level interaction. Confirm the lesson's `LESSON_CONTEXT` does not weaken it to "just give the answer."
 - [ ] **Misconception refutation where one exists.** For any topic with a known misconception, `TOPIC_CONTEXT` names the faulty idea + correct conception so the tutor can diagnose-then-refute. Inline copy that addresses the misconception states it, marks it false, and gives the causal reason — not a bare correct statement.
 - [ ] **Feedback is task-focused, never ego.** No person-praise ("you're a natural"), no points / streaks / badges / leaderboards anywhere in lesson copy or tutor steering. Competence feedback is informational and about the work.
 
@@ -189,9 +185,9 @@ The `<Chatbot>` signature expanded with the graph-schema feature.
 - [ ] `courseName` — the full course name collected at Phase 0
 - [ ] `lessonContext={LESSON_CONTEXT}`
 - [ ] `topicContext={TOPIC_CONTEXT}`
-- [ ] `lessonFile="src/<slug>.jsx"` (used by the chatbot's self-editing path to know which file to edit)
+- [ ] `lessonFile` equals the scoping artifact's `lesson_file` (`src/<slug_snake>.jsx` — underscores, not dashes; used by the chatbot's self-editing path to know which file to edit)
 
-**Graph-editing props** (**NEW** — graph-schema feature):
+**Graph-editing props** (graph-schema feature):
 
 - [ ] `graphSchema={GRAPH_SCHEMA}` — passed so the chatbot knows the editable field shape of each graph. Without this, the runtime validator silently accepts arbitrary LLM edits.
 - [ ] `graphRenderId={graphRenderId}` — incrementing state that keys the graph-preview tab so it re-renders when `<<EDIT_GRAPH>>` mutates params. `const [graphRenderId, setGraphRenderId] = useState(0);` at the top of LessonApp, incremented by `onEditGraph`.
@@ -279,7 +275,7 @@ Run at the end of Phase 1 before handing to Phase 2.
 
 - [ ] Every equation has a source (lecture page, textbook section, URL). "Standard result" is not acceptable.
 - [ ] Every variable is defined, with units.
-- [ ] **Worked solutions: allowed for practice cards, never as answer dumps.** Research/content agents MAY extract worked solutions for `PracticeProblem` cards when the solution is official (came verbatim with the source material) or verifiably sourced (derived, then confirmed against ≥2 independent sources). These render collapsed and provenance-marked (`provenance="official"` or `"ai-worked"` with `aiSources`); fabricated problems or solutions are forbidden. The anti-answer-key rule still governs everything else: the chatbot's tutoring behavior follows the `LESSON_CONTEXT` PEDAGOGY POLICY (least-help-first, never a straight answer dump), and lesson prose must not dump answers outside practice cards.
+- [ ] **Worked solutions: allowed for practice cards, never as answer dumps.** Research/content agents MAY extract worked solutions for `PracticeProblem` cards when the solution is official (came verbatim with the source material) or verifiably sourced (derived, then confirmed against ≥2 independent sources). These render collapsed and provenance-marked (`provenance="official"` or `"ai-worked"` with `aiSources`); fabricated problems or solutions are forbidden. The anti-answer-key rule still governs everything else: the chatbot's tutoring behavior follows the PEDAGOGY POLICY injected from `@core/chat/buildSystemPrompt.js` (least-help-first, never a straight answer dump), and lesson prose must not dump answers outside practice cards.
 - [ ] **Concision**: every paragraph teaches something. Cut filler. Prefer an equation or diagram reference over prose describing the same thing.
 
 ---
@@ -350,7 +346,7 @@ Phase 3 touches `CLAUDE.md` only for new course/slug. Update mode is typically n
 
 ---
 
-## Update-mode pre-flight checklist (NEW)
+## Update-mode pre-flight checklist *(update mode)*
 
 Update mode only. Run before scoping closes. Failures surface at mode confirmation; most require halt or opt-in bypass.
 
@@ -366,7 +362,7 @@ Update mode only. Run before scoping closes. Failures surface at mode confirmati
 
 ---
 
-## Update-mode splice checklist (NEW)
+## Update-mode splice checklist *(update mode)*
 
 Update mode only. Run after every splice edit and as final sweep before Phase 4. Pairs with the assembly algorithm in `references/phase-3-execution.md`.
 

@@ -4,7 +4,14 @@
 
 Read this file at the top of Phase 0 **before** the scoping interview, whenever the workspace is missing `<workspace_root>/_lesson-core/`. Without that directory every lesson's `@core` import fails at dev-server startup (Vite error: "Failed to resolve import '@core'") and every test fails on T8 / T17. The rest of the skill assumes it already exists.
 
-A missing `_lesson-core/` is the single failure mode this bootstrap fixes. If the directory is present, skip this file and proceed to `references/phase-0-scoping.md`.
+A missing `_lesson-core/` is the main failure mode this bootstrap fixes. If the directory is present, run the core-version gate below, then proceed to `references/phase-0-scoping.md`.
+
+## Core-version gate (existing workspaces)
+
+Two independent checks, run both — a workspace can pass one and fail the other (e.g. a fresh clone has current core but an empty untracked `.claude/`):
+
+1. **Core version**: Grep `<workspace_root>/_lesson-core/chat/buildSystemPrompt.js` for `PEDAGOGY_POLICY`. If absent, new-template lessons would ship with no tutoring policy (the new template doesn't paste it; the old core doesn't inject it). Offer a core refresh — replace `<workspace_root>/_lesson-core/` contents with the payload's (their workspace has no local core edits unless a sync log says otherwise; check it first) and re-run `npm install` there. If declined, embed the PEDAGOGY POLICY text (from the payload's `buildSystemPrompt.js` export) verbatim into each new lesson's `LESSON_CONTEXT` during Phase 3 — the legacy-compatible fallback — and note it in the log.
+2. **Agent registry**: diff `<workspace_root>/.claude/agents/` against `$SKILL/agents/` + `workspace-root/.claude/agents/` (`.claude/` is gitignored, so clones start empty and stale registries survive core refreshes). Copy missing/changed agent files in, and DELETE registry files whose names no longer exist in the skill — a stale `geometry-agent.md` still in the registry means runtime delegation runs retired prompts.
 
 ## Detection (one Glob at session start)
 
