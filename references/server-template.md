@@ -206,8 +206,8 @@ Run as `node test_lesson.cjs src/<slug_underscored>.jsx` (or `npm test`). The sc
 | T6 | `TOPIC_CONTEXT` defined | `const TOPIC_CONTEXT = {` declaration present. |
 | T7 | `LESSON_CONTEXT` defined | `const LESSON_CONTEXT =` declaration present. |
 | T8 | Imports from `@core` | File imports from `"@core"` and references `Chatbot`. |
-| T9 | Theme className | Uses `className="theme-dark"` or `className="theme-light"` (maps the gold accent via CSS vars in `@core`). |
-| T10 | IBM Plex | File mentions `'IBM Plex'` somewhere (inline monospace label styles). |
+| T9 | Renders in LessonShell | File renders `<LessonShell>` and applies `className="theme-light"` (Lumen tokens come from `@core` CSS). |
+| T10 | No hand-rolled chrome | File emits none of `header` / `tab-bar` / `tab-btn` / `content-area` / `theme-toggle-btn` — the shell owns all of it. |
 | T11 | Core CSS classes | Imports `Eq`, `KeyConcept`, and `Chatbot` from `@core` (these apply `.eq-block`, `.key-concept`, `.chat-panel`). |
 | T12 | No browser storage | No `localStorage` usage (sessionStorage alias `_ss` is intentionally allowed). |
 | T13 | No emojis | Unicode emoji regex finds nothing. |

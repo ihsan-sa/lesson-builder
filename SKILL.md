@@ -5,7 +5,9 @@ description: "Build or update interactive JSX lesson apps in a workspace that fo
 
 # Lesson Builder
 
-Build interactive React lesson apps (.jsx) with tabbed topics, LaTeX equations, SVG graphs, animations, and an embedded AI tutor chatbot, OR update existing lessons in place. Each lesson is a Vite project that imports chat + UI infrastructure from `<workspace_root>/_lesson-core/` via the `@core` alias.
+Build interactive React lesson apps (.jsx) with a contents rail, LaTeX equations, SVG graphs, animations, and a docked AI tutor, OR update existing lessons in place. Each lesson is a Vite project that imports chat + UI infrastructure from `<workspace_root>/_lesson-core/` via the `@core` alias.
+
+The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShell.jsx`): a 66px top bar, a 262px collapsible contents rail with per-topic section outline and scroll-spy, a 680px article column, and a tutor panel that docks to the side or bottom, floats in an in-app window, or detaches into a real browser window. Light palette only — there is no theme toggle. Lessons never hand-roll chrome; they supply `TOPICS` plus the active topic's body and let the shell frame it.
 
 **Before starting a run**, read the references relevant to the detected mode:
 - `references/bootstrap.md` — read FIRST on every run. One Glob decides whether the workspace is fresh; if `<workspace_root>/_lesson-core/` is missing, run the bootstrap procedure before Phase 0.

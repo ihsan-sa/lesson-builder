@@ -9,8 +9,11 @@ You author static visuals for lessons. You produce output; visual-QA reviewers j
 
 ## Palette
 
-- Gold accent: `#c8a45a` · Dark background: `#13151c` · Light background: `#f0efe8` · Muted text: `#8a8a93`
-- In lesson components, colors come from the module-level `G` theme binding (`THEMES_G`), not hardcoded hex — the lesson must render in both themes. Hex values are for chat SVGs and matplotlib scripts only. Never introduce new brand colors.
+The lesson shell is the Lumen design system, light only. Every visual sits on paper, never on a dark field.
+
+- Surface `#F4F1EB` · Canvas `#FAF9F6` · Accent (primary curve) `#C96442` · Axis/muted `#9C988F` · Body text `#3A3833` · Border `#E8E4DC`
+- Secondary series: blue `#3E6C8F`, red `#B14B3F`, green `#4F7A52`, purple `#7A5B86`, orange `#C08A3E`.
+- In lesson components, colors come from the module-level `G` theme binding (`THEMES_G.light`), not hardcoded hex. `G.gold` is the accent; the key name is historical. Hex values are for chat SVGs and matplotlib scripts only. Never introduce new brand colors.
 
 ## Build mode: lesson graph components
 
@@ -41,13 +44,13 @@ Non-negotiables — these are what visual-QA and the numerical spot-check fail b
 - **Never clamp to hide overflow** (`Math.min(y * scale, maxY)` and friends). If the curve clips, the scale is wrong — fix the scale. Clamping flattens exponentials and masks the exact bugs review exists to catch.
 - **Scale design**: mixed-range data (forward mA vs reverse µA) gets split panels with independent scales, not one compressed axis. Distinct curves in a family stay visually separated (~150 px at the widest point). Y-axis units are practical: mA not A, dB not linear magnitude. Label tick marks at key values.
 - **Unique marker IDs** via the `mid` prop suffix — duplicate `<marker>` ids silently break arrowheads when a graph renders twice (content tab + graph-preview).
-- SVG text uses `fontFamily="'IBM Plex Mono'"` at 9-11px; `viewBox` plus `width: "100%"` and an explicit `maxWidth` for responsive scaling.
+- SVG text uses `fontFamily="'JetBrains Mono'"` at 9-11px; `viewBox` plus `width: "100%"` and an explicit `maxWidth` for responsive scaling.
 - If the brief adds parameters, return the matching `DEFAULT_GRAPH_PARAMS` entry and `GRAPH_SCHEMA` entry alongside the component (keys identical; schema `max` must match any hard clamp inside the component).
 
 ## Matplotlib reference images
 
 - `MPLBACKEND=agg`; save to `<lesson_root>/public/images/<name>.png` at `dpi=150`, `bbox_inches='tight'`.
-- Figure face `#13151c`, text/axes `#f0efe8`, primary curves `#c8a45a`, secondary dashed muted.
+- Figure face `#F4F1EB`, text/axes `#3A3833`, primary curves `#C96442`, secondary dashed muted. Light figures only — the shell has no dark mode.
 - View the PNG with `Read` before returning — you are the first reviewer of your own render.
 - Print an assertions line to stderr before the script ends: `ASSERTIONS: {"width":N,"height":N,"nonblank":true,"hasCurves":N}`.
 - **Persist the source**: in build modes, write the final `.py` to `<lesson_root>/figures/<media_id>.py` (create `figures/` if absent) — scratch is deleted after assembly, and this persisted script is what makes a future refine reproducible. Deliverable: that `.py` path, the PNG path, and (for lesson embedding) the base64 `const IMG_X = "..."` string for `<RefImg>`.

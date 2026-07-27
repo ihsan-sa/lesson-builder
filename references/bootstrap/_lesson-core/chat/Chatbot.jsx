@@ -8,6 +8,16 @@ import { buildSystemPrompt } from "./buildSystemPrompt.js";
 import { processResponse as parseChatResponse, stripUnclosedTags } from "./processResponse.js";
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
+import { useShell } from "../ui/shellContext.js";
+import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/LessonShell.jsx";
+
+// Student-facing answer style. "hints" leaves the PEDAGOGY POLICY exactly as
+// written; "direct" relaxes only the withhold-first ordering (see
+// buildActiveContext).
+const ANSWER_STYLES = [
+  { id: "hints",  label: "Hints first" },
+  { id: "direct", label: "Direct" },
+];
 
 // Every capture/thread gesture in one place, rendered by the Ctrl+Shift+?
 // overlay. Keep this in sync when a gesture is added — an affordance nobody
@@ -67,11 +77,21 @@ export function Chatbot({
   courseCode, courseName, lessonContext, topicContext, lessonFile, graphSchema,
   institution,
 }) {
+  // Placement is owned by LessonShell when there is one. Standalone mounts
+  // (the Lumen embed shape, any bare <Chatbot/>) get null here and fall back
+  // to the floating panel + round toggle.
+  const shell = useShell();
+
   const [tabs, setTabs] = useState([]);
   const [activeTabIdx, setActiveTabIdx] = useState(0);
   const [input, setInput] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [effort, setEffort] = useState(DEFAULT_EFFORT);
+  const [answers, setAnswers] = useState("hints");
+  const [showSettings, setShowSettings] = useState(false);
+  // Read inside async send paths, which close over a stale `answers`.
+  const answersRef = useRef(answers);
+  useEffect(() => { answersRef.current = answers; }, [answers]);
   const [expanded, setExpanded] = useState(false);
   const [chatSize, setChatSize] = useState(null);
   const resizeRef = useRef(null);
@@ -98,6 +118,10 @@ export function Chatbot({
 
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
   useEffect(() => { activeTabIdxRef.current = activeTabIdx; }, [activeTabIdx]);
+  // Read by the once-only session bootstrap, which cannot depend on topicTitle
+  // without re-running and creating a second session.
+  const topicTitleRef = useRef(topicTitle);
+  useEffect(() => { topicTitleRef.current = topicTitle; }, [topicTitle]);
 
   const activeTab = tabs[activeTabIdx] || null;
 
@@ -285,8 +309,11 @@ export function Chatbot({
     const onClickCapture = (e) => {
       if (e.ctrlKey) return;
       // Chat UI handles its own gating; don't touch form controls either.
-      if (e.target.closest(".chat-panel, .chat-toggle, .chat-msg-rendered, .tab-bar, .header, input, textarea, button, a, select")) return;
-      if (e.target.closest(".eq-block, .key-concept, .formula-sheet-box, .summary-box, .compare-card, .para, .info-list li, .section-title")) {
+      if (e.target.closest(".chat-panel, .chat-toggle, .chat-msg-rendered, .topbar, .rail, input, textarea, button, a, select")) return;
+      // Keep this list identical to the lesson's handleContentClick and the
+      // hover rules in chat.css.js. A class in one list but not the others
+      // gets the pointer cursor and then does nothing.
+      if (e.target.closest(".eq-block, .key-concept, .formula-sheet-box, .summary-box, .practice-problem, .compare-card, .para, .info-list li, .section-title")) {
         e.stopPropagation();
       }
     };
@@ -304,6 +331,24 @@ export function Chatbot({
       setHeld(false);
     };
   }, []);
+
+  // "Explain" pill on an equation block. ui/Eq.jsx dispatches a window
+  // CustomEvent rather than taking a handler prop, so no lesson has to
+  // prop-drill a callback down to every <Eq>. Lands the LaTeX in the same
+  // context chip bar a Ctrl+Click would (so a focused thread still wins) and
+  // opens the panel.
+  useEffect(() => {
+    const onExplain = (e) => {
+      const { latex, label } = (e && e.detail) || {};
+      if (!latex) return;
+      if (addSnippet) addSnippet(latex, label || "equation");
+      if (setOpen) setOpen(true);
+      setShowSettings(false);
+      setTimeout(() => inputRef.current?.focus(), 120);
+    };
+    window.addEventListener("lesson:explain", onExplain);
+    return () => window.removeEventListener("lesson:explain", onExplain);
+  }, [addSnippet, setOpen]);
 
   useEffect(() => {
     const handleUnload = () => {
@@ -415,7 +460,8 @@ export function Chatbot({
     if (initStartedRef.current) return;
     initStartedRef.current = true;
 
-    const firstTab = makeTab();
+    // Name the opening tab after whatever topic the student is on, same as +.
+    const firstTab = makeTab(topicTitleRef.current);
     firstTab.keepContext = _ss.getItem("keepContext") === "true";
     setTabs([firstTab]);
     setActiveTabIdx(0);
@@ -437,7 +483,7 @@ export function Chatbot({
             await resumeSessionIntoTab(firstTab.id, kc.sessionId, kc.chatNum || found.chatNum);
             restoredFirst = true;
           } else {
-            const extraTab = makeTab();
+            const extraTab = makeTab(topicTitleRef.current);
             extraTab.keepContext = true;
             setTabs(prev => [...prev, extraTab]);
             await resumeSessionIntoTab(extraTab.id, kc.sessionId, kc.chatNum || found.chatNum);
@@ -480,11 +526,11 @@ export function Chatbot({
   }, [tabs]);
 
   const addTab = useCallback(() => {
-    const newTab = makeTab();
+    const newTab = makeTab(topicTitle);
     pendingActivateRef.current = newTab.id;
     setTabs(prev => [...prev, newTab]);
     createSessionForTab(newTab.id);
-  }, [createSessionForTab]);
+  }, [createSessionForTab, topicTitle]);
 
   const closeTab = useCallback(async (tabId) => {
     const tab = tabsRef.current.find(t => t.id === tabId);
@@ -689,6 +735,7 @@ export function Chatbot({
         graphSchema,
         isolated: activeTab?.isolated,
         reinforced: activeTab?.reinforced || [],
+        answerStyle: answersRef.current,
       });
       observations = obsQueue.drain(tab.sessionId);
       const tabContext = `${observations}${activeCtx}\n`;
@@ -1120,6 +1167,7 @@ export function Chatbot({
       // Threads run in the same session as the main transcript, so the
       // student's accumulated preferences must govern thread replies too.
       reinforced: tab.reinforced || [],
+      answerStyle: answersRef.current,
     });
     let observations = obsQueue.drain(tab.sessionId);
     const tagged = `[THREAD:${threadId} | "${snippet.slice(0, 60)}"]\n\n${observations}${activeCtx}\n${apiText}`;
@@ -1326,9 +1374,23 @@ export function Chatbot({
   const keepContext = activeTab ? activeTab.keepContext : false;
   const isolated = activeTab ? activeTab.isolated : true;
 
+  // Placement: LessonShell owns it when present. "float" is the standalone
+  // fallback — the old fixed-position panel with its own resize handles.
+  const dock = shell ? shell.dock : "float";
+  const panelStyle = shell
+    ? shell.panelStyle
+    : (chatSize ? { width: chatSize.w, height: chatSize.h } : undefined);
+  const closePanel = () => (shell ? shell.closeChat() : setOpen(false));
+  const answerLabel = (ANSWER_STYLES.find(a => a.id === answers) || {}).label || answers;
+  const modelLabel = (MODELS.find(m => m.model === model) || {}).label || model;
+  const statusColor = sessionStatus === "ready" ? "var(--accent)"
+    : sessionStatus === "loading" ? "var(--ink-4)" : "var(--danger)";
+
   return (
     <>
-      {!open && !import.meta.env.PROD && <button className="chat-toggle" onClick={() => setOpen(true)}>
+      {/* The round toggle only exists without a shell; with one, the top bar's
+          Tutor button is the affordance. */}
+      {!shell && !open && !import.meta.env.PROD && <button className="chat-toggle" onClick={() => setOpen(true)} title="Open the tutor">
         {"?"}
         {contextSnippets.length > 0 && <span className="chat-badge">{contextSnippets.length}</span>}
       </button>}
@@ -1336,8 +1398,8 @@ export function Chatbot({
           withheld (not just the toggle button) — otherwise Ctrl+/ in a lesson
           could open a chat that can only ever error. */}
       {!import.meta.env.PROD && <div
-          className={`chat-panel ${expanded ? "chat-panel-expanded" : ""} ${dragOver ? "chat-panel-dragover" : ""}`}
-          style={{ ...(chatSize ? { width: chatSize.w, height: chatSize.h } : {}), ...(!open ? { display: "none" } : {}) }}
+          className={`chat-panel chat-panel-${dock} ${dock === "float" && expanded ? "chat-panel-expanded" : ""} ${dragOver ? "chat-panel-dragover" : ""}`}
+          style={{ ...(panelStyle || {}), ...(!open ? { display: "none" } : {}) }}
           onDragOver={(e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
           onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
           onDrop={(e) => {
@@ -1347,43 +1409,132 @@ export function Chatbot({
             handleFiles(e.dataTransfer.files);
           }}
         >
-          <div className="chat-resize-l" onMouseDown={e => startResize(e, "l")} />
-          <div className="chat-resize-t" onMouseDown={e => startResize(e, "t")} />
-          <div className="chat-resize-tl" onMouseDown={e => startResize(e, "tl")} />
-          <div className="chat-header">
-            <div className="chat-tabs">
-              {tabs.map((tab, idx) => (
-                <button key={tab.id} className={`chat-tab ${idx === activeTabIdx ? "active" : ""}`} onClick={() => setActiveTabIdx(idx)}>
-                  {tab.chatNum ? `#${tab.chatNum}` : `~${tab.id}`}
-                  {tabs.length > 1 && (
-                    <span className="chat-tab-x" onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}>{"\u2715"}</span>
-                  )}
-                </button>
-              ))}
-              <button className="chat-tab-add" onClick={addTab} title="New chat tab">+</button>
+          {dock === "float" && (
+            <>
+              <div className="chat-resize-l" onMouseDown={e => startResize(e, "l")} />
+              <div className="chat-resize-t" onMouseDown={e => startResize(e, "t")} />
+              <div className="chat-resize-tl" onMouseDown={e => startResize(e, "tl")} />
+            </>
+          )}
+          {dock === "window" && (
+            <div className="chat-window-bar" onPointerDown={shell.onWindowDrag}>
+              <span className="chat-window-title">{topicTitle ? `Tutor — ${topicTitle}` : "Tutor"}</span>
+              <button className="chat-icon-btn" onClick={closePanel} title="Close"><IconClose /></button>
             </div>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: sessionStatus === "ready" ? "var(--accent)" : sessionStatus === "loading" ? "var(--text-dim)" : "var(--chat-stop-color)", flexShrink: 0 }} title={sessionId ? `Session: ${sessionId.slice(0, 8)}...` : sessionStatus} />
-            <span className="chat-header-topic">{topicTitle}</span>
-            <select className="chat-model-select" title="Model" value={model} onChange={e => setModel(e.target.value)}>
-              {MODELS.map(m => <option key={m.model} value={m.model}>{m.label}</option>)}
-            </select>
-            <select className="chat-model-select" title="Effort" value={effort} onChange={e => setEffort(e.target.value)}>
-              {EFFORT_LEVELS.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
-            <button className="chat-expand-btn" onClick={transferSession} disabled={sessionStatus !== "ready"} title={isolated ? "Isolated: no shared memory. Click to enable memory/CLAUDE.md" : "Shared: uses global Claude memory + CLAUDE.md. Click to isolate"} style={{ background: isolated ? "var(--chat-stop-color)" : "var(--accent)", color: "var(--bg-main)", opacity: sessionStatus !== "ready" ? 0.4 : 1 }}>
-              {isolated ? "ISO" : "MEM"}
-            </button>
-            <button className="chat-expand-btn" onClick={() => { if (!activeTab) return; updateTab(activeTab.id, { keepContext: !activeTab.keepContext }); _ss.setItem("keepContext", (!activeTab.keepContext) ? "true" : "false"); }} title={keepContext ? "Keep context ON: session survives reload" : "Keep context OFF: new session on reload"} style={{ background: keepContext ? "var(--accent)" : undefined, color: keepContext ? "var(--bg-main)" : undefined }}>
-              {"KC"}
-            </button>
-            <button className="chat-kill-btn" onClick={killSession} title="Kill session and stop all processes">KILL</button>
-            <button className="chat-expand-btn" onClick={() => setShowHelp(h => !h)} title="Shortcuts and gestures (Ctrl+Shift+?)">
-              {"?"}
-            </button>
-            <button className="chat-expand-btn" onClick={toggleExpand} title={expanded ? "Shrink" : "Expand"}>
-              {expanded ? "\u2296" : "\u2295"}
-            </button>
+          )}
+          {shell && shell.blocked && (
+            <div className="chat-blocked-note">Pop-ups blocked — shown in-app</div>
+          )}
+
+          {/* Tab strip. Each tab owns its own session, transcript, threads and
+              attachments; switching tabs swaps all of them. */}
+          <div className="chat-tabs">
+            {tabs.map((tab, idx) => (
+              <div key={tab.id}
+                   className={`chat-tab ${idx === activeTabIdx ? "active" : ""}`}
+                   onClick={() => setActiveTabIdx(idx)}
+                   role="button" tabIndex={0}
+                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setActiveTabIdx(idx); }}>
+                <span className="chat-tab-label">
+                  {tab.title || (tab.chatNum ? `Chat ${tab.chatNum}` : "New chat")}
+                </span>
+                {tabs.length > 1 && (
+                  <span className="chat-tab-x" title="Close tab"
+                        onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}>{"×"}</span>
+                )}
+              </div>
+            ))}
+            <button className="chat-tab-add" onClick={addTab} title="New conversation">+</button>
           </div>
+
+          <div className="chat-header">
+            <div className="chat-header-titles">
+              <div className="chat-header-title">Tutor</div>
+              <div className="chat-header-topic">
+                <span className="chat-header-dot" style={{ background: statusColor }}
+                      title={sessionId ? `Session ${sessionId.slice(0, 8)} — ${sessionStatus}` : sessionStatus} />
+                <span>{topicTitle}</span>
+              </div>
+            </div>
+            <div className="chat-header-actions">
+              {shell && (
+                <div className="chat-dock-switch">
+                  <button className={`chat-dock-btn ${dock === "side" ? "active" : ""}`}
+                          onClick={() => shell.setDock("side")} title="Dock to the side"><IconDockSide /></button>
+                  <button className={`chat-dock-btn ${dock === "bottom" ? "active" : ""}`}
+                          onClick={() => shell.setDock("bottom")} title="Dock to the bottom"><IconDockBottom /></button>
+                  <button className={`chat-dock-btn ${dock === "window" || dock === "popup" ? "active" : ""}`}
+                          onClick={shell.openPopup} title="Open in its own window"><IconExternal /></button>
+                </div>
+              )}
+              <button className={`chat-icon-btn ${showSettings ? "active" : ""}`}
+                      onClick={() => setShowSettings(s => !s)} title="Settings"><IconSettings /></button>
+              <button className="chat-icon-btn" onClick={() => setShowHelp(h => !h)}
+                      title="Shortcuts and gestures (Ctrl+Shift+?)">?</button>
+              {dock !== "popup" && dock !== "window" && (
+                <button className="chat-icon-btn" onClick={closePanel} title="Close the tutor"><IconClose /></button>
+              )}
+            </div>
+          </div>
+
+          {showSettings && (
+            <div className="chat-settings">
+              <div>
+                <div className="chat-setting-label">Model</div>
+                <div className="chat-segmented">
+                  {MODELS.map(m => (
+                    <button key={m.model}
+                            className={`chat-segment ${model === m.model ? "active" : ""}`}
+                            onClick={() => setModel(m.model)}>{m.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="chat-setting-label">Reasoning effort</div>
+                <div className="chat-segmented">
+                  {EFFORT_LEVELS.map(lv => (
+                    <button key={lv}
+                            className={`chat-segment ${effort === lv ? "active" : ""}`}
+                            onClick={() => setEffort(lv)}>{lv}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="chat-setting-label">Answer style</div>
+                <div className="chat-segmented">
+                  {ANSWER_STYLES.map(a => (
+                    <button key={a.id}
+                            className={`chat-segment ${answers === a.id ? "active" : ""}`}
+                            onClick={() => setAnswers(a.id)}>{a.label}</button>
+                  ))}
+                </div>
+                <div className="chat-setting-help">
+                  Hints first withholds the answer until you have tried a step.
+                </div>
+              </div>
+              {/* Session lifecycle. Not student-facing chrome, so it lives
+                  behind the popover instead of in the header — but the skill's
+                  isolation / keep-context / kill controls stay reachable. */}
+              <div>
+                <div className="chat-setting-label">Session</div>
+                <div className="chat-segmented">
+                  <button className={`chat-segment ${!isolated ? "active" : ""}`}
+                          onClick={transferSession} disabled={sessionStatus !== "ready"}
+                          title={isolated ? "Isolated: no shared memory. Switch to use memory/CLAUDE.md" : "Shared: uses global Claude memory + CLAUDE.md. Switch to isolate"}>
+                    {isolated ? "Isolated" : "Shared memory"}
+                  </button>
+                  <button className={`chat-segment ${keepContext ? "active" : ""}`}
+                          onClick={() => { if (!activeTab) return; updateTab(activeTab.id, { keepContext: !activeTab.keepContext }); _ss.setItem("keepContext", (!activeTab.keepContext) ? "true" : "false"); }}
+                          title={keepContext ? "Session survives reload" : "New session on reload"}>
+                    Keep on reload
+                  </button>
+                  <button className="chat-segment" onClick={killSession}
+                          title="End the session and stop all processes"
+                          style={{ color: "var(--danger)" }}>End session</button>
+                </div>
+              </div>
+            </div>
+          )}
           {showHelp && (
             <div className="chat-help-overlay">
               <button className="chat-help-close" onClick={() => setShowHelp(false)}>close</button>
@@ -1537,41 +1688,49 @@ export function Chatbot({
               el
             );
           })}
-          {attachments.length > 0 && (
-            <div className="chat-att-bar">
-              {attachments.map((a, i) => (
-                <div key={i} className="chat-att-preview">
-                  {a.thumb ? <img src={a.thumb} className="chat-att-thumb" alt={a.name} /> : <span className="chat-att-fname">{a.name}</span>}
-                  <button className="chat-att-rm" onClick={() => removeAttachment(i)}>{"\u2715"}</button>
-                </div>
-              ))}
+          <div className="chat-composer">
+            {attachments.length > 0 && (
+              <div className="chat-att-bar">
+                {attachments.map((a, i) => (
+                  <div key={i} className="chat-att-preview">
+                    {a.thumb ? <img src={a.thumb} className="chat-att-thumb" alt={a.name} /> : <span className="chat-att-fname">{a.name}</span>}
+                    <button className="chat-att-rm" onClick={() => removeAttachment(i)}>{"✕"}</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {contextSnippets.length > 0 && (
+              <div className="chat-ctx-bar">
+                {contextSnippets.map((s, i) => (
+                  <div key={i} className="chat-ctx-chip">
+                    <span className="chat-ctx-chip-text">{s.text.length > 40 ? s.text.slice(0, 40) + "…" : s.text}</span>
+                    <button className="chat-ctx-chip-x" onClick={() => onClearSnippet(i)} title="Remove">{"×"}</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Current settings, and the second way into the popover. */}
+            <div className="chat-settings-chip">
+              <span className="chat-settings-chip-text">{modelLabel + " · " + effort + " · " + answerLabel}</span>
+              <button className="chat-settings-change" onClick={() => setShowSettings(s => !s)}>Change</button>
             </div>
-          )}
-          {contextSnippets.length > 0 && (
-            <div className="chat-ctx-bar">
-              {contextSnippets.map((s, i) => (
-                <div key={i} className="chat-ctx-chip">
-                  <span className="chat-ctx-chip-text">{"+ "}{s.text.length > 40 ? s.text.slice(0, 40) + "\u2026" : s.text}</span>
-                  <button className="chat-ctx-chip-x" onClick={() => onClearSnippet(i)}>{"\u2715"}</button>
-                </div>
-              ))}
+            <div className="chat-input-row">
+              {/* Snapshot the FileList BEFORE resetting value: the reset empties
+                  the live list, and handleFiles is async, so only the first file
+                  survived a multi-file pick. */}
+              <input type="file" ref={fileRef} style={{ display: "none" }} accept="image/*,.pdf" multiple
+                onChange={e => { const picked = Array.from(e.target.files || []); e.target.value = ""; if (picked.length) handleFiles(picked); }} />
+              <button className="chat-attach-btn" onClick={() => fileRef.current.click()} title="Attach image or PDF">+</button>
+              <textarea ref={inputRef} className="chat-input" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
+                onFocus={releaseThreadFocus}
+                placeholder={attachments.length > 0 ? "Describe what you attached" : contextSnippets.length > 0 ? "Ask about the attached context" : "Ask about this topic"} rows={1} />
+              {loading
+                ? <button className="chat-stop" onClick={cancelRequest} title="Stop generating">{"■"}</button>
+                : <button className="chat-send" onClick={() => sendMessage()} disabled={!input.trim() && attachments.length === 0} title="Send"><IconArrowRight /></button>
+              }
             </div>
-          )}
-          <div className="chat-input-row">
-            {/* Snapshot the FileList BEFORE resetting value: the reset empties
-                the live list, and handleFiles is async, so only the first file
-                survived a multi-file pick. */}
-            <input type="file" ref={fileRef} style={{ display: "none" }} accept="image/*,.pdf" multiple
-              onChange={e => { const picked = Array.from(e.target.files || []); e.target.value = ""; if (picked.length) handleFiles(picked); }} />
-            <button className="chat-attach-btn" onClick={() => fileRef.current.click()} title="Attach image or PDF">+</button>
-            <textarea ref={inputRef} className="chat-input" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
-              onFocus={releaseThreadFocus}
-              placeholder={attachments.length > 0 ? "Describe what you attached..." : contextSnippets.length > 0 ? "Ask about the attached context..." : "Ask about this topic..."} rows={1} />
-            {loading
-              ? <button className="chat-stop" onClick={cancelRequest} title="Stop generating">{"\u25A0"}</button>
-              : <button className="chat-send" onClick={() => sendMessage()} disabled={!input.trim() && attachments.length === 0}>{"\u2192"}</button>
-            }
           </div>
+          {dock === "window" && <div className="chat-window-grip" onPointerDown={shell.onWindowResize} />}
         </div>
       }
     </>

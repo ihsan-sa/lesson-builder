@@ -97,7 +97,7 @@ Theme failures are visually obvious; Phase 4 visual-QA catches regressions if sk
 - [ ] `GRAPH_SCHEMA` is defined alongside `DEFAULT_GRAPH_PARAMS` with matching keys one-to-one. Each entry describes the editable fields so the chatbot can offer typed edits. See `references/graph-schema-guide.md` for the derivation procedure and backfill rules for lessons that predate the graph-schema feature.
 - [ ] Every SVG is wrapped in `<div className="eq-block">` with `viewBox` set and `width: "100%"` on the SVG so it scales responsively.
 - [ ] Graph marker IDs are unique across the entire file (no duplicate `id="ah"` or `id="arrowId"`). Clashing IDs silently break arrow rendering.
-- [ ] All graph text uses `fontFamily="'IBM Plex Mono'"`. No system fonts, no sans-serif in SVG labels.
+- [ ] All graph text uses `fontFamily="'JetBrains Mono'"` (the shell's mono face). No system fonts, no sans-serif in SVG labels.
 - [ ] Graph equations must match the LaTeX equations in the same section. Discrepancies are caught by the Content Verification sub-agent's numerical spot-check but are much cheaper to prevent here.
 - [ ] Graph Preview tab exists as the **last** tab in the `TOPICS` array and renders every graph in the lesson. In update mode this is especially critical: a newly-added graph that is not also added to the graph-preview tab will not appear in visual-QA screenshots and will silently escape review.
 
@@ -295,8 +295,8 @@ Phase 4 runs the suite via `node test_lesson.cjs`; each lesson ships its own `te
 - **T6** — `TOPIC_CONTEXT` object is defined.
 - **T7** — `LESSON_CONTEXT` constant is defined.
 - **T8** — Imports from `@core` and references `Chatbot`.
-- **T9** — Theme `className="theme-dark"` or `"theme-light"` present (gold accent handled by CSS vars in `@core`).
-- **T10** — IBM Plex font family is referenced (inline monospace label styles).
+- **T9** — Renders inside `<LessonShell>` from `@core`, and `className="theme-light"` is present (the KaTeX loading gate applies it directly; the shell applies it thereafter).
+- **T10** — No hand-rolled shell chrome: the lesson must not emit `header`, `tab-bar`, `tab-btn`, `content-area` or `theme-toggle-btn` classes. `LessonShell` owns the top bar, contents rail and article container.
 - **T11** — Imports `Eq`, `KeyConcept`, and `Chatbot` from `@core` (these apply `.eq-block`, `.key-concept`, `.chat-panel`).
 - **T12** — No `localStorage` usage (sessionStorage alias `_ss` is intentionally allowed).
 - **T13** — No emojis (Unicode ranges for emoticons, symbols, dingbats, flags all checked).

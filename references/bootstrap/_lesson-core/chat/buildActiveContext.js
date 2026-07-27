@@ -5,7 +5,7 @@
  * (media/approaches that produced positive signals earlier in the chat).
  * Keeps the standing system prompt lean.
  */
-export function buildActiveContext({ tabId, topicTitle, topicText, graphParams, graphSchema, isolated, reinforced = [] }) {
+export function buildActiveContext({ tabId, topicTitle, topicText, graphParams, graphSchema, isolated, reinforced = [], answerStyle = "hints" }) {
   const lines = ["[ACTIVE CONTEXT]"];
   if (tabId) lines.push(`Tab: ${tabId}`);
   if (topicTitle) lines.push(`Title: ${topicTitle}`);
@@ -40,6 +40,17 @@ export function buildActiveContext({ tabId, topicTitle, topicText, graphParams, 
     lines.push("[REINFORCED BEHAVIORS -- highest-priority media/approach heuristic for this session; consult before picking a format]");
     for (const r of reinforced) lines.push(`- ${r}`);
     lines.push("[/REINFORCED BEHAVIORS]");
+  }
+  // Answer style is the student's own control (settings popover). "hints" is
+  // the default and changes nothing -- the PEDAGOGY POLICY stands as written.
+  // "direct" relaxes ONLY the withhold-first ordering; it does not license
+  // fabricated steps, person-level praise, or skipping the reasoning.
+  if (answerStyle === "direct") {
+    lines.push("");
+    lines.push("[ANSWER STYLE: DIRECT -- set by the student]");
+    lines.push("Lead with the result, then show the reasoning that produces it. Do not hold the answer behind a hint ladder while this is set.");
+    lines.push("Everything else in the PEDAGOGY POLICY still binds: verify rather than fabricate, name and refute misconceptions explicitly, keep feedback task-level, and still pose the occasional transfer check.");
+    lines.push("[/ANSWER STYLE]");
   }
   return lines.join("\n");
 }

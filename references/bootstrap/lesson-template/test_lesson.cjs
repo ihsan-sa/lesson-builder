@@ -82,17 +82,20 @@ test('T8 — Imports from @core (Chatbot, UI primitives)', () => {
   return /from\s+["']@core["']/.test(code) && /Chatbot/.test(code);
 });
 
-// T9: Uses gold accent color (via Chatbot className, not raw hex)
-test('T9 — Uses lesson chrome classes (gold accent via @core CSS)', () => {
-  // After refactor, #c8a45a lives in _lesson-core/chat/chat.css.js, not the lesson file.
-  // Lesson still applies className="theme-dark|theme-light" which maps --accent.
-  return /className=\{?\s*["`]theme-/.test(code);
+// T9: Renders through the shared Lumen shell rather than hand-rolled chrome
+test('T9 — Renders inside @core LessonShell', () => {
+  // The Lumen palette lives in _lesson-core/chat/chat.css.js. A lesson gets it
+  // by rendering <LessonShell> (which applies theme-light and injects STYLES);
+  // the KaTeX loading gate applies theme-light directly.
+  return /<LessonShell\b/.test(code) && /className=\{?\s*["`]theme-/.test(code);
 });
 
-// T10: IBM Plex fonts referenced (now via CSS from @core, but check lesson uses monospace UI)
-test('T10 — Uses IBM Plex Mono for lesson UI', () => {
-  // The lesson's inline styles still reference 'IBM Plex Mono' for monospace labels.
-  return code.includes('IBM Plex');
+// T10: No hand-rolled chrome — the shell owns header, tabs, footer
+test('T10 — No hand-rolled shell chrome', () => {
+  // These classes were the pre-Lumen lesson-local chrome. LessonShell renders
+  // .topbar / .rail / .article instead; a lesson still emitting them is either
+  // stale or fighting the shell.
+  return !/className=\{?\s*["`](header|tab-bar|tab-btn|content-area|theme-toggle-btn)\b/.test(code);
 });
 
 // T11: Lesson uses shared CSS classes (will be styled by @core STYLES)

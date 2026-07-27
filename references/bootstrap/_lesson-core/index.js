@@ -13,6 +13,13 @@ export { routeLessonContext, hasFocusedThread } from "./chat/contextRouter.js";
 // paste it into LESSON_CONTEXT — buildSystemPrompt injects it automatically.
 export { PEDAGOGY_POLICY } from "./chat/buildSystemPrompt.js";
 
+// The Lumen shell: top bar, contents rail (+ scroll-spy), article container,
+// and tutor placement (side / bottom / in-app window / real browser window).
+// A lesson passes its <Chatbot> in as the `tutor` prop; the shell decides
+// where it lives and hands the dock controls to it through ShellContext.
+export { LessonShell } from "./ui/LessonShell.jsx";
+export { useShell } from "./ui/shellContext.js";
+
 export { Eq, M } from "./ui/Eq.jsx";
 export { P, Section, KeyConcept, CollapsibleBlock, RefImg, PracticeProblem, FormulaSheetBox, SummaryBox } from "./ui/primitives.jsx";
 export { DesmosGraph } from "./ui/DesmosGraph.jsx";

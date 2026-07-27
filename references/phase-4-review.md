@@ -99,9 +99,13 @@ Prerequisites: the lesson's proxy (`node server/proxy.js`) and Vite dev server (
 Interaction script:
 
 - Load the lesson at the Vite dev URL.
-- Toggle the theme (dark to light to dark); confirm no console errors and the gold accent `#c8a45a` stays visible in both themes.
-- Initialize a chat session; confirm SSE streaming produces tokens in the chat panel.
-- Click every tab; confirm each tab renders without error and KaTeX re-lays out correctly (the `.katex` class elements should be present on tab-switch).
+- Confirm the shell renders: top bar (monogram, course line, title, position pill), contents rail at 262px with a section outline under the active topic, article column capped at 680px.
+- Collapse and reopen the contents rail; confirm it goes 262px to 48px and that clicking a number in the collapsed rail switches topic.
+- Scroll the article; confirm the outline highlight follows, and click an outline entry to confirm it jumps to that heading.
+- Initialize a chat session; confirm SSE streaming produces tokens in the tutor panel.
+- Cycle the tutor through all four placements (side, bottom, in-app window, real pop-out) and confirm **the transcript and session survive every switch** — a remount here silently starts a new session.
+- Click every topic in the rail; confirm each renders without error, KaTeX re-lays out (the `.katex` elements should be present after the switch), and equation numbers rebase to the new topic.
+- Click an equation's **Explain** pill; confirm the equation lands in the tutor's context chips.
 - Click the graph preview tab (if present); confirm the preview renders.
 - Run at least one chat edit-graph round-trip: ask the chatbot to modify a parameter, confirm the `<<EDIT_GRAPH>>` block is stripped from the visible response, and confirm the graph re-renders with the new parameter applied.
 
@@ -213,10 +217,10 @@ Each iteration is logged with: issues-before count, issues-after count, test pas
 
 ### Worked example
 
-A lesson enters Phase 4 with 6 issues: 2 blockers (T2 KaTeX bare `<` on two lines, T14 TOPIC_CONTEXT key mismatch), 3 majors (visual-qa-agent reports an off-axis label on graph 2, content-review-agent reports a missing variable definition, Playwright reports a console error on theme toggle), 1 minor (checklist: missing `finally` block in `sendMessage`).
+A lesson enters Phase 4 with 6 issues: 2 blockers (T2 KaTeX bare `<` on two lines, T14 TOPIC_CONTEXT key mismatch), 3 majors (visual-qa-agent reports an off-axis label on graph 2, content-review-agent reports a missing variable definition, Playwright reports a console error on dock switch), 1 minor (checklist: missing `finally` block in `sendMessage`).
 
-- **Iteration 1**. Fix agent addresses all 6 in one pass. Diff is 42 lines. Post-iteration re-review: 2 blockers resolved, graph-2 label moved but visual-qa now flags the moved label as overlapping the curve, content variable definition added, Playwright console error still present (theme toggle unhandled), `finally` block added. New issue count: 3 (1 fresh major from the label move, 2 carried over). Test pass rate: 15/17 → 17/17. Self-assessment: "improving". Continue.
-- **Iteration 2**. Fix agent targets the 3 remaining: repositions the label with a fixed offset, traces the theme-toggle console error to a stale `THEMES_G` import. Diff is 18 lines (shrinking — good sign). Post-iteration: 0 issues. Test pass rate: 17/17. Self-assessment: "improving". Loop closes cleanly.
+- **Iteration 1**. Fix agent addresses all 6 in one pass. Diff is 42 lines. Post-iteration re-review: 2 blockers resolved, graph-2 label moved but visual-qa now flags the moved label as overlapping the curve, content variable definition added, Playwright console error still present (dock switch unhandled), `finally` block added. New issue count: 3 (1 fresh major from the label move, 2 carried over). Test pass rate: 15/17 → 17/17. Self-assessment: "improving". Continue.
+- **Iteration 2**. Fix agent targets the 3 remaining: repositions the label with a fixed offset, traces the dock-switch console error to a stale ref read after the panel moved slots. Diff is 18 lines (shrinking — good sign). Post-iteration: 0 issues. Test pass rate: 17/17. Self-assessment: "improving". Loop closes cleanly.
 - **Logged**: 2 iterations, both improving, no stop rules fired, 6 → 0 issues.
 
 A counter-example that halts: same starting state, but iteration 1 fixes only 1 issue and introduces 2 new ones. Diff is 80 lines (larger than needed). Iteration 2 fixes 1 more but introduces 1 new. Diff is 95 lines (growing). Metrics: issue count 6 → 7 → 7 (no strict decrease), diff growing. Self-assessment: "stalled" then "no meaningful progress". Stop rule fires at end of iteration 2, 4 issues logged as unresolved, loop terminates.

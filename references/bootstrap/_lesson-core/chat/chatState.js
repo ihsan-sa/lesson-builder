@@ -23,9 +23,12 @@ if (!window.__chatState) {
 
 export const _cs = window.__chatState;
 
-export function makeTab() {
+export function makeTab(title) {
   return {
     id: ++_cs.tabIdCounter,
+    // Tab-strip label. Named after the topic that was open when the tab was
+    // created; falls back to the server-assigned chat number.
+    title: title || "",
     sessionId: null,
     chatNum: null,
     messages: [],

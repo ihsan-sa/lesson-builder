@@ -4,8 +4,8 @@ New-mode Phase 3 starting point. Main Claude copies this skeleton into `src/<slu
 
 ## What's per-lesson vs from @core
 
-- **Per-lesson**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph components, `TOPICS`, `LessonApp`, header.
-- **From @core**: `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Fable 5 as the default the chat opens with), hooks (`useKatex`, `useDesmos`).
+- **Per-lesson**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph components, `TOPICS`, `LessonApp`.
+- **From @core**: `LessonShell` (top bar, contents rail, article, tutor docking), `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Fable 5 as the default the chat opens with), hooks (`useKatex`, `useDesmos`).
 - **External**: `server/proxy.js` is a 1-line shim, added by the file-scaffolding step.
 
 ## GRAPH_SCHEMA requirement
@@ -17,7 +17,7 @@ Mandatory. Client-side validation map for `<<EDIT_GRAPH>>`; rejects invalid para
 ```jsx
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Chatbot,
+  Chatbot, LessonShell,
   Eq, M, P, Section, KeyConcept, CollapsibleBlock, RefImg,
   THEMES_G, useKatex, STYLES, routeLessonContext,
 } from "@core";
@@ -94,8 +94,10 @@ const VID = import.meta.env.BASE_URL + "videos/";
 // Module-level graph theme binding
 // ───────────────────────────────────────────────────────────────
 //
-// Graph components reference `G` at module scope; LessonApp reassigns it
-// per render based on the current theme state. Keep the `let` declaration.
+// Graph components reference `G` at module scope for their colors. The Lumen
+// shell is light-only (the design specifies a single palette), so this is now
+// a fixed binding — keep the `let` declaration and the name, since every graph
+// component closes over it.
 
 let G = THEMES_G.light;
 
@@ -207,7 +209,7 @@ export const GRAPH_SCHEMA = {
 //         {/* curve */}
 //         <path d={d} fill="none" stroke={G.gold} strokeWidth="2" />
 //         {/* labels */}
-//         <text x={ox + plotW / 2} y={oy + 28} fill={G.txt} fontSize="10" fontFamily="'IBM Plex Mono'" textAnchor="middle">x</text>
+//         <text x={ox + plotW / 2} y={oy + 28} fill={G.txt} fontSize="10" fontFamily="'JetBrains Mono'" textAnchor="middle">x</text>
 //       </svg>
 //     </div>
 //   );
@@ -281,12 +283,21 @@ export const GRAPH_SCHEMA = {
 // Topics (tab bar + content functions)
 // ───────────────────────────────────────────────────────────────
 //
-// Each entry is `{ id, tab, title, subtitle, content }`. `content` is a
+// Each entry is `{ id, tab, title, subtitle, blurb, content }`. `content` is a
 // function `(gp, renderId) => JSX` so graph components can receive live
 // params; the optional second arg is the graphRenderId — key a component on
 // it when it must re-render after an <<EDIT_GRAPH>> (most content ignores it).
 // Topic ids must match TOPIC_CONTEXT keys exactly (test_lesson.cjs checks
 // this). The final tab MUST be `graph-preview`.
+//
+// How each field renders in the shell:
+//   tab       contents-rail row label (keep it short — the rail is 262px)
+//   title     the 38px article headline
+//   subtitle  the uppercase kicker after "Topic NN ·" (e.g. "Core result")
+//   blurb     one or two sentences under the headline; optional but wanted
+//
+// The rail's per-topic section outline is derived from the `<Section title>`
+// headings the topic renders — no separate outline manifest to keep in sync.
 
 const TOPICS = [
   // TODO: one entry per topic. Example:
@@ -294,7 +305,8 @@ const TOPICS = [
   //   id: "topic-1",
   //   tab: "Topic 1",
   //   title: "Full Title of Topic 1",
-  //   subtitle: "Short mono-spaced descriptor",
+  //   subtitle: "Core result",
+  //   blurb: "One or two sentences framing what this topic establishes.",
   //   content: (gp, renderId) => (
   //     <Section title="Section Heading">
   //       <P>
@@ -319,7 +331,8 @@ const TOPICS = [
     id: "graph-preview",
     tab: "Graph Preview",
     title: "Graph Preview",
-    subtitle: "All lesson graphs in one place",
+    subtitle: "Review",
+    blurb: "All lesson graphs in one place.",
     content: (gp, renderId) => (
       <Section title="All Graphs">
         <P>
@@ -347,16 +360,12 @@ function LessonApp() {
   const [activeIdx, setActiveIdx] = useState(0);
   const [contextSnippets, setContextSnippets] = useState([]);
   const [chatOpen, setChatOpen] = useState(false);
-  const [theme, setTheme] = useState("light");
   const [graphParams, setGraphParams] = useState(DEFAULT_GRAPH_PARAMS);
   const [graphRenderId, setGraphRenderId] = useState(0);
   const mouseDownPos = useRef(null);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [threadTrigger, setThreadTrigger] = useState(null);
   const [threadCtxTrigger, setThreadCtxTrigger] = useState(null);
-
-  // Reassign module-level G so graph components pick up the active theme.
-  G = THEMES_G[theme];
 
   // Ctrl-/ toggles the chat panel; Ctrl-Shift-F adds the current selection to
   // the surrounding thread's context (fires only inside a .thread-panel).
@@ -443,7 +452,7 @@ function LessonApp() {
   // Ctrl+Click on a content block → add it to chat context.
   const handleContentClick = useCallback((e) => {
     if (!chatOpen) return;
-    if (e.target.closest(".chat-panel, .chat-toggle, .tab-bar, .header")) return;
+    if (e.target.closest(".chat-panel, .chat-toggle, .topbar, .rail")) return;
     if (mouseDownPos.current) {
       const dx = Math.abs(e.clientX - mouseDownPos.current.x);
       const dy = Math.abs(e.clientY - mouseDownPos.current.y);
@@ -602,16 +611,16 @@ function LessonApp() {
       <>
         <style>{STYLES}</style>
         <div
-          className={`theme-${theme}`}
+          className="theme-light"
           style={{
             minHeight: "100vh",
-            background: "var(--bg-main)",
+            background: "var(--canvas)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          <p style={{ color: "var(--text-dim)", fontFamily: "monospace", fontSize: 14 }}>
+          <p style={{ color: "var(--ink-4)", fontFamily: "var(--font-mono)", fontSize: 13 }}>
             Loading KaTeX...
           </p>
         </div>
@@ -619,166 +628,90 @@ function LessonApp() {
     );
   }
 
+  // LessonShell owns the frame: top bar, contents rail with scroll-spy, the
+  // article scroll container, and where the tutor panel is docked. It injects
+  // @core STYLES itself, so there is no <style> tag here. Root-level DOM
+  // handlers are forwarded onto the shell root, which is what the
+  // context-capture gestures need (they must also cover chat replies and
+  // thread panels, not just lesson content).
   return (
-    <div
-      className={`theme-${theme} ${chatOpen ? "ctx-active" : ""}`}
+    <LessonShell
+      courseCode="/* TODO: course display code, e.g. 'MATH 101' */"
+      courseName="/* TODO: full course name, e.g. 'Introduction to Real Analysis' */"
+      lessonTitle="/* TODO: lesson title */"
+      topics={TOPICS}
+      activeIdx={activeIdx}
+      onSelectTopic={setActiveIdx}
+      chatOpen={chatOpen}
+      setChatOpen={setChatOpen}
+      // Optional: rendered under the rail divider.
+      // refs={[{ label: "Formula sheet (PDF)", href: "..." }]}
       onMouseDown={handleContentMouseDown}
       onClick={handleContentClick}
       onMouseUp={handleContentMouseUp}
       onContextMenu={handleContextMenu}
-      style={{
-        minHeight: "100vh",
-        background: "var(--bg-main)",
-        color: "var(--text-primary)",
-        fontFamily: "'IBM Plex Sans', 'Segoe UI', sans-serif",
-        display: "flex",
-        flexDirection: "column",
-        position: "relative",
-      }}
+      /* Chatbot mount. All chat UI, session management, thread panel,
+         system-prompt construction, and <<EDIT_GRAPH>> dispatch live inside
+         this component (imported from @core). It gates itself out of PROD
+         builds internally (static hosts have no proxy); no per-lesson gating
+         needed. Passed to the shell rather than rendered inline so the shell
+         can place it in the side dock, the bottom dock, a floating window, or
+         a real browser window. */
+      tutor={
+        <Chatbot
+          // Identity + lesson-scoping
+          courseCode="/* TODO: course display code, e.g. 'MATH 101' */"
+          courseName="/* TODO: full course name, e.g. 'Introduction to Real Analysis' */"
+          // institution: OPTIONAL string, e.g. institution="University X".
+          // Named in the tutor system prompt ("...at <institution>"); omit
+          // the prop entirely for no institution mention.
+          lessonContext={LESSON_CONTEXT}
+          topicContext={TOPIC_CONTEXT}
+          lessonFile="src/{/* TODO: slug */}.jsx"
+          // Graph editing (REQUIRED for <<EDIT_GRAPH>> validation)
+          graphSchema={GRAPH_SCHEMA}
+          graphRenderId={graphRenderId}
+          // Session + UI state
+          topicId={active.id}
+          topicTitle={active.title}
+          contextSnippets={contextSnippets}
+          onClearSnippet={handleClearSnippet}
+          onClearAllSnippets={handleClearAllSnippets}
+          open={chatOpen}
+          setOpen={setChatOpen}
+          onEditGraph={handleEditGraph}
+          graphParams={graphParams}
+          addSnippet={addSnippet}
+          threadTrigger={threadTrigger}
+          threadCtxTrigger={threadCtxTrigger}
+        />
+      }
+      /* Selection context menu (styles ship in @core chat.css).
+         - "Reply" always: adds the selection to context. If a thread composer
+           currently has focus it lands in that thread instead (routeLessonContext).
+         - "Reply in thread": selections inside a chat message.
+         - "Ask in a thread": selections in the lesson body — opens a
+           lesson-anchored thread.
+         - "Reply in this thread": selections inside an open thread panel. */
+      overlays={
+        ctxMenu && (
+          <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
+            <button className="ctx-menu-item" onClick={handleCtxReply}>Reply</button>
+            {ctxMenu.chatMsgIdx != null && (
+              <button className="ctx-menu-item" onClick={handleCtxOpenThread}>Reply in thread</button>
+            )}
+            {ctxMenu.chatMsgIdx == null && !ctxMenu.threadId && (
+              <button className="ctx-menu-item" onClick={handleCtxAskInThread}>Ask in a thread</button>
+            )}
+            {ctxMenu.threadId && (
+              <button className="ctx-menu-item" onClick={handleCtxReplyInThread}>Reply in this thread</button>
+            )}
+          </div>
+        )
+      }
     >
-      {/* Chat + UI CSS injected from @core. No hardcoded hex colors here;
-          every color resolves through CSS custom properties defined in
-          _lesson-core/chat/chat.css.js. */}
-      <style>{STYLES}</style>
-
-      {/* Header: title, subtitle, theme toggle */}
-      <div className="header">
-        <div>
-          <h1>{/* TODO: lesson title */}</h1>
-          <p>{/* TODO: course tagline, e.g. "<COURSE CODE> — <Full Course Name>" */}</p>
-        </div>
-        <button
-          className="theme-toggle-btn"
-          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        >
-          {theme === "dark" ? "Light" : "Dark"}
-        </button>
-      </div>
-
-      {/* Production banner (chatbot disabled on static hosts) */}
-      {import.meta.env.PROD && (
-        <div
-          style={{
-            background: "var(--bg-card)",
-            color: "var(--text-dim)",
-            textAlign: "center",
-            padding: "6px 24px",
-            fontSize: 12,
-            fontFamily: "'IBM Plex Mono', monospace",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          The AI chatbot is only available when running locally. See the
-          repository README for setup instructions.
-        </div>
-      )}
-
-      {/* Tab bar */}
-      <div className="tab-bar">
-        {TOPICS.map((t, i) => (
-          <button
-            key={t.id}
-            className={`tab-btn ${i === activeIdx ? "active" : ""}`}
-            onClick={() => setActiveIdx(i)}
-          >
-            {t.tab}
-          </button>
-        ))}
-      </div>
-
-      {/* Content area: renders the active topic's content function. The
-          context-capture handlers live on the ROOT div above (they must also
-          cover chat replies and thread panels, not just lesson content). */}
-      <div className="content-area">
-        <div style={{ marginBottom: 8, padding: "16px 24px 0" }}>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--text-primary)" }}>
-            {active.title}
-          </h2>
-          <p
-            style={{
-              margin: "2px 0 0",
-              fontSize: 13,
-              color: "var(--text-dim)",
-              fontFamily: "'IBM Plex Mono', monospace",
-            }}
-          >
-            {active.subtitle}
-          </p>
-        </div>
-        {active.content(graphParams, graphRenderId)}
-      </div>
-
-      {/* Chatbot mount. All chat UI, session management, thread panel,
-          system-prompt construction, and <<EDIT_GRAPH>> dispatch live
-          inside this component (imported from @core). The chat toggle and
-          panel render only in dev — Chatbot gates itself out of PROD builds
-          internally (static hosts have no proxy); no per-lesson gating
-          needed beyond the banner above. */}
-      <Chatbot
-        // Identity + lesson-scoping
-        courseCode="/* TODO: course display code, e.g. 'MATH 101' */"
-        courseName="/* TODO: full course name, e.g. 'Introduction to Real Analysis' */"
-        // institution: OPTIONAL string, e.g. institution="University X".
-        // Named in the tutor system prompt ("...at <institution>"); omit
-        // the prop entirely for no institution mention.
-        lessonContext={LESSON_CONTEXT}
-        topicContext={TOPIC_CONTEXT}
-        lessonFile="src/{/* TODO: slug */}.jsx"
-        // Graph editing (REQUIRED for <<EDIT_GRAPH>> validation)
-        graphSchema={GRAPH_SCHEMA}
-        graphRenderId={graphRenderId}
-        // Session + UI state
-        topicId={active.id}
-        topicTitle={active.title}
-        contextSnippets={contextSnippets}
-        onClearSnippet={handleClearSnippet}
-        onClearAllSnippets={handleClearAllSnippets}
-        open={chatOpen}
-        setOpen={setChatOpen}
-        onEditGraph={handleEditGraph}
-        graphParams={graphParams}
-        addSnippet={addSnippet}
-        threadTrigger={threadTrigger}
-        threadCtxTrigger={threadCtxTrigger}
-      />
-
-      {/* Selection context menu (styles ship in @core chat.css).
-          - "Reply" always: adds the selection to context. If a thread composer
-            currently has focus it lands in that thread instead (routeLessonContext).
-          - "Reply in thread": selections inside a chat message.
-          - "Ask in a thread": selections in the lesson body — opens a
-            lesson-anchored thread.
-          - "Reply in this thread": selections inside an open thread panel. */}
-      {ctxMenu && (
-        <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
-          <button className="ctx-menu-item" onClick={handleCtxReply}>Reply</button>
-          {ctxMenu.chatMsgIdx != null && (
-            <button className="ctx-menu-item" onClick={handleCtxOpenThread}>Reply in thread</button>
-          )}
-          {ctxMenu.chatMsgIdx == null && !ctxMenu.threadId && (
-            <button className="ctx-menu-item" onClick={handleCtxAskInThread}>Ask in a thread</button>
-          )}
-          {ctxMenu.threadId && (
-            <button className="ctx-menu-item" onClick={handleCtxReplyInThread}>Reply in this thread</button>
-          )}
-        </div>
-      )}
-
-      {/* Footer */}
-      <div
-        style={{
-          textAlign: "center",
-          padding: "16px 24px",
-          marginTop: 24,
-          borderTop: "1px solid var(--border)",
-          fontSize: 12,
-          color: "var(--text-dim)",
-          fontFamily: "'IBM Plex Mono', monospace",
-        }}
-      >
-        &copy; {/* TODO: year + copyright holder */}
-      </div>
-    </div>
+      {active.content(graphParams, graphRenderId)}
+    </LessonShell>
   );
 }
 
@@ -787,11 +720,15 @@ export default LessonApp;
 
 ## Notes for assembly agents
 
-- **Do not inline `Chatbot`, `STYLES`, or UI primitives.** Everything in `_lesson-core/index.js` comes from `@core`. Local copies drift and fail review.
+- **Do not inline `LessonShell`, `Chatbot`, `STYLES`, or UI primitives.** Everything in `_lesson-core/index.js` comes from `@core`. Local copies drift and fail review.
+- **The shell owns the chrome.** Do not hand-roll a header, a tab bar, a footer or a content wrapper — `LessonShell` renders the top bar, the contents rail (with per-topic section outline and scroll-spy), the article column, and the tutor dock. The lesson supplies `TOPICS` and the active topic's body as children. `LessonShell` also injects `STYLES`, so a lesson needs no `<style>` tag outside the KaTeX loading gate.
+- **The rail outline comes from `<Section title>` headings.** Anything rendered outside a `Section` gets no outline entry and no scroll-spy target.
+- **Equations are first-class.** `<Eq>` renders a numbered card with an "Explain" pill that hands the LaTeX to the tutor as context. Numbering is a CSS counter scoped to the article, so equation numbers read `(<topic>.<n>)` automatically — never hand-number them. Add `label="ON FORMULA SHEET"`-style captions with `<Eq label="...">`; pass `explain={false}` to drop the pill on a specific equation.
+- **The palette is light-only.** The Lumen design specifies one palette; there is no theme toggle and no dark tokens. `let G = THEMES_G.light;` stays as a module-scope binding because every graph component closes over it.
 - **Wrap every graph call site in `<LiveGraph graphKey renderId>`.** Without it the `<<EDIT_GRAPH>>` visual-verification loop screenshots a selector that matches nothing, and Ctrl+Click on a graph captures stray axis labels instead of the graph's key and parameters.
 - **Keep the three context-capture selector lists in sync.** `handleContentClick` here, the capture-phase gate in `@core/chat/Chatbot.jsx`, and the hover rules in `@core/chat/chat.css.js` must name the same classes. A class in the CSS but not the handler shows a pointer cursor and does nothing.
 - **Keep `routeLessonContext` at the top of `addSnippet`.** It is what lets a student Ctrl+Click lesson content into a focused side-thread; drop it and every capture silently lands in the main composer instead.
-- **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it; `LessonApp` reassigns per render. `const` breaks the theme toggle.
+- **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it by name.
 - **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 verifies. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.
 - **`TOPIC_CONTEXT` keys must equal `TOPICS[i].id` values.** T14 enforces.
 - **The `graph-preview` tab is mandatory.** Renders every graph for screenshot review.
