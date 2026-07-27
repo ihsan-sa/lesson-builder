@@ -8,8 +8,56 @@ import express from "express";
 import cors from "cors";
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
+
+// Can we spawn the CLI WITHOUT a shell?
+//
+// This matters more than it looks. With `shell: true`, Node hands the joined
+// argv to cmd.exe / sh as one command line and does NOT quote the parts. Any
+// argument containing a space is split into several arguments, and on Windows
+// anything after the first newline is dropped entirely. The system prompt is
+// ~13k chars of multi-line text, so under a shell the CLI received the single
+// word "You" and the whole PEDAGOGY POLICY, isolation block, and <<TAG>>
+// protocol section silently vanished. (`--add-dir` breaks the same way as
+// soon as the workspace path contains a space.)
+//
+// `shell: true` was there because Node >= 20 refuses to spawn Windows .cmd /
+// .bat shims without one. So: probe once at startup. Native installs and
+// POSIX get correct argv; only shim installs fall back to the shell, and on
+// that path the system prompt is routed through stdin instead of argv.
+// Resolve the binary ONCE and spawn that exact path from then on. Probing the
+// bare name `claude` and then spawning the bare name is not the same question:
+// a shell and Node's shell-free resolver walk PATH differently (PATHEXT, and
+// extensionless files that only a shell can run), so a probe can succeed
+// against one file while every real spawn silently hits another.
+function resolveClaude() {
+  const isWin = process.platform === "win32";
+  try {
+    const r = spawnSync(isWin ? "where" : "which", ["claude"], { encoding: "utf8", shell: false, timeout: 20000 });
+    if (r.status === 0) {
+      const first = String(r.stdout || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0];
+      if (first) return first;
+    }
+  } catch (_) {}
+  return null;
+}
+
+const CLAUDE_BIN = resolveClaude();
+// A .cmd/.bat/.ps1 shim (the npm install shape) can only be launched through a
+// shell, and a shell mangles argv — so those installs keep the shell and get
+// the system prompt through stdin instead.
+const CLAUDE_IS_SHIM = !!CLAUDE_BIN && /\.(cmd|bat|ps1)$/i.test(CLAUDE_BIN);
+const SHELL_FREE = (() => {
+  if (!CLAUDE_BIN || CLAUDE_IS_SHIM) return false;
+  try {
+    const r = spawnSync(CLAUDE_BIN, ["--version"], { shell: false, timeout: 20000 });
+    return !r.error && r.status === 0;
+  } catch (_) {
+    return false;
+  }
+})();
+const CLAUDE_CMD = CLAUDE_BIN || "claude";
 
 const LOG_FILE = path.join(process.cwd(), "server", "chat.log");
 
@@ -46,8 +94,11 @@ const safeModel = (m, fallback) => (typeof m === "string" && SAFE_MODEL_RE.test(
 const safeEffort = (e, fallback) => (SAFE_EFFORTS.has(e) ? e : fallback);
 const safeSession = (s) => (typeof s === "string" && SAFE_SESSION_RE.test(s) ? s : null);
 
-const sessions = {};
-const _sessionQueues = {}; // sessionId -> Promise chain
+// Null-prototype maps: these are keyed by a client-supplied id, so a plain
+// object literal lets `sessionId: "__proto__"` write session state onto
+// Object.prototype (every later lookup then finds a phantom session).
+const sessions = Object.create(null);
+const _sessionQueues = Object.create(null); // sessionId -> Promise chain
 let nextChatNum = 1;
 let totalTokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cost: 0 };
 
@@ -125,7 +176,7 @@ function runClaude(args, stdinContent, isolated = false) {
       args.push("--add-dir", PROJECT_DIR);
     }
     args.push("--add-dir", REPO_DIR);
-    const proc = spawn("claude", args, { shell: true, timeout: 1800000, cwd, env: { ...process.env, MPLBACKEND: "agg" } });
+    const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, env: { ...process.env, MPLBACKEND: "agg" } });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (d) => (stdout += d.toString()));
@@ -147,7 +198,7 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
     args.push("--add-dir", PROJECT_DIR);
   }
   args.push("--add-dir", REPO_DIR);
-  const proc = spawn("claude", args, { shell: true, timeout: 1800000, cwd, env: { ...process.env, MPLBACKEND: "agg" } });
+  const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, env: { ...process.env, MPLBACKEND: "agg" } });
   let buffer = "";
   let stderr = "";
   proc.stdout.on("data", (d) => {
@@ -180,6 +231,20 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
   return proc;
 }
 
+// Attach the system prompt the safest way this install allows: argv only when
+// we control quoting (SHELL_FREE) and the CLI's size ceiling allows it,
+// otherwise demote it into stdin as a [System Instructions] preamble.
+// Demotion lowers the prompt's priority — but a demoted prompt beats one the
+// shell shredded into single words. Returns the stdin content to send.
+function withSystemPrompt(args, system, basePrompt) {
+  if (!system) return basePrompt;
+  if (SHELL_FREE && system.length <= 28000) {
+    args.push("--system-prompt", system);
+    return basePrompt;
+  }
+  return `[System Instructions]:\n${system}\n\n${basePrompt}`;
+}
+
 app.post("/session/init", async (req, res) => {
   const { model, effort, isolated, system } = req.body;
   const cliModel = modelAlias(safeModel(model, "sonnet"));
@@ -198,12 +263,7 @@ app.post("/session/init", async (req, res) => {
   // ~8-12k chars, and demoting it to a [System Instructions] user turn drops
   // its priority. Windows' ~32k command-line limit is the real ceiling.
   const initPrompt = "Session initialized. Ready for questions.";
-  let stdinContent = initPrompt;
-  if (system && system.length <= 28000) {
-    args.push("--system-prompt", system);
-  } else if (system) {
-    stdinContent = `[System Instructions]:\n${system}\n\n${initPrompt}`;
-  }
+  const stdinContent = withSystemPrompt(args, system, initPrompt);
 
   try {
     const raw = await runClaude(args, stdinContent, !!isolated);
@@ -228,8 +288,10 @@ app.post("/session/init", async (req, res) => {
 });
 
 app.post("/session/open", (req, res) => {
-  const { sessionId } = req.body;
-  const session = sessions[sessionId];
+  // Same allowlist the other session routes use — an id has to look like an
+  // id before it is used as a map key.
+  const sessionId = safeSession(req.body?.sessionId);
+  const session = sessionId && sessions[sessionId];
   if (!session) return res.status(404).json({ error: { message: "Session not found" } });
   if (session.open) return res.status(409).json({ error: { message: `Chat #${session.chatNum} is already open in another tab` } });
   session.open = true;
@@ -272,8 +334,7 @@ app.post("/session/transfer", async (req, res) => {
   let initPrompt = summary
     ? `This session was transferred from a previous chat. Here is the context from the previous session:\n\n---\n${summary}\n---\n\nContinue the conversation seamlessly. The user should not notice any disruption.`
     : "Session initialized. Ready for questions.";
-  if (system && system.length <= 28000) newArgs.push("--system-prompt", system);
-  else if (system) initPrompt = `[System Instructions]:\n${system}\n\n${initPrompt}`;
+  initPrompt = withSystemPrompt(newArgs, system, initPrompt);
 
   try {
     const raw = await runClaude(newArgs, initPrompt, newIsolated);
@@ -295,8 +356,9 @@ app.post("/session/transfer", async (req, res) => {
 });
 
 app.post("/session/close", (req, res) => {
-  const { sessionId, keepContext } = req.body;
-  const session = sessions[sessionId];
+  const { keepContext } = req.body || {};
+  const sessionId = safeSession(req.body?.sessionId);
+  const session = sessionId && sessions[sessionId];
   if (!session) return res.json({ ok: true });
   if (keepContext) {
     session.open = false;
@@ -343,9 +405,9 @@ app.post("/chat", async (req, res) => {
     }).join("\n\n");
     const cliModel = modelAlias(safeModel(model, "sonnet"));
     const args = ["-p", "--print", "--output-format", "json", "--model", cliModel, "--effort", safeEffort(effort, "high"), "--no-session-persistence", "--allowedTools", ALLOWED_TOOLS];
-    if (system && system.length <= 28000) args.push("--system-prompt", system);
+    const statelessStdin = withSystemPrompt(args, system, prompt);
     try {
-      const raw = await runClaude(args, prompt);
+      const raw = await runClaude(args, statelessStdin);
       const parsed = JSON.parse(raw);
       const tok = extractTokens(parsed); accumulateTokens(tok);
       log("STATELESS", { model: cliModel, ...tok });
@@ -535,8 +597,11 @@ function startServer(port, attempt) {
   // against browsers; the bind is the real boundary.
   const server = app.listen(port, "127.0.0.1", () => {
     try { fs.writeFileSync(PORT_FILE, String(port)); } catch (_) {}
-    log("SERVER_START", { port, cwd: process.cwd(), tools: ALLOWED_TOOLS });
+    log("SERVER_START", { port, cwd: process.cwd(), claude: CLAUDE_CMD, shellFree: SHELL_FREE, tools: ALLOWED_TOOLS });
     console.log(`[proxy] Claude CLI proxy on http://localhost:${port}`);
+    if (!SHELL_FREE) {
+      console.warn(`[proxy] NOTE: ${CLAUDE_BIN ? `\`${CLAUDE_BIN}\`` : "`claude`"} must be launched through a shell, and a shell mangles multi-line arguments. The system prompt is therefore sent as a [System Instructions] preamble on the first user turn instead of via --system-prompt. It arrives intact, just at lower priority. A native CLI binary (not a .cmd/.bat shim) restores full-fidelity system prompts.`);
+    }
   });
   server.on("error", (err) => {
     if (err.code === "EADDRINUSE" && attempt < MAX_PORT_ATTEMPTS) {

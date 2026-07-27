@@ -82,7 +82,10 @@ export function PracticeProblem({
   const badgeLabel = isOfficial ? "OFFICIAL SOLUTION" : "AI-WORKED SOLUTION";
   const badgeClass = `pp-badge ${isOfficial ? "pp-badge-official" : "pp-badge-ai"}`;
   return (
-    <div className="practice-problem">
+    // chat.css.js styles `.practice-problem.pp-has-official` with the gold
+    // left border that marks a from-source solution; nothing was ever setting
+    // the class, so official and AI-worked cards looked identical.
+    <div className={`practice-problem${isOfficial ? " pp-has-official" : ""}`}>
       <div className="pp-header">
         <span className={badgeClass}>{badgeLabel}</span>
         {source && <span className="pp-source">{source}</span>}

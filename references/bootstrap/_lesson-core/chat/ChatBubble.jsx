@@ -9,6 +9,29 @@ import { b64decodeUtf8 } from "./processResponse.js";
 // must not appear in the rendered chat history. Only strips from the start of
 // the string, so a student who literally types "[OBSERVATION]" mid-message
 // keeps their text intact.
+// Model output reaches innerHTML verbatim for the passthrough blocks (raw
+// <svg>, <img>, <video>, <<DEMO>> SVG, <<SOURCES>> links). That means an
+// inline event handler or a javascript: URL in a model reply executes in the
+// lesson's own origin — an origin whose dev server proxies a CLI that can run
+// git and Bash. Strip the executable surface before it is ever mounted.
+//
+// This is a targeted mitigation, not a sanitizer: the full safe-renderer
+// (allowlist parse instead of innerHTML) is the ROADMAP item. Keep both.
+function stripActiveContent(html) {
+  return html
+    .replace(/<\s*script\b[\s\S]*?<\s*\/\s*script\s*>/gi, "")
+    .replace(/<\s*script\b[^>]*>/gi, "")
+    .replace(/<\s*(iframe|object|embed|foreignObject)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, "")
+    .replace(/<\s*(iframe|object|embed)\b[^>]*>/gi, "")
+    // on*= handlers, quoted or bare
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
+    // javascript:/data:text/html in href/src/xlink:href
+    .replace(/((?:href|src|xlink:href)\s*=\s*)(["'])\s*(?:javascript|vbscript|data:text\/html)[^"']*\2/gi, '$1$2#$2')
+    .replace(/((?:href|src|xlink:href)\s*=\s*)(?:javascript|vbscript):[^\s>]*/gi, "$1#");
+}
+
 function stripObservationPrefix(text) {
   if (typeof text !== 'string') return text;
   return text
@@ -222,7 +245,7 @@ export function ChatBubble({ text, role, onReplyBlock, streaming }) {
     s = s.replace(/\x00ME(\d+)\x00/g, (_, i) => mediaBlocks[parseInt(i)]);
     s = s.replace(/(<\/pre>|<\/h[34]>|<\/ul>|<\/ol>|<\/div>|<\/details>|<\/table>|<hr[^>]*>)<br\/>/g, '$1');
     s = s.replace(/<br\/>(<pre |<h[34] |<ul |<ol |<div class="chat-eq|<div class="chat-demo|<div class="chat-media|<details |<table |<hr )/g, '$1');
-    ref.current.innerHTML = s;
+    ref.current.innerHTML = stripActiveContent(s);
   }, [text, role, streaming]);
 
   useEffect(() => {

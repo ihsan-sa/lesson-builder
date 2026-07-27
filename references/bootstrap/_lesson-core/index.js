@@ -4,6 +4,10 @@
 
 export { Chatbot } from "./chat/Chatbot.jsx";
 export { STYLES } from "./chat/chat.css.js";
+// Context routing seam: a lesson's addSnippet calls routeLessonContext() first
+// so captured lesson content lands in a focused side-thread instead of the
+// main chip bar. Returns false when no thread is focused.
+export { routeLessonContext, hasFocusedThread } from "./chat/contextRouter.js";
 // Canonical tutoring policy (exported for tooling that needs the text, e.g.
 // the Lumen packager appending it to a bridged lessonContext). Lessons do NOT
 // paste it into LESSON_CONTEXT — buildSystemPrompt injects it automatically.

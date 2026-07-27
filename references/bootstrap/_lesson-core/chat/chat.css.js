@@ -377,4 +377,38 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 .thread-send { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--accent); font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .thread-send:hover { background: var(--bg-panel); }
 .thread-ctx-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; }
+.thread-att-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; }
+.thread-loading-row { display: flex; align-items: center; gap: 8px; }
+.thread-stop { width: 24px; height: 24px; border-radius: 5px; border: 1px solid var(--chat-stop-color); background: transparent; color: var(--chat-stop-color); font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; }
+.thread-stop:hover { background: var(--chat-stop-color); color: var(--chat-stop-contrast); }
+.thread-attach { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--accent); font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; line-height: 1; }
+.thread-attach:hover { background: var(--bg-panel); }
+/* A focused thread owns captured lesson context — make that visible, or the
+   student cannot tell where their next Ctrl+Click is going to land. */
+.thread-panel:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--chat-chip-border); }
+
+/* --- Lesson anchor (a thread opened on lesson content, not a chat reply) --- */
+.chat-msg-anchor { align-items: stretch; }
+.chat-anchor-card { border: 1px dashed var(--chat-chip-border); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--bg-eq); padding: 6px 10px; }
+.chat-anchor-label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px; }
+.chat-anchor-body { padding: 0 !important; font-size: 14px; color: var(--text-muted); font-style: italic; max-height: 8.4em; overflow-y: auto; }
+
+/* --- Dead-session recovery bar --- */
+.chat-dead-session { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--chat-stop-color); border-radius: 6px; background: var(--bg-eq); font-size: 12px; font-family: 'IBM Plex Mono', monospace; color: var(--text-dim); }
+.chat-dead-session button { padding: 3px 10px; border-radius: 5px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg-main); font-size: 11px; font-family: 'IBM Plex Mono', monospace; font-weight: 600; cursor: pointer; }
+.chat-dead-session button:hover { opacity: 0.85; }
+
+/* --- Drag-and-drop attachment target --- */
+.chat-panel-dragover { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.chat-panel-dragover::after { content: 'Drop image or PDF to attach'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--ctx-hover-bg); color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 13px; letter-spacing: 0.05em; pointer-events: none; z-index: 20; }
+
+/* --- Shortcut overlay (Ctrl+Shift+/) --- */
+.chat-help-overlay { position: absolute; inset: 0; z-index: 30; background: var(--bg-panel); display: flex; flex-direction: column; overflow-y: auto; padding: 14px 16px; }
+.chat-help-overlay h4 { margin: 0 0 10px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.chat-help-group { margin-bottom: 12px; }
+.chat-help-group-title { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
+.chat-help-row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: var(--text-muted); padding: 2px 0; }
+.chat-help-key { flex-shrink: 0; min-width: 132px; font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
+.chat-help-close { position: absolute; top: 10px; right: 12px; background: none; border: 1px solid var(--border); border-radius: 5px; color: var(--text-dim); font-family: 'IBM Plex Mono', monospace; font-size: 11px; cursor: pointer; padding: 2px 8px; }
+.chat-help-close:hover { color: var(--accent); border-color: var(--accent); }
 `;

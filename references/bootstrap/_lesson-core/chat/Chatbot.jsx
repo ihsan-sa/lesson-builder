@@ -5,9 +5,44 @@ import { _cs, _ss, makeTab } from "./chatState.js";
 import { ChatBubble } from "./ChatBubble.jsx";
 import { ThreadPanel } from "./ThreadPanel.jsx";
 import { buildSystemPrompt } from "./buildSystemPrompt.js";
-import { processResponse as parseChatResponse } from "./processResponse.js";
+import { processResponse as parseChatResponse, stripUnclosedTags } from "./processResponse.js";
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
+
+// Every capture/thread gesture in one place, rendered by the Ctrl+Shift+?
+// overlay. Keep this in sync when a gesture is added — an affordance nobody
+// can find is the same as one that does not exist.
+const HELP_GROUPS = [
+  {
+    title: "Panel",
+    rows: [
+      ["Ctrl + /", "open or close the chat"],
+      ["Ctrl + \\", "expand or shrink the panel"],
+      ["Ctrl + Shift + ?", "this list"],
+      ["Ctrl + Shift + ! @ # $", "reasoning effort: low / medium / high / xhigh"],
+      ["Esc", "close this list"],
+    ],
+  },
+  {
+    title: "Add context",
+    rows: [
+      ["Ctrl + Click", "add a lesson block or a chat reply block to context"],
+      ["drag-select", "add the selected text to context"],
+      ["Ctrl + Shift + G", "add the current selection to context"],
+      ["right-click a selection", "Reply / Ask in a thread / Reply in this thread"],
+      ["drag a file onto the panel", "attach an image or PDF"],
+      ["paste an image", "attach it to the composer or thread you are in"],
+    ],
+  },
+  {
+    title: "Threads",
+    rows: [
+      ["Ctrl + Shift + J", "open a thread on the selection (chat reply or lesson)"],
+      ["Ctrl + Shift + F", "add the selection to the surrounding thread"],
+      ["focus a thread box", "captured context goes to that thread, not the main composer"],
+    ],
+  },
+];
 
 // Main chat orchestrator. Manages tabs, sessions, streaming, attachments,
 // threads, graph edits, suggestions, and keyboard shortcuts.
@@ -41,6 +76,13 @@ export function Chatbot({
   const [chatSize, setChatSize] = useState(null);
   const resizeRef = useRef(null);
   const [attachments, setAttachments] = useState([]);
+  const [dragOver, setDragOver] = useState(false);
+  // Every context/thread gesture below is keyboard- or modifier-driven and has
+  // no on-screen signifier. Ctrl+Shift+? lists them; without it the whole
+  // capture surface is undiscoverable.
+  const [showHelp, setShowHelp] = useState(false);
+  const showHelpRef = useRef(false);
+  useEffect(() => { showHelpRef.current = showHelp; }, [showHelp]);
   const [serverSessions, setServerSessions] = useState([]);
   // commitInFlight: keyed by `${tabId}:${msgIdx}` of the message whose commit
   // chip is currently being processed, so we can disable its button. null
@@ -78,6 +120,17 @@ export function Chatbot({
 
   useEffect(() => {
     const handleKey = (e) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === "?" || e.key === "/")) {
+        e.preventDefault();
+        if (!open) setOpen(true);
+        setShowHelp(h => !h);
+        return;
+      }
+      if (e.key === "Escape" && showHelpRef.current) {
+        e.preventDefault();
+        setShowHelp(false);
+        return;
+      }
       if (e.ctrlKey && e.key === "\\") {
         e.preventDefault();
         if (!open) setOpen(true);
@@ -102,8 +155,13 @@ export function Chatbot({
               }
               const tab = tabsRef.current[activeTabIdxRef.current];
               if (tab) openThread(tab.id, idx, text, bIdx);
-              sel.removeAllRanges();
+            } else {
+              // Selection is in the lesson body, not a chat reply: anchor the
+              // thread to the lesson instead of dropping the gesture.
+              openLessonThread(text, "lesson selection");
+              if (!open) setOpen(true);
             }
+            sel.removeAllRanges();
           }
           return;
         }
@@ -171,26 +229,42 @@ export function Chatbot({
     }
   }, [activeTab?.keepContext, activeTab?.sessionId, activeTab?.chatNum]);
 
+  // Persist EVERY keep-context tab, not just the visible one: a background tab
+  // that finishes streaming while the student is looking elsewhere would
+  // otherwise never be written back, and a reload would restore it from a
+  // stale snapshot. `_streaming` is stripped at both levels — a message
+  // persisted mid-stream would come back permanently marked streaming, which
+  // disables its reply-block wrapping (and therefore click-to-context) forever.
+  const stripStreaming = (m) => {
+    const { _streaming, ...rest } = m;
+    return rest;
+  };
   useEffect(() => {
-    if (!activeTab || !activeTab.keepContext || !activeTab.sessionId || activeTab.messages.length === 0) return;
-    try {
-      const saveable = activeTab.messages.map(m => ({
-        role: m.role, content: m.content,
-        ...(m.suggestion ? { suggestion: m.suggestion } : {}),
-        ...(m.commitSuggest ? { commitSuggest: m.commitSuggest } : {}),
-        ...(m.commitResult ? { commitResult: m.commitResult } : {}),
-        ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false })) } : {}),
-      }));
-      _ss.setItem("chatMsgs_" + activeTab.sessionId, JSON.stringify(saveable));
-    } catch (_) {}
-  }, [activeTab?.messages, activeTab?.keepContext, activeTab?.sessionId]);
+    for (const tab of tabs) {
+      if (!tab.keepContext || !tab.sessionId || tab.messages.length === 0) continue;
+      try {
+        const saveable = tab.messages.map(m => ({
+          role: m.role, content: m.content,
+          ...(m.source ? { source: m.source } : {}),
+          ...(m.context ? { context: m.context } : {}),
+          ...(m.suggestion ? { suggestion: m.suggestion } : {}),
+          ...(m.commitSuggest ? { commitSuggest: m.commitSuggest } : {}),
+          ...(m.commitResult ? { commitResult: m.commitResult } : {}),
+          ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false, messages: (t.messages || []).map(stripStreaming) })) } : {}),
+        }));
+        _ss.setItem("chatMsgs_" + tab.sessionId, JSON.stringify(saveable));
+      } catch (_) {}
+    }
+  }, [tabs]);
 
   useEffect(() => {
-    if (!activeTab || !activeTab.keepContext || !activeTab.sessionId) return;
-    try {
-      _ss.setItem("chatReinf_" + activeTab.sessionId, JSON.stringify(activeTab.reinforced || []));
-    } catch (_) {}
-  }, [activeTab?.reinforced, activeTab?.keepContext, activeTab?.sessionId]);
+    for (const tab of tabs) {
+      if (!tab.keepContext || !tab.sessionId) continue;
+      try {
+        _ss.setItem("chatReinf_" + tab.sessionId, JSON.stringify(tab.reinforced || []));
+      } catch (_) {}
+    }
+  }, [tabs]);
 
   // Ctrl-gate for context-adding clicks. While Ctrl is held, body gains the
   // class `ctx-ctrl-held` -- chat.css.js uses it to reveal hover highlights
@@ -391,14 +465,24 @@ export function Chatbot({
     })();
   }, [activeTab?.sessionStatus]);
 
+  // Activation is by tab ID, resolved after the tabs array commits. Reading
+  // `prev.length` inside the updater and using it as the new index is unsafe:
+  // the updater can run later (or twice) than the surrounding call, so two
+  // quick clicks on "+" could leave the active index pointing at nothing.
+  const pendingActivateRef = useRef(null);
+  useEffect(() => {
+    if (pendingActivateRef.current == null) return;
+    const idx = tabs.findIndex(t => t.id === pendingActivateRef.current);
+    if (idx >= 0) {
+      pendingActivateRef.current = null;
+      setActiveTabIdx(idx);
+    }
+  }, [tabs]);
+
   const addTab = useCallback(() => {
     const newTab = makeTab();
-    let newIdx;
-    setTabs(prev => {
-      newIdx = prev.length;
-      return [...prev, newTab];
-    });
-    setActiveTabIdx(newIdx);
+    pendingActivateRef.current = newTab.id;
+    setTabs(prev => [...prev, newTab]);
     createSessionForTab(newTab.id);
   }, [createSessionForTab]);
 
@@ -433,7 +517,10 @@ export function Chatbot({
     r.readAsDataURL(file);
   });
 
-  const handleFiles = async (files) => {
+  // Single place the 5MB cap and the image/PDF-only rule live. Threads reuse
+  // it through the onReadFiles prop so their rules can never drift from the
+  // main composer's.
+  const readFiles = useCallback(async (files) => {
     const newAtts = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -447,6 +534,11 @@ export function Chatbot({
         newAtts.push({ name: file.name, type: file.type, data: b64, thumb, isImage, isPdf });
       } catch (e) { /* skip */ }
     }
+    return newAtts;
+  }, []);
+
+  const handleFiles = async (files) => {
+    const newAtts = await readFiles(files);
     if (newAtts.length > 0) setAttachments(prev => [...prev, ...newAtts]);
   };
 
@@ -521,11 +613,24 @@ export function Chatbot({
   }, [activeTab, cancelRequest, updateTab]);
 
   const sendMessage = async (overrideText) => {
+    // Defensive: a DOM handler wired as onClick={sendMessage} would hand us a
+    // SyntheticEvent here, which then becomes the message body and the React
+    // child of the user bubble (crashing the render). Only a string is an
+    // override; anything else means "send what is in the composer".
+    if (typeof overrideText !== "string") overrideText = undefined;
     const tab = tabsRef.current[activeTabIdxRef.current];
     if (!tab || !tab.sessionId || tab.sessionStatus !== "ready") return;
     const text = overrideText !== undefined ? overrideText : input.trim();
     const currentAtts = overrideText !== undefined ? [] : [...attachments];
-    if ((!text && currentAtts.length === 0) || tab.loading) return;
+    if (!text && currentAtts.length === 0) return;
+    if (tab.loading) {
+      // A machine-generated send (a suggestion approval) that lands mid-turn
+      // used to be dropped on the floor while its UI had already been
+      // dismissed — the student saw the bar vanish and nothing happen. Park
+      // it; the loading-cleared effect below delivers it.
+      if (overrideText !== undefined) _cs.pendingSend[tab.id] = text;
+      return;
+    }
     const tabId = tab.id;
     if (overrideText === undefined) {
       setInput("");
@@ -537,14 +642,21 @@ export function Chatbot({
       userContent = `${ctxBlock}\n\nQuestion: ${userContent}`;
     }
     const displayMsg = { role: "user", content: text || "(attached file)", context: (overrideText === undefined && contextSnippets.length > 0) ? [...contextSnippets] : null, attachments: currentAtts.length > 0 ? currentAtts : null };
-    const currentTab = tabsRef.current.find(t => t.id === tabId);
-    const newMsgs = [...(currentTab ? currentTab.messages : []), displayMsg];
-    updateTab(tabId, { messages: newMsgs, loading: true });
+    // Functional update, NOT a rebuild from tabsRef: a caller can enqueue a
+    // send in the same tick as another state change (handleSuggestionApprove
+    // dismisses the suggestion bar and then immediately sends the approval).
+    // Rebuilding the array from the pre-update snapshot silently reverted that
+    // sibling change, so the approved suggestion bar stayed on screen.
+    setTabs(prev => prev.map(t => t.id === tabId
+      ? { ...t, messages: [...t.messages, displayMsg], loading: true }
+      : t));
     if (overrideText === undefined) onClearAllSnippets();
 
     const controller = new AbortController();
     _cs.tabAborts[tabId] = controller;
     _cs.tabCancelled[tabId] = false;
+    // Hoisted so the failure paths below can put the drained observations back.
+    let observations = "";
     try {
       let attachmentNote = "";
       if (currentAtts.length > 0) {
@@ -554,9 +666,15 @@ export function Chatbot({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ files: currentAtts.map(a => ({ name: a.name, type: a.type, data: a.data })) }),
           });
-          const uploadData = await uploadRes.json();
+          const uploadData = await uploadRes.json().catch(() => ({}));
           if (uploadData.paths?.length > 0) {
             attachmentNote = "\n\n[Attached files - use Read tool to view them]:\n" + uploadData.paths.map(p => `- ${p}`).join("\n");
+          } else {
+            // The student sees their thumbnail in the transcript either way, so
+            // a silent drop reads as "the tutor is ignoring my screenshot".
+            // Say so in-band instead.
+            const reason = uploadData.error?.message || `upload returned no paths (HTTP ${uploadRes.status})`;
+            attachmentNote = `\n\n[${currentAtts.length} file(s) could NOT be saved for you to read: ${reason}. Tell the student the attachment did not arrive and ask them to retry.]`;
           }
         } catch (uploadErr) {
           attachmentNote = "\n\n[File attachment failed: " + uploadErr.message + "]";
@@ -572,7 +690,7 @@ export function Chatbot({
         isolated: activeTab?.isolated,
         reinforced: activeTab?.reinforced || [],
       });
-      const observations = obsQueue.drain(tab.sessionId);
+      observations = obsQueue.drain(tab.sessionId);
       const tabContext = `${observations}${activeCtx}\n`;
       const messageText = tabContext + userContent + attachmentNote;
       const reqBody = { sessionId: tab.sessionId, message: messageText, model: model, effort: effort };
@@ -588,6 +706,7 @@ export function Chatbot({
           const errData = await res.json();
           if (errData.error?.message) errMsg = errData.error.message;
         } catch (_) {}
+        obsQueue.requeue(tab.sessionId, observations);
         setTabs(prev => prev.map(t => t.id === tabId ? { ...t, messages: [...t.messages, { role: "assistant", content: errMsg }] } : t));
         return;
       }
@@ -636,13 +755,19 @@ export function Chatbot({
                 // completed <<EDIT_GRAPH>> inside the accumulating text is not
                 // re-applied on every subsequent chunk. Side effects dispatch
                 // exactly once, from the completion pass below.
-                updateAssistantMsg(parseChatResponse(finalText).display);
+                updateAssistantMsg(parseChatResponse(stripUnclosedTags(finalText)).display);
               } else if (eventType === "done") {
                 finalText = data.text || finalText;
                 doneReceived = true;
                 updateTab(tabId, { statusText: "" });
               } else if (eventType === "error") {
-                updateAssistantMsg(data.message || "Error");
+                // Route the error through finalText so the completion pass
+                // below finalises the bubble. Painting it with
+                // updateAssistantMsg alone left the message flagged
+                // _streaming forever, which permanently disables its
+                // reply-block wrapping (and so click-to-context on it).
+                finalText = data.message || "Error";
+                doneReceived = true;
                 updateTab(tabId, { statusText: "" });
               }
             } catch (_) {}
@@ -677,6 +802,7 @@ export function Chatbot({
       } else {
         errContent = `Connection error: ${e.message || "unknown"}. Is the proxy server running?`;
       }
+      obsQueue.requeue(tab.sessionId, observations);
       setTabs(prev => prev.map(t => {
         if (t.id !== tabId) return t;
         const msgs = t.messages.map(m => m._streaming ? { role: m.role, content: m.content } : m);
@@ -689,15 +815,33 @@ export function Chatbot({
     }
   };
 
-  const sendMessageWithText = (text) => sendMessage(text);
+  // sendMessage is redefined every render and closes over the CURRENT tab,
+  // topic, graph params, isolation mode and model. triggerSend is a stable
+  // useCallback, so calling sendMessage through it directly froze the very
+  // first render's closure: an approved suggestion was sent with the lesson
+  // tab, isolation mode and model that were live when the panel first mounted,
+  // and its error observations were enqueued against a stale session id.
+  // Route through a ref so the stable callback always reaches the live one.
+  const sendMessageRef = useRef(null);
+  sendMessageRef.current = sendMessage;
 
   const triggerSend = useCallback(() => {
     const tab = tabsRef.current[activeTabIdxRef.current];
     if (!tab || !_cs.pendingSend[tab.id]) return;
+    if (tab.loading) return; // stays parked; the effect below delivers it
     const text = _cs.pendingSend[tab.id];
     delete _cs.pendingSend[tab.id];
-    sendMessageWithText(text);
+    sendMessageRef.current?.(text);
   }, []);
+
+  // Deliver a parked machine send once the in-flight turn finishes.
+  useEffect(() => {
+    if (!activeTab || activeTab.loading) return;
+    const queued = _cs.pendingSend[activeTab.id];
+    if (!queued) return;
+    delete _cs.pendingSend[activeTab.id];
+    sendMessageRef.current?.(queued);
+  }, [activeTab?.loading, activeTab?.id]);
 
   const handleSuggestionApprove = useCallback((msgIdx, placement) => {
     const tab = tabsRef.current[activeTabIdxRef.current];
@@ -720,11 +864,20 @@ export function Chatbot({
   const handleSuggestionDismiss = useCallback((msgIdx) => {
     const tab = tabsRef.current[activeTabIdxRef.current];
     if (!tab) return;
+    const title = tab.messages[msgIdx]?.suggestion?.title;
     setTabs(prev => prev.map(t => {
       if (t.id !== tab.id) return t;
       const msgs = t.messages.map((m, i) => i === msgIdx ? { ...m, suggestion: { ...m.suggestion, dismissed: true } } : m);
       return { ...t, messages: msgs };
     }));
+    // Tell the tutor the suggestion was turned down. Without this the
+    // rejection is invisible to it and the same addition gets proposed again.
+    if (tab.sessionId) {
+      obsQueue.enqueue(tab.sessionId, "suggest-rejected", {
+        title: title || "(untitled)",
+        reason: "The student declined this lesson-augmentation suggestion. Do not re-offer the same addition; if it still matters, address it in the conversation instead.",
+      });
+    }
   }, []);
 
   // Commit flow: POST /commit with the bot-drafted message + paths. The
@@ -807,6 +960,39 @@ export function Chatbot({
     }));
   }, []);
 
+  // Threads anchored to LESSON content rather than to a chat reply.
+  //
+  // Threads hang off a message index, so a selection taken from the lesson has
+  // nothing to attach to. Rather than special-casing the whole thread stack, we
+  // append a lightweight `anchor` message — a quoted card naming where the
+  // snippet came from — and open the thread on it. Every existing mechanism
+  // (portal placement, sending, collapse, delete, persistence) then works
+  // unchanged, and the transcript records what the student was looking at.
+  const openLessonThread = useCallback((snippet, source) => {
+    const clean = String(snippet || "").replace(/\s+/g, " ").trim();
+    if (clean.length < 3) return;
+    const tab = tabsRef.current[activeTabIdxRef.current];
+    if (!tab) return;
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tab.id) return t;
+      // Re-open rather than duplicate when the same snippet is already anchored.
+      const existing = t.messages.findIndex(m => m.role === "anchor" && m.content === clean);
+      if (existing >= 0 && t.messages[existing].threads?.length > 0) {
+        const msgs = t.messages.map((m, i) => i === existing
+          ? { ...m, threads: m.threads.map((th, j) => j === 0 ? { ...th, collapsed: false } : th) }
+          : m);
+        return { ...t, messages: msgs };
+      }
+      const anchor = {
+        role: "anchor",
+        content: clean,
+        source: source || "lesson",
+        threads: [{ id: `t${++_cs.threadCounter}`, snippet: clean, blockIdx: null, messages: [], collapsed: false, loading: false }],
+      };
+      return { ...t, messages: [...t.messages, anchor] };
+    }));
+  }, []);
+
   const updateThread = useCallback((tabId, msgIdx, threadId, updates) => {
     setTabs(prev => prev.map(t => {
       if (t.id !== tabId) return t;
@@ -840,17 +1026,88 @@ export function Chatbot({
     }));
   }, []);
 
-  const sendThreadMessage = async (tabId, msgIdx, threadId, snippet, text, context) => {
+  // ── Thread focus + context routing ─────────────────────────────────
+  // While a thread composer has focus, that thread owns captured context:
+  // Ctrl+Click on a lesson block, a drag-selection, or the right-click "Reply"
+  // item lands in the thread instead of the main chip bar. The lesson opts in
+  // by calling routeLessonContext() (exported from @core) at the top of its own
+  // addSnippet; a lesson that never adopts it keeps the old behaviour exactly.
+  const [threadCtxInternal, setThreadCtxInternal] = useState(null);
+  const focusedThreadRef = useRef(null);
+
+  const setThreadFocus = useCallback((tabId, msgIdx, threadId, focused) => {
+    if (focused) {
+      focusedThreadRef.current = { tabId, msgIdx, threadId };
+      _cs.focusedThread = focusedThreadRef.current;
+    } else if (focusedThreadRef.current && focusedThreadRef.current.threadId === threadId) {
+      focusedThreadRef.current = null;
+      _cs.focusedThread = null;
+    }
+  }, []);
+
+  const releaseThreadFocus = useCallback(() => {
+    focusedThreadRef.current = null;
+    _cs.focusedThread = null;
+  }, []);
+
+  useEffect(() => {
+    _cs.contextSink = (text, source) => {
+      const ft = focusedThreadRef.current;
+      if (!ft) return false;
+      setThreadCtxInternal({ threadId: ft.threadId, text, source: source || "lesson", ts: Date.now() });
+      return true;
+    };
+    return () => { _cs.contextSink = null; _cs.focusedThread = null; };
+  }, []);
+
+  // Newest trigger wins between the lesson's ctx-menu / Ctrl+Shift+F (prop)
+  // and the context sink (internal).
+  const effectiveThreadCtxTrigger =
+    ((threadCtxInternal && threadCtxInternal.ts) || 0) >= ((threadCtxTrigger && threadCtxTrigger.ts) || 0)
+      ? threadCtxInternal
+      : threadCtxTrigger;
+
+  const cancelThread = useCallback((tabId, threadId) => {
+    const key = tabId + ":" + threadId;
+    const ctrl = _cs.threadAborts[key];
+    if (ctrl) { try { ctrl.abort(); } catch (_) {} delete _cs.threadAborts[key]; }
+  }, []);
+
+  const sendThreadMessage = async (tabId, msgIdx, threadId, snippet, text, context, atts) => {
     const tab = tabsRef.current.find(t => t.id === tabId);
     if (!tab || !tab.sessionId) return;
 
-    addThreadMsg(tabId, msgIdx, threadId, { role: "user", content: text });
+    const currentAtts = Array.isArray(atts) ? atts : [];
+    addThreadMsg(tabId, msgIdx, threadId, {
+      role: "user",
+      content: text || "(attached file)",
+      context: context && context.length > 0 ? [...context] : null,
+      attachments: currentAtts.length > 0 ? currentAtts : null,
+    });
     updateThread(tabId, msgIdx, threadId, { loading: true });
 
-    let apiText = text;
+    let apiText = text || "(attached file)";
     if (context && context.length > 0) {
       const ctxBlock = context.map((s, i) => `[Context ${i + 1} -- ${s.source}]: ${s.text}`).join("\n");
       apiText = `${ctxBlock}\n\nQuestion: ${apiText}`;
+    }
+    if (currentAtts.length > 0) {
+      try {
+        const uploadRes = await fetch("/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: currentAtts.map(a => ({ name: a.name, type: a.type, data: a.data })) }),
+        });
+        const uploadData = await uploadRes.json().catch(() => ({}));
+        if (uploadData.paths?.length > 0) {
+          apiText += "\n\n[Attached files - use Read tool to view them]:\n" + uploadData.paths.map(p => `- ${p}`).join("\n");
+        } else {
+          const reason = uploadData.error?.message || `upload returned no paths (HTTP ${uploadRes.status})`;
+          apiText += `\n\n[${currentAtts.length} file(s) could NOT be saved for you to read: ${reason}. Tell the student the attachment did not arrive and ask them to retry.]`;
+        }
+      } catch (uploadErr) {
+        apiText += "\n\n[File attachment failed: " + uploadErr.message + "]";
+      }
     }
     const topicText = topicContext?.[topicId] || "";
     const activeCtx = buildActiveContext({
@@ -860,8 +1117,11 @@ export function Chatbot({
       graphParams,
       graphSchema,
       isolated: tab.isolated,
+      // Threads run in the same session as the main transcript, so the
+      // student's accumulated preferences must govern thread replies too.
+      reinforced: tab.reinforced || [],
     });
-    const observations = obsQueue.drain(tab.sessionId);
+    let observations = obsQueue.drain(tab.sessionId);
     const tagged = `[THREAD:${threadId} | "${snippet.slice(0, 60)}"]\n\n${observations}${activeCtx}\n${apiText}`;
     _cs.activeThread[tabId] = { msgIdx, threadId };
 
@@ -876,6 +1136,7 @@ export function Chatbot({
         body: JSON.stringify({ sessionId: tab.sessionId, message: tagged, model, effort }),
       });
       if (!res.ok) {
+        obsQueue.requeue(tab.sessionId, observations);
         addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: `Error ${res.status}` });
         return;
       }
@@ -923,7 +1184,12 @@ export function Chatbot({
               const data = JSON.parse(line.slice(6));
               if (eventType === "text") {
                 finalText += data.text;
-                const display = finalText.replace(/^\[THREAD:[^\]]+\]\s*/i, "");
+                // Display-only parse (no callbacks): keeps partial tags from
+                // flashing mid-stream. Side effects run once at completion.
+                const display = parseChatResponse(
+                  stripUnclosedTags(finalText.replace(/^\[THREAD:[^\]]+\]\s*/i, "")),
+                  { scope: "thread" },
+                ).display;
                 updateThreadAssistant(display);
               } else if (eventType === "done") {
                 finalText = data.text || finalText;
@@ -934,11 +1200,31 @@ export function Chatbot({
         }
       }
       if (finalText) {
-        const display = finalText.replace(/^\[THREAD:[^\]]+\]\s*/i, "").trim();
+        // Thread scope: display-only tags (<<DEMO>>, <<DESMOS>>, <<SOURCES>>)
+        // render here and <<REINFORCE>> still counts, but the three
+        // state-mutating tags are stripped and reported back as observations —
+        // their approval UI only exists on main-transcript messages.
+        const reply = parseChatResponse(
+          finalText.replace(/^\[THREAD:[^\]]+\]\s*/i, ""),
+          {
+            scope: "thread",
+            onError: (type, details) => {
+              if (tab.sessionId) obsQueue.enqueue(tab.sessionId, type, details);
+            },
+          },
+        );
+        const display = reply.display;
         setTabs(prev => prev.map(t => {
           if (t.id !== tabId) return t;
+          const existingReinf = t.reinforced || [];
+          const mergedReinf = [...existingReinf];
+          for (const r of reply.reinforced || []) {
+            if (!mergedReinf.includes(r)) mergedReinf.push(r);
+          }
+          const cappedReinf = mergedReinf.length > 20 ? mergedReinf.slice(mergedReinf.length - 20) : mergedReinf;
           return {
             ...t,
+            reinforced: cappedReinf,
             messages: t.messages.map((m, i) => {
               if (i !== msgIdx || !m.threads) return m;
               return {
@@ -958,6 +1244,24 @@ export function Chatbot({
       }
     } catch (e) {
       const errMsg = e.name === "AbortError" ? "[Cancelled]" : `Error: ${e.message}`;
+      obsQueue.requeue(tab.sessionId, observations);
+      // Drop the half-streamed placeholder before appending the outcome, or a
+      // cancelled thread keeps a permanently "streaming" bubble.
+      setTabs(prev => prev.map(t => {
+        if (t.id !== tabId) return t;
+        return {
+          ...t,
+          messages: t.messages.map((m, i) => {
+            if (i !== msgIdx || !m.threads) return m;
+            return {
+              ...m,
+              threads: m.threads.map(th => th.id === threadId
+                ? { ...th, messages: th.messages.filter(tm => !tm._streaming) }
+                : th),
+            };
+          }),
+        };
+      }));
       addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: errMsg });
     } finally {
       delete _cs.activeThread[tabId];
@@ -966,8 +1270,14 @@ export function Chatbot({
     }
   };
 
+  // threadTrigger with a msgIdx anchors to that chat reply; without one it
+  // came from the lesson body, so it opens a lesson-anchored thread instead.
   useEffect(() => {
-    if (!threadTrigger || threadTrigger.msgIdx == null) return;
+    if (!threadTrigger || !threadTrigger.text) return;
+    if (threadTrigger.msgIdx == null) {
+      openLessonThread(threadTrigger.text, threadTrigger.source || "lesson");
+      return;
+    }
     const tab = tabsRef.current[activeTabIdxRef.current];
     if (tab) openThread(tab.id, threadTrigger.msgIdx, threadTrigger.text, threadTrigger.blockIdx);
   }, [threadTrigger]);
@@ -983,7 +1293,8 @@ export function Chatbot({
     const currentMsgs = tabsRef.current[activeTabIdxRef.current]?.messages || [];
     const portals = [];
     currentMsgs.forEach((m, i) => {
-      if (m.role !== "assistant" || !m.threads || m.threads.length === 0) return;
+      // Assistant replies AND lesson anchors can carry threads.
+      if (!m.threads || m.threads.length === 0) return;
       const msgEl = document.querySelector(`.chat-msg[data-msg-idx="${i}"]`);
       if (!msgEl) return;
       const bubble = msgEl.querySelector('.chat-msg-rendered');
@@ -1024,7 +1335,18 @@ export function Chatbot({
       {/* PROD gate: the static deploy has no proxy, so the whole panel is
           withheld (not just the toggle button) — otherwise Ctrl+/ in a lesson
           could open a chat that can only ever error. */}
-      {!import.meta.env.PROD && <div className={`chat-panel ${expanded ? "chat-panel-expanded" : ""}`} style={{ ...(chatSize ? { width: chatSize.w, height: chatSize.h } : {}), ...(!open ? { display: "none" } : {}) }}>
+      {!import.meta.env.PROD && <div
+          className={`chat-panel ${expanded ? "chat-panel-expanded" : ""} ${dragOver ? "chat-panel-dragover" : ""}`}
+          style={{ ...(chatSize ? { width: chatSize.w, height: chatSize.h } : {}), ...(!open ? { display: "none" } : {}) }}
+          onDragOver={(e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOver(false); }}
+          onDrop={(e) => {
+            if (!e.dataTransfer?.files?.length) return;
+            e.preventDefault();
+            setDragOver(false);
+            handleFiles(e.dataTransfer.files);
+          }}
+        >
           <div className="chat-resize-l" onMouseDown={e => startResize(e, "l")} />
           <div className="chat-resize-t" onMouseDown={e => startResize(e, "t")} />
           <div className="chat-resize-tl" onMouseDown={e => startResize(e, "tl")} />
@@ -1055,10 +1377,39 @@ export function Chatbot({
               {"KC"}
             </button>
             <button className="chat-kill-btn" onClick={killSession} title="Kill session and stop all processes">KILL</button>
+            <button className="chat-expand-btn" onClick={() => setShowHelp(h => !h)} title="Shortcuts and gestures (Ctrl+Shift+?)">
+              {"?"}
+            </button>
             <button className="chat-expand-btn" onClick={toggleExpand} title={expanded ? "Shrink" : "Expand"}>
               {expanded ? "\u2296" : "\u2295"}
             </button>
           </div>
+          {showHelp && (
+            <div className="chat-help-overlay">
+              <button className="chat-help-close" onClick={() => setShowHelp(false)}>close</button>
+              <h4>Shortcuts and gestures</h4>
+              {HELP_GROUPS.map(g => (
+                <div className="chat-help-group" key={g.title}>
+                  <div className="chat-help-group-title">{g.title}</div>
+                  {g.rows.map(([k, d]) => (
+                    <div className="chat-help-row" key={k}>
+                      <span className="chat-help-key">{k}</span>
+                      <span>{d}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div className="chat-help-group">
+                <div className="chat-help-group-title">Models</div>
+                {MODELS.map(m => (
+                  <div className="chat-help-row" key={m.model}>
+                    <span className="chat-help-key">{`Ctrl+Shift+${String(m.key || "").toUpperCase()}`}</span>
+                    <span>{m.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="chat-messages" ref={scrollRef}>
             {messages.length === 0 && sessionStatus === "picking" && (
               <div className="chat-empty">
@@ -1083,7 +1434,18 @@ export function Chatbot({
                 {sessionStatus === "idle" && "Starting session..."}
               </div>
             )}
-            {messages.map((m, i) => (
+            {messages.map((m, i) => m.role === "anchor" ? (
+              // Lesson anchor: the quoted lesson snippet a thread hangs off.
+              // Not a turn in the conversation — nothing is sent for it — it
+              // just records what the student was looking at and gives the
+              // thread portal something to attach to.
+              <div key={i} className="chat-msg chat-msg-anchor" data-msg-idx={i}>
+                <div className="chat-anchor-card">
+                  <span className="chat-anchor-label">{`from the lesson — ${m.source || "lesson"}`}</span>
+                  <div className="chat-msg-rendered chat-anchor-body">{m.content}</div>
+                </div>
+              </div>
+            ) : (
               <div key={i} className={`chat-msg chat-msg-${m.role}`} data-msg-idx={i}>
                 {m.role === "user" && m.context && (
                   <div className="chat-msg-ctx-list">
@@ -1137,6 +1499,16 @@ export function Chatbot({
                 )}
               </div>
             ))}
+            {/* KILL (and a failed init) leave the tab with no session but a
+                full transcript. The empty-state picker only renders at zero
+                messages, so without this the tab is permanently dead: the
+                composer accepts text and sendMessage returns silently. */}
+            {!sessionId && messages.length > 0 && (sessionStatus === "idle" || sessionStatus === "error") && (
+              <div className="chat-dead-session">
+                <span>No active session. Starting a new one clears this transcript.</span>
+                <button onClick={() => { if (activeTab) createSessionForTab(activeTab.id); }}>New session</button>
+              </div>
+            )}
             {loading && (
               <div className="chat-msg chat-msg-assistant">
                 <div className="chat-msg-bubble chat-loading"><span /><span /><span /></div>
@@ -1155,9 +1527,12 @@ export function Chatbot({
                 key={threadId}
                 thread={thread}
                 onToggleCollapse={() => updateThread(activeTab.id, msgIdx, threadId, { collapsed: !thread.collapsed })}
-                onSend={(text, ctx) => sendThreadMessage(activeTab.id, msgIdx, threadId, thread.snippet, text, ctx)}
+                onSend={(text, ctx, atts) => sendThreadMessage(activeTab.id, msgIdx, threadId, thread.snippet, text, ctx, atts)}
+                onCancel={() => cancelThread(activeTab.id, threadId)}
                 onDelete={() => deleteThread(activeTab.id, msgIdx, threadId)}
-                contextTrigger={threadCtxTrigger}
+                onFocusChange={(focused) => setThreadFocus(activeTab.id, msgIdx, threadId, focused)}
+                onReadFiles={readFiles}
+                contextTrigger={effectiveThreadCtxTrigger}
               />,
               el
             );
@@ -1183,13 +1558,18 @@ export function Chatbot({
             </div>
           )}
           <div className="chat-input-row">
-            <input type="file" ref={fileRef} style={{ display: "none" }} accept="image/*,.pdf" multiple onChange={e => { if (e.target.files) handleFiles(e.target.files); e.target.value = ""; }} />
+            {/* Snapshot the FileList BEFORE resetting value: the reset empties
+                the live list, and handleFiles is async, so only the first file
+                survived a multi-file pick. */}
+            <input type="file" ref={fileRef} style={{ display: "none" }} accept="image/*,.pdf" multiple
+              onChange={e => { const picked = Array.from(e.target.files || []); e.target.value = ""; if (picked.length) handleFiles(picked); }} />
             <button className="chat-attach-btn" onClick={() => fileRef.current.click()} title="Attach image or PDF">+</button>
             <textarea ref={inputRef} className="chat-input" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
+              onFocus={releaseThreadFocus}
               placeholder={attachments.length > 0 ? "Describe what you attached..." : contextSnippets.length > 0 ? "Ask about the attached context..." : "Ask about this topic..."} rows={1} />
             {loading
               ? <button className="chat-stop" onClick={cancelRequest} title="Stop generating">{"\u25A0"}</button>
-              : <button className="chat-send" onClick={sendMessage} disabled={!input.trim() && attachments.length === 0}>{"\u2192"}</button>
+              : <button className="chat-send" onClick={() => sendMessage()} disabled={!input.trim() && attachments.length === 0}>{"\u2192"}</button>
             }
           </div>
         </div>

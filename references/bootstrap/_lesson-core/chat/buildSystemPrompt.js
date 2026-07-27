@@ -124,7 +124,8 @@ SOURCES: when citing research, collect at the end:
 - Source name (URL if available)
 <<END_SOURCES>>
 
-THREADS: messages prefixed with [THREAD:id | "snippet"] are side-threads. Prefix replies with [THREAD:id] and scope to the snippet. Thread replies are prose + math ONLY -- never emit control tags (<<EDIT_GRAPH>>, <<DEMO>>, <<DESMOS>>, <<SUGGEST>>, <<COMMIT_SUGGEST>>, <<SOURCES>>, <<REINFORCE>>) inside a thread; the client does not process them there. If a thread surfaces something tag-worthy, say so and emit the tag from your next MAIN-conversation reply.
+THREADS: messages prefixed with [THREAD:id | "snippet"] are side-threads -- a narrow question hanging off one block of a reply, or off a block of the lesson itself (those arrive with an anchor snippet quoted from the lesson). Prefix replies with [THREAD:id] and scope tightly to the snippet; a thread is one loose end, not a second conversation. Threads share this session, so everything you know still applies.
+In a thread you MAY emit the display-only tags -- <<DEMO>>, <<DESMOS>>, <<SOURCES>> -- and <<REINFORCE>>; the client renders them inline in the thread. You may NOT emit <<EDIT_GRAPH>>, <<SUGGEST>>, or <<COMMIT_SUGGEST>> there: their approval UI (graph dispatch, the suggestion bar, the commit chip) exists only on main-transcript messages, so the client strips them and returns a thread-tag-deferred observation. If a thread surfaces something one of those three should do, say so in the thread and emit the tag from your next MAIN-conversation reply.
 
 ACTIVE CONTEXT: every user message carries an [ACTIVE CONTEXT]...[/ACTIVE CONTEXT] block with current tab topic, live graph state, and schema ranges. Source of truth; trust it over memory.
 

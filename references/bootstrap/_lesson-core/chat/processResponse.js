@@ -14,6 +14,12 @@
 // Errors surface through onError(type, details) so the client can enqueue
 // observations and feed them back to the model on the next turn.
 // Returns { display, suggestion, commitSuggest, reinforced }.
+//
+// SCOPE: pass scope:"thread" for side-thread replies. Display-only tags
+// (<<DEMO>>, <<DESMOS>>, <<SOURCES>>) and <<REINFORCE>> work there; the three
+// state-mutating tags are stripped and reported as 'thread-tag-deferred'
+// observations, because their approval UI (suggestion bar, commit chip, graph
+// dispatch) only exists on main-transcript messages.
 import { validateEdit } from "./graphSchema.js";
 
 // Recursively strip isPlaying:true so the bot can't autoplay sliders that
@@ -108,6 +114,36 @@ export function b64encodeUtf8(s) {
   return btoa(bin);
 }
 
+// Streaming display helper. A tag that has opened but not yet closed is still
+// raw text, so a naive display parse paints `<<EDIT_GRAPH>>{"beatPattern":{`
+// into the student's bubble for every frame until the closer arrives. Cut the
+// text at the first unclosed opener (and at any trailing `<<` fragment) so a
+// half-arrived tag is simply not shown yet.
+const TAG_PAIRS = [
+  ["<<EDIT_GRAPH>>", "<<END_EDIT>>"],
+  ["<<DEMO", "<<END_DEMO>>"],
+  ["<<SOURCES>>", "<<END_SOURCES>>"],
+  ["<<SUGGEST", "<<END_SUGGEST>>"],
+  ["<<COMMIT_SUGGEST>>", "<<END_COMMIT_SUGGEST>>"],
+  ["<<DESMOS>>", "<<END_DESMOS>>"],
+  ["<<REINFORCE>>", "<<END_REINFORCE>>"],
+];
+
+export function stripUnclosedTags(text) {
+  if (typeof text !== "string" || text.indexOf("<<") === -1) return text;
+  let cut = text.length;
+  for (const [open, close] of TAG_PAIRS) {
+    const i = text.lastIndexOf(open);
+    if (i === -1 || i >= cut) continue;
+    if (text.indexOf(close, i) === -1) cut = i;
+  }
+  let out = text.slice(0, cut);
+  // A bare `<<` or `<<END_` fragment at the tail is also still in flight.
+  const frag = out.lastIndexOf("<<");
+  if (frag !== -1 && out.indexOf(">>", frag) === -1) out = out.slice(0, frag);
+  return out;
+}
+
 export function b64decodeUtf8(s) {
   const bin = atob(s);
   const bytes = new Uint8Array(bin.length);
@@ -115,12 +151,46 @@ export function b64decodeUtf8(s) {
   return new TextDecoder().decode(bytes);
 }
 
-export function processResponse(text, { onEditGraph, graphSchema, onError } = {}) {
-  const editRe = /<<EDIT_GRAPH>>([\s\S]*?)<<END_EDIT>>/g;
+// Tags whose effect is a piece of application state outside the message that
+// carries them (graph params, the lesson file, the git index). Their approval
+// UI lives on main-transcript messages only, so a side-thread strips them and
+// tells the model to re-emit from the main conversation instead of silently
+// swallowing an edit the student never sees.
+const MAIN_ONLY_TAGS = [
+  { name: "EDIT_GRAPH", re: /<<EDIT_GRAPH>>[\s\S]*?<<END_EDIT>>/g },
+  { name: "SUGGEST", re: /<<SUGGEST\s+[^>]*>>[\s\S]*?<<END_SUGGEST>>/g },
+  { name: "COMMIT_SUGGEST", re: /<<COMMIT_SUGGEST>>[\s\S]*?<<END_COMMIT_SUGGEST>>/g },
+];
+
+/**
+ * @param {string} text
+ * @param {object}  opts
+ * @param {string}  opts.scope  "main" (default) or "thread". Thread scope
+ *   renders display-only tags (<<DEMO>>, <<DESMOS>>, <<SOURCES>>) and still
+ *   collects <<REINFORCE>>, but defers the state-mutating tags above.
+ */
+export function processResponse(text, { onEditGraph, graphSchema, onError, scope = "main" } = {}) {
+  const isThread = scope === "thread";
   let display = text;
   let match;
   let appliedEdit = false;
-  while ((match = editRe.exec(text)) !== null) {
+
+  if (isThread) {
+    for (const tag of MAIN_ONLY_TAGS) {
+      tag.re.lastIndex = 0;
+      let found = false;
+      display = display.replace(tag.re, () => { found = true; return ""; });
+      if (found) {
+        onError?.("thread-tag-deferred", {
+          tag: tag.name,
+          reason: `<<${tag.name}>> is not processed inside a side-thread — its approval UI only exists on main-transcript messages. The block was dropped. Re-emit it from your next MAIN conversation reply.`,
+        });
+      }
+    }
+  }
+
+  const editRe = /<<EDIT_GRAPH>>([\s\S]*?)<<END_EDIT>>/g;
+  while (!isThread && (match = editRe.exec(text)) !== null) {
     const raw = match[1].trim();
     let edits;
     try {
@@ -176,7 +246,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError } = {}
   });
   let suggestion = null;
   const suggestRe = /<<SUGGEST\s+([^>]*)>>([\s\S]*?)<<END_SUGGEST>>/;
-  const suggestMatch = display.match(suggestRe);
+  const suggestMatch = isThread ? null : display.match(suggestRe);
   if (suggestMatch) {
     const attrsStr = suggestMatch[1];
     const content = suggestMatch[2].trim();
@@ -201,7 +271,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError } = {}
   // from display so the user never sees raw tags.
   let commitSuggest = null;
   const commitRe = /<<COMMIT_SUGGEST>>([\s\S]*?)<<END_COMMIT_SUGGEST>>/;
-  const commitMatch = display.match(commitRe);
+  const commitMatch = isThread ? null : display.match(commitRe);
   if (commitMatch) {
     const rawJson = commitMatch[1].trim();
     try {

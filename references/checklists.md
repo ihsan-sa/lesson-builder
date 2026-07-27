@@ -1,6 +1,6 @@
 # Lesson Builder Checklists
 
-Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Chat reinforcement awareness · Ctrl+Click gate · Chatbot props · Automated checks T1-T3 · 17-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
+Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 17-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
 
 ## Purpose
 
@@ -50,7 +50,11 @@ Every lesson imports chat + UI from `@core`. Lessons inlining old chat code (loc
 - [ ] Imports `Chatbot` and UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`) from `@core` rather than inlining them.
 - [ ] Uses the current `@core` export surface where the content calls for it: `PracticeProblem` (attributed practice problems), `FormulaSheetBox` / `SummaryBox` (exam formula-sheet and course-summary callouts), `DesmosGraph` + `useDesmos` (Desmos embeds), and `DEFAULT_MODEL` / `DEFAULT_EFFORT` (chat model defaults). No local reimplementations of any of these.
 - [ ] Chat panel is PROD-gated: `<Chatbot>` UI renders only in dev (`import.meta.env.PROD` gates it out of static builds, which have no proxy). Do not "fix" its absence from a production build, and do not remove the gate.
-- [ ] Context-capture + thread wiring is present at the LessonApp level (per the template skeleton): root-div `onMouseDown`/`onClick`/`onMouseUp`/`onContextMenu` handlers, the `ctxMenu` selection menu (Reply / Reply in thread / Reply in this thread), the Ctrl+Shift+F thread-context shortcut, the `?tab=` deep-link effect, and — critically — `threadTrigger`/`threadCtxTrigger` actually SET by the ctx-menu handlers. Trigger state that is passed to `<Chatbot>` but never set anywhere means the thread feature silently does nothing.
+- [ ] Context-capture + thread wiring is present at the LessonApp level (per the template skeleton): root-div `onMouseDown`/`onClick`/`onMouseUp`/`onContextMenu` handlers, the `ctxMenu` selection menu (Reply / Reply in thread / **Ask in a thread** / Reply in this thread), the Ctrl+Shift+F thread-context shortcut, the `?tab=` deep-link effect, and — critically — `threadTrigger`/`threadCtxTrigger` actually SET by the ctx-menu handlers. Trigger state that is passed to `<Chatbot>` but never set anywhere means the thread feature silently does nothing.
+- [ ] `addSnippet` calls `routeLessonContext(clean, source)` (imported from `@core`) and returns early when it returns true. Without it, a student replying in a side-thread has every Ctrl+Click land in the main composer instead of the thread they are typing in.
+- [ ] `handleCtxAskInThread` exists and the ctx menu renders "Ask in a thread" for lesson selections (`chatMsgIdx == null && !threadId`). It sets `threadTrigger` with `msgIdx: null`, which is what tells `@core` to open a lesson-anchored thread.
+- [ ] The `handleContentClick` selector list matches the capture-phase gate in `@core/chat/Chatbot.jsx` and the hover rules in `@core/chat/chat.css.js`: `.eq-block, .key-concept, .formula-sheet-box, .summary-box, .practice-problem, .compare-card, .para, .info-list li, .section-title`. A class present in the CSS but absent from the handler renders a pointer cursor and a hover outline over an element that does nothing when clicked.
+- [ ] Every graph call site is wrapped in `<LiveGraph graphKey="<DEFAULT_GRAPH_PARAMS key>" renderId={renderId}>`, in content tabs AND in the graph-preview tab, and the topic's `content` signature is `(gp, renderId)`. Those two data attributes are the selector the post-`<<EDIT_GRAPH>>` visual-verification observation screenshots; without them the whole visual feedback loop silently no-ops.
 - [ ] No inlined chat code in the lesson file. The lesson JSX should not define `ChatBubble`, `ThreadPanel`, `processResponse`, `buildSystemPrompt`, or `chatState` locally.
 - [ ] Uses `useKatex()` hook from `@core` for KaTeX loading. No manual CDN `<link>` tag injection.
 - [ ] `THEMES_G` imported from `@core/constants` (or defined inline for lessons that predate the constants module).
@@ -173,6 +177,39 @@ Clicking a lesson content block or chat reply block to add it to chat context no
 - Text-selection-then-mouseup adding a selection to context is unchanged (different gesture).
 
 **Call this out in the lesson's `CLAUDE.md`** when a human tester is likely to QA the lesson. Without the note they will wonder why plain clicks stopped adding context to chat.
+
+---
+
+## Every way to add context (the complete surface)
+
+All of these ship in `@core` and are listed in the in-app overlay (**Ctrl+Shift+?**, or the `?` button in the chat header). If a lesson is missing one, it is a template-compliance failure, not a feature request.
+
+| Gesture | Lands in | Wired by |
+| --- | --- | --- |
+| Ctrl+Click a lesson block | main composer, or the focused thread | lesson `handleContentClick` -> `addSnippet` -> `routeLessonContext` |
+| Ctrl+Click a chat reply block | same | `ChatBubble.handleBlockClick` -> `addSnippet` |
+| Ctrl+Click a graph | same, as `Graph: <title> \| key: <k> \| params: {...}` | lesson `handleContentClick` SVG branch (needs `LiveGraph`) |
+| Drag-select text | same | lesson `handleContentMouseUp` |
+| Ctrl+Shift+G | same | `@core` global key handler |
+| Right-click -> Reply | same | lesson `handleCtxReply` |
+| Right-click -> Reply in thread | a thread on that chat reply | lesson `handleCtxOpenThread` |
+| Right-click -> Ask in a thread | a NEW lesson-anchored thread | lesson `handleCtxAskInThread` (`msgIdx: null`) |
+| Right-click -> Reply in this thread | the surrounding thread | lesson `handleCtxReplyInThread` |
+| Ctrl+Shift+J | a thread on the selection, chat OR lesson | `@core` global key handler |
+| Ctrl+Shift+F | the surrounding thread | lesson key handler |
+| `+` button / paste / drag-drop a file | composer attachments (main or thread) | `@core` `readFiles` |
+
+Routing rule: while a thread composer has focus, that thread owns captured context. `@core` installs a sink, the lesson consults it through `routeLessonContext`, and focus returning to the main composer hands routing back.
+
+---
+
+## Thread capabilities (what a side-thread can and cannot do)
+
+Threads share the main session, so the tutor keeps full context. What differs is which protocol tags are honoured:
+
+- **Allowed in a thread**: `<<DEMO>>`, `<<DESMOS>>`, `<<SOURCES>>`, `<<REINFORCE>>`. Rendered inline; reinforcement merges into the tab's `[REINFORCED BEHAVIORS]` and reaches subsequent main-transcript turns.
+- **Deferred**: `<<EDIT_GRAPH>>`, `<<SUGGEST>>`, `<<COMMIT_SUGGEST>>`. Their approval UI (graph dispatch, suggestion bar, commit chip) only exists on main-transcript messages, so `processResponse(text, { scope: "thread" })` strips them and queues a `thread-tag-deferred` observation telling the tutor to re-emit from the main conversation. The system prompt states this rule — do not "fix" one side without the other.
+- Threads also support their own attachments, their own context chips, and cancelling an in-flight reply.
 
 ---
 

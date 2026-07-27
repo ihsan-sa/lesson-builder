@@ -38,6 +38,22 @@ export function drain(sessionId) {
 }
 
 /**
+ * Put a previously drained blob back at the FRONT of the queue.
+ * drain() empties the queue before the request goes out, so a turn that then
+ * fails (non-2xx, network error, user cancel) would otherwise discard the
+ * edit-rejection / demo-lint / desmos-lint feedback forever and the model
+ * would never learn why its tag was refused. Callers requeue on every failure
+ * path so the observation rides the next successful turn instead.
+ */
+export function requeue(sessionId, blob) {
+  if (!sessionId || !blob) return;
+  const trimmed = String(blob).replace(/\s+$/, "");
+  if (!trimmed) return;
+  const s = _ensure(sessionId);
+  s.preambles.unshift(trimmed);
+}
+
+/**
  * Feed the stuck detector. target identifies the thing being worked on
  * (e.g. 'graph:infiniteWellWavefunctions.nMax').
  * outcome: 'success' | 'failure'. Success clears the counter.

@@ -31,6 +31,10 @@ npm test          # runs: node test_lesson.cjs src/__SLUG_SNAKE__.jsx
 ## Author/tester notes
 - **Ctrl+Click context gate**: adding a lesson block or chat reply block to the chat context requires holding **Ctrl** while clicking. Plain clicks are intentionally inert (a capture-phase listener stops them) — this is a feature, not a bug.
 - **Selection gestures** (chat open): drag-select text → auto-added to chat context ("+ added" flash). Right-click a selection → context menu: *Reply* (add to context), *Reply in thread* (selection inside a chat reply opens a side thread), *Reply in this thread* (selection inside an open thread panel). **Ctrl+Shift+F** adds a selection to the surrounding thread's context. `?tab=<topic-id>` in the URL deep-links a tab.
+- **Ask in a thread**: right-clicking a selection in the *lesson body* offers a lesson-anchored side thread. **Ctrl+Shift+J** does the same from either side (chat reply or lesson).
+- **Press Ctrl+Shift+?** (or the `?` button in the chat header) for the full list of shortcuts and gestures. Most of the context surface is modifier-driven and has no other on-screen signifier.
+- **A focused thread owns context capture**: while you are typing in a side thread, Ctrl+Click and right-click→*Reply* land in that thread rather than the main composer. Click the main input to hand routing back.
+- Threads have their own attachments (`+`, paste, drag-drop) and can be stopped mid-reply. The tutor may draw a graph or cite sources inside a thread; graph edits, lesson-augmentation suggestions and commit offers only appear on main-transcript messages.
 - The chat panel only renders in dev (`import.meta.env.PROD` gates it out of static builds, which have no proxy).
 - Model/effort pickers sit in the chat header; keyboard shortcut chars are defined in `_lesson-core/constants/models.js`.
 

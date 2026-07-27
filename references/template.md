@@ -19,9 +19,13 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Chatbot,
   Eq, M, P, Section, KeyConcept, CollapsibleBlock, RefImg,
-  THEMES_G, useKatex, STYLES,
+  THEMES_G, useKatex, STYLES, routeLessonContext,
 } from "@core";
 // Optional @core imports — add to the import block above only when used:
+//   LiveGraph                    REQUIRED wrapper around every graph call
+//                                site; emits the data-graph-key /
+//                                data-graph-render-id attributes the chatbot's
+//                                visual-verification step screenshots
 //   PracticeProblem              practice-problem cards (canonical pattern
 //                                documented below, before TOPICS)
 //   FormulaSheetBox, SummaryBox  callout boxes for formula-sheet / course-
@@ -156,6 +160,21 @@ export const GRAPH_SCHEMA = {
 //
 // See references/phase-3-execution.md for SVG construction tactics
 // (viewBox sizing, arrow markers, path generation, label placement).
+//
+// RENDERING A GRAPH IN A TOPIC: wrap every graph call site in `LiveGraph`
+// (from @core), passing the DEFAULT_GRAPH_PARAMS key and the renderId:
+//
+//     <LiveGraph graphKey="myGraph" renderId={renderId}>
+//       <MyGraph params={gp.myGraph} />
+//     </LiveGraph>
+//
+// LiveGraph is a bare, unstyled wrapper whose only job is to emit
+// `data-graph-key` and `data-graph-render-id`. After an <<EDIT_GRAPH>> applies,
+// the chatbot queues a visual-verification observation telling itself to
+// screenshot `[data-graph-key="..."][data-graph-render-id="..."]` — without the
+// wrapper that selector matches nothing and the whole visual feedback loop
+// silently no-ops. It is also what lets Ctrl+Click on a graph capture the
+// graph's key and live parameters instead of a few stray axis labels.
 
 // TODO: add graph components. Example pattern:
 //
@@ -226,7 +245,11 @@ export const GRAPH_SCHEMA = {
 //
 // <PracticeProblem
 //   source="Final 2024 — Q3"     // provenance tag from Phase 1
-//   difficulty="medium"          // optional: easy | medium | hard
+//   difficulty="core"            // optional: intro | core | stretch — the
+//                                // same three tokens Phase 1 emits and the
+//                                // only ones @core styles (pp-diff-intro /
+//                                // -core / -stretch). Any other value renders
+//                                // an unstyled badge.
 //   provenance="official"        // "official" (Phase 1 solution_provenance
 //                                // "from-source") renders the OFFICIAL
 //                                // SOLUTION badge; any other value (use
@@ -272,7 +295,7 @@ const TOPICS = [
   //   tab: "Topic 1",
   //   title: "Full Title of Topic 1",
   //   subtitle: "Short mono-spaced descriptor",
-  //   content: (gp) => (
+  //   content: (gp, renderId) => (
   //     <Section title="Section Heading">
   //       <P>
   //         Body text with inline math <M>{"E = hf"}</M> and a block
@@ -283,7 +306,9 @@ const TOPICS = [
   //         Energy is quantized. Remember: use \\lt and \\gt inside KaTeX,
   //         never bare &lt; or &gt;.
   //       </KeyConcept>
-  //       <MyGraph params={gp.myGraph} />
+  //       <LiveGraph graphKey="myGraph" renderId={renderId}>
+  //         <MyGraph params={gp.myGraph} />
+  //       </LiveGraph>
   //     </Section>
   //   ),
   // },
@@ -295,7 +320,7 @@ const TOPICS = [
     tab: "Graph Preview",
     title: "Graph Preview",
     subtitle: "All lesson graphs in one place",
-    content: (gp) => (
+    content: (gp, renderId) => (
       <Section title="All Graphs">
         <P>
           Every graph in this lesson rendered with the current parameters.
@@ -304,7 +329,10 @@ const TOPICS = [
         </P>
         {/* TODO: render each graph component once, passing the matching
             gp.<key> slice. Use mid="-preview" so marker ids do not clash
-            with the same graph rendered inside a content tab. */}
+            with the same graph rendered inside a content tab, and wrap each
+            in <LiveGraph graphKey="<key>" renderId={renderId}> exactly as the
+            content tabs do — this tab is the one the visual-verify flow
+            screenshots. */}
       </Section>
     ),
   },
@@ -386,9 +414,15 @@ function LessonApp() {
   );
   const handleClearAllSnippets = useCallback(() => setContextSnippets([]), []);
 
+  // Captured context goes to a focused side-thread when there is one, and to
+  // the main chip bar otherwise. routeLessonContext returns false when no
+  // thread composer has focus, so this is the same behaviour as before in the
+  // common case — but it means a student replying in a thread can Ctrl+Click
+  // lesson content straight into that thread.
   const addSnippet = useCallback((text, source) => {
     const clean = text.replace(/\s+/g, " ").trim();
     if (!clean || clean.length < 3) return;
+    if (routeLessonContext(clean, source)) return;
     setContextSnippets((prev) =>
       prev.some((s) => s.text === clean) ? prev : [...prev, { text: clean, source }],
     );
@@ -417,25 +451,47 @@ function LessonApp() {
     }
     const sel = window.getSelection();
     if (sel && sel.toString().trim().length > 0) sel.removeAllRanges();
-    const el = e.target.closest(".eq-block, .key-concept, .compare-card, .para, .info-list li, .section-title");
+    // This selector list MUST match the capture-phase gate in
+    // @core/chat/Chatbot.jsx and the hover-highlight rules in chat.css.js. A
+    // class in one list but not the others gets the pointer cursor and the
+    // hover outline but silently does nothing when clicked.
+    const el = e.target.closest(".eq-block, .key-concept, .formula-sheet-box, .summary-box, .practice-problem, .compare-card, .para, .info-list li, .section-title");
     if (!el) return;
     let source = "element";
     if (el.classList.contains("eq-block")) source = "equation";
     else if (el.classList.contains("key-concept")) source = "concept";
+    else if (el.classList.contains("formula-sheet-box")) source = "formula sheet";
+    else if (el.classList.contains("summary-box")) source = "course summary";
+    else if (el.classList.contains("practice-problem")) source = "practice problem";
     else if (el.classList.contains("compare-card")) source = "comparison";
     else if (el.classList.contains("para")) source = "paragraph";
     else if (el.tagName === "LI") source = "list item";
     else if (el.classList.contains("section-title")) source = "section";
     // Prefer the raw LaTeX over rendered text; strip KaTeX's hidden MathML
-    // duplicate so the snippet isn't doubled.
+    // duplicate so the snippet isn't doubled. For a graph, the rendered text
+    // is a handful of axis labels, so send the <title> (the accessible
+    // description) and the live parameters instead.
     const _cl = el.cloneNode(true); _cl.querySelectorAll(".katex-mathml").forEach(m => m.remove());
-    addSnippet(el.dataset.latex || _cl.textContent, source);
+    let captured = el.dataset.latex || _cl.textContent;
+    const svg = el.querySelector("svg");
+    if (svg) {
+      const gk = el.closest("[data-graph-key]")?.dataset.graphKey;
+      const title = svg.querySelector("title")?.textContent?.trim();
+      const parts = [];
+      if (title) parts.push(`Graph: ${title}`);
+      if (gk) {
+        parts.push(`key: ${gk}`);
+        try { parts.push(`params: ${JSON.stringify(graphParams[gk])}`); } catch (_) {}
+      }
+      if (parts.length) { source = "graph"; captured = parts.join(" | "); }
+    }
+    addSnippet(captured, source);
     setTimeout(() => document.querySelector(".chat-input")?.focus(), 0);
     el.classList.remove("ctx-flash");
     void el.offsetWidth;
     el.classList.add("ctx-flash");
     setTimeout(() => el.classList.remove("ctx-flash"), 600);
-  }, [chatOpen, addSnippet]);
+  }, [chatOpen, addSnippet, graphParams]);
 
   // Drag-select text anywhere in the lesson → add the selection to context.
   const handleContentMouseUp = useCallback((e) => {
@@ -518,6 +574,16 @@ function LessonApp() {
   const handleCtxOpenThread = useCallback(() => {
     if (!ctxMenu || ctxMenu.chatMsgIdx == null) return;
     setThreadTrigger({ text: ctxMenu.text, msgIdx: ctxMenu.chatMsgIdx, blockIdx: ctxMenu.chatBlockIdx, ts: Date.now() });
+    setCtxMenu(null);
+    window.getSelection()?.removeAllRanges();
+  }, [ctxMenu]);
+
+  // Lesson selection (no chat message behind it): open a thread anchored to
+  // the lesson. @core records a quoted anchor card in the transcript and hangs
+  // the thread off it, so the whole thread machinery works unchanged.
+  const handleCtxAskInThread = useCallback(() => {
+    if (!ctxMenu) return;
+    setThreadTrigger({ text: ctxMenu.text, msgIdx: null, source: "lesson selection", ts: Date.now() });
     setCtxMenu(null);
     window.getSelection()?.removeAllRanges();
   }, [ctxMenu]);
@@ -676,14 +742,21 @@ function LessonApp() {
         threadCtxTrigger={threadCtxTrigger}
       />
 
-      {/* Selection context menu (styles ship in @core chat.css). "Reply in
-          thread" appears only for selections inside a chat message; "Reply in
-          this thread" only inside an open thread panel. */}
+      {/* Selection context menu (styles ship in @core chat.css).
+          - "Reply" always: adds the selection to context. If a thread composer
+            currently has focus it lands in that thread instead (routeLessonContext).
+          - "Reply in thread": selections inside a chat message.
+          - "Ask in a thread": selections in the lesson body — opens a
+            lesson-anchored thread.
+          - "Reply in this thread": selections inside an open thread panel. */}
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
           <button className="ctx-menu-item" onClick={handleCtxReply}>Reply</button>
           {ctxMenu.chatMsgIdx != null && (
             <button className="ctx-menu-item" onClick={handleCtxOpenThread}>Reply in thread</button>
+          )}
+          {ctxMenu.chatMsgIdx == null && !ctxMenu.threadId && (
+            <button className="ctx-menu-item" onClick={handleCtxAskInThread}>Ask in a thread</button>
           )}
           {ctxMenu.threadId && (
             <button className="ctx-menu-item" onClick={handleCtxReplyInThread}>Reply in this thread</button>
@@ -715,6 +788,9 @@ export default LessonApp;
 ## Notes for assembly agents
 
 - **Do not inline `Chatbot`, `STYLES`, or UI primitives.** Everything in `_lesson-core/index.js` comes from `@core`. Local copies drift and fail review.
+- **Wrap every graph call site in `<LiveGraph graphKey renderId>`.** Without it the `<<EDIT_GRAPH>>` visual-verification loop screenshots a selector that matches nothing, and Ctrl+Click on a graph captures stray axis labels instead of the graph's key and parameters.
+- **Keep the three context-capture selector lists in sync.** `handleContentClick` here, the capture-phase gate in `@core/chat/Chatbot.jsx`, and the hover rules in `@core/chat/chat.css.js` must name the same classes. A class in the CSS but not the handler shows a pointer cursor and does nothing.
+- **Keep `routeLessonContext` at the top of `addSnippet`.** It is what lets a student Ctrl+Click lesson content into a focused side-thread; drop it and every capture silently lands in the main composer instead.
 - **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it; `LessonApp` reassigns per render. `const` breaks the theme toggle.
 - **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 verifies. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.
 - **`TOPIC_CONTEXT` keys must equal `TOPICS[i].id` values.** T14 enforces.

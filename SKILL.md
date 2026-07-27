@@ -154,6 +154,14 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 
 **Ctrl+Click context gate** (client-side UX, added late in the dev loop): clicking a lesson content block or chat reply block to add it to chat context now requires the Ctrl key to be held. `body.ctx-ctrl-held` gates hover highlights and the pointer cursor; a capture-phase document click listener stops non-Ctrl clicks before they reach the per-lesson `handleContentClick`. Author-testing note: mention this in lesson-level CLAUDE.md if a human tester will QA the lesson — they will otherwise wonder why plain clicks stopped adding context.
 
+**Context capture and side-threads.** Every capture gesture and every thread entry point is enumerated in `references/checklists.md` (§ *Every way to add context*, § *Thread capabilities*) — that table is the single source of truth, and the in-app **Ctrl+Shift+?** overlay renders the same list for the student. Three facts a lesson author must not break:
+
+- The lesson's `addSnippet` calls `routeLessonContext()` from `@core` first. While a side-thread composer has focus that thread owns captured context; without the call every Ctrl+Click lands in the main composer instead of the thread the student is typing in.
+- Threads can be anchored to **lesson** content, not just to a chat reply. A `threadTrigger` with `msgIdx: null` makes `@core` append a quoted anchor card to the transcript and hang the thread off it; the ctx-menu item is "Ask in a thread" and `Ctrl+Shift+J` does the same from either side.
+- Inside a thread the tutor may emit the display-only tags (`<<DEMO>>`, `<<DESMOS>>`, `<<SOURCES>>`) and `<<REINFORCE>>`. `<<EDIT_GRAPH>>`, `<<SUGGEST>>` and `<<COMMIT_SUGGEST>>` are stripped there and returned as a `thread-tag-deferred` observation, because their approval UI only exists on main-transcript messages. `processResponse(text, { scope: "thread" })` and the system prompt's THREADS section encode the same split — change both or neither.
+
+**Graphs must be wrapped in `<LiveGraph graphKey renderId>`.** Those two data attributes are the selector the post-`<<EDIT_GRAPH>>` visual-verification observation screenshots; an unwrapped graph makes the visual feedback loop silently no-op, and Ctrl+Click on it captures a few stray axis labels instead of the graph's key and live parameters.
+
 Runtime architecture:
 ```
 Browser (Vite dev server :5173)

@@ -10,6 +10,14 @@ if (!window.__chatState) {
     threadAborts: {},
     activeThread: {},
     pendingSend: {},
+    // The thread whose composer the student last focused, as
+    // { tabId, msgIdx, threadId }. While set, captured context routes into
+    // that thread instead of the main chip bar. Cleared when the main
+    // composer takes focus or the thread closes.
+    focusedThread: null,
+    // Installed by Chatbot; called by the lesson through routeLessonContext().
+    // Returns true when the snippet was consumed by the focused thread.
+    contextSink: null,
   };
 }
 
