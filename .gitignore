@@ -4,3 +4,8 @@ Thumbs.db
 *.swo
 *.tmp
 *~
+
+# Audit/review reports produced by review agents. Kept locally, never tracked.
+codex-*.md
+fanout-audit-*.md
+fanout-audit-*.json
