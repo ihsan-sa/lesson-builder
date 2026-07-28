@@ -33,7 +33,10 @@ export function makeTab(title) {
     chatNum: null,
     messages: [],
     sessionStatus: "idle",
-    keepContext: false,
+    // Default ON: a reload mid-lesson should not throw away the conversation
+    // the student built up. Chatbot's bootstrap honours an explicit
+    // sessionStorage override, so a student who turns it off stays off.
+    keepContext: true,
     isolated: true,
     loading: false,
     statusText: "",

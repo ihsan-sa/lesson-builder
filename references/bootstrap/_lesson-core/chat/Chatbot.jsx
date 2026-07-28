@@ -87,7 +87,12 @@ export function Chatbot({
   const [input, setInput] = useState("");
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [effort, setEffort] = useState(DEFAULT_EFFORT);
-  const [answers, setAnswers] = useState("hints");
+  // Default answer style. "direct" leads with the result and then shows the
+  // reasoning; it relaxes ONLY the withhold-first ordering of the PEDAGOGY
+  // POLICY (see buildActiveContext) — verification, misconception refutation
+  // and task-level feedback all still bind. Students can switch to "hints" in
+  // the settings popover.
+  const [answers, setAnswers] = useState("direct");
   const [showSettings, setShowSettings] = useState(false);
   // Read inside async send paths, which close over a stale `answers`.
   const answersRef = useRef(answers);
@@ -462,7 +467,10 @@ export function Chatbot({
 
     // Name the opening tab after whatever topic the student is on, same as +.
     const firstTab = makeTab(topicTitleRef.current);
-    firstTab.keepContext = _ss.getItem("keepContext") === "true";
+    // Unset means "never toggled" -> take the default (on). Only an explicit
+    // "false" turns it off, so `=== "true"` would silently defeat the default.
+    const kcPref = _ss.getItem("keepContext");
+    firstTab.keepContext = kcPref === null ? true : kcPref === "true";
     setTabs([firstTab]);
     setActiveTabIdx(0);
 

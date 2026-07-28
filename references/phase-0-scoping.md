@@ -29,13 +29,15 @@ Alongside mode detection, scan the initial message for resource-conscious signal
 
 `effort_mode` is the model dial — it decides which tier main Claude spawns each agent on (see the Model policy table in `SKILL.md`). Detect it in the same pass as `resource_mode`:
 
-- Maximum-quality signals — `think hard`, `go all out`, `deep`, `thorough`, `highest quality`, `this one matters`, `hardest`, an explicit request for Fable — → `effort_mode: "deep"`.
+- High-consequence signals — an exam-prep or graded lesson, a hard derivation, correctness the student will rely on, or explicit phrasing (`think hard`, `go all out`, `deep`, `thorough`, `highest quality`, `this one matters`, `hardest`, a request for Fable) — → `effort_mode: "deep"`. This runs the judgment layer on Claude Fable 5; do not avoid it on cost grounds when the lesson warrants it.
 - The resource-conscious triggers above → `effort_mode: "light"`.
 - Neither → `effort_mode: "standard"` (default).
 
 Two constraints when both fire: `light` forces `resource_mode: "limited"`, and `limited` caps `effort_mode` at `standard`. If the message carries both a deep signal and a cheap signal (*"do a really thorough job but keep it quick"*), the contradiction is the user's to resolve — ask rather than guessing, since the two pull opposite ways on cost.
 
-Log as `Effort mode: deep|standard|light` and surface it at Phase 0 confirmation alongside the resource mode. `standard` — Opus 5 at `xhigh` for the judgment layer — is the right answer for almost every lesson; do not promote to `deep` on enthusiasm alone.
+Log as `Effort mode: deep|standard|light` and surface it at Phase 0 confirmation alongside the resource mode. `standard` — Opus 5 at `xhigh` for the judgment layer — is the right answer for a routine lesson; promote to `deep` when the work is genuinely high-consequence, not on enthusiasm alone.
+
+Under `deep`, also tell the user at the confirmation that subagent effort follows the session, so a max-effort session is what makes `deep` actually deep — the pipeline can set the model tier per spawn but cannot set effort (see the Model policy in `SKILL.md`).
 
 ## Question taxonomy — new mode
 

@@ -187,11 +187,15 @@ The dial is `effort_mode`, detected at Phase 0 (see `references/phase-0-scoping.
 
 | `effort_mode` | Trigger | Orchestrator + judgment agents | Production agents | Mechanical work |
 |---|---|---|---|---|
-| `deep` | User asks for maximum quality, "think hard", "go all out", a genuinely hard derivation, or a lesson they flag as high-stakes | `fable` | `opus` | `sonnet` |
-| `standard` | **Default.** No signal either way | `opus` | `sonnet` | `haiku` |
+| `deep` | High-consequence work: an exam-prep or graded lesson, a hard derivation, correctness the student will rely on, or the user asking for maximum quality ("think hard", "go all out", "this one matters") | **`fable` at `max`** | `opus` | `sonnet` |
+| `standard` | **Default.** No signal either way | `opus` at `xhigh` | `sonnet` | `haiku` |
 | `light` | Resource-conscious phrasing (same triggers as `resource_mode: "limited"`) | `opus` | `sonnet` | `haiku` |
 
-**`standard` means Opus 5 at `xhigh` for anything requiring judgment** — it is the best balance of answer quality against token spend, and it is the right default for almost every lesson. Reach past it only on evidence: `fable` (Claude Fable 5) is for reasoning that Opus 5 has actually struggled with in this run, not for routine lessons. Reach below it freely: `sonnet` for rubric application and code generation against a spec, `haiku` for mechanical passes (file inventory, string substitution, format checks) where there is no judgment to exercise.
+**Quality is not the thing to economise on.** `standard` — Opus 5 at `xhigh` — is the right default for a routine lesson and balances quality against spend. But when the work is high-consequence, `deep` is correct and cost is not a reason to avoid it: Claude Fable 5 at `max` effort is the ceiling and the pipeline should use it. Reach below `standard` freely for work with no judgment in it — `sonnet` for rubric application and code generation against a spec, `haiku` for mechanical passes (file inventory, string substitution, format checks).
+
+**How each is actually set:**
+- **Model tier — per spawn.** Pass `model` on the Agent tool call (`fable` / `opus` / `sonnet` / `haiku`). This overrides the agent's frontmatter.
+- **Effort — session-level, not per spawn.** There is no `effort` parameter on the Agent tool and no `effort:` key in agent frontmatter; subagents inherit the orchestrator session's effort. So `deep`'s `max` is a property of the session running the build. Under `effort_mode: deep`, state this at the Phase 0 confirmation — *"this is a high-consequence build; run it in a max-effort session"* — and let the user set it rather than pretending the pipeline can.
 
 Rules:
 - **Never downgrade the judgment layer below `opus`.** `light` cuts media richness and research depth (that is `resource_mode`'s job) — it does not cut the model that decides what the lesson teaches.
