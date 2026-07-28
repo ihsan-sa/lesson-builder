@@ -105,7 +105,7 @@ topics: [
       { kind: "svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo",
         name: <function name | asset filename | demo title>,
         current_purpose, current_parameters, source_file, line_range,
-        rendered_preview: null | <base64 snapshot from graph-preview tab>,
+        rendered_preview: null | <base64 snapshot of the graph in its topic>,
         content_orchestrator_preverdict }
     ],
     gaps: [ { concept, reason_existing_media_insufficient, orchestrator_preverdict: "add" } ] }

@@ -305,32 +305,56 @@ export const STYLES = `
 /* ── Main column: article stacked over an optional bottom-docked tutor ── */
 .shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
+/* The reading column scales with the viewport instead of sitting at a fixed
+   680px in the corner of a wide screen. Two knobs work together:
+     - the article's own font-size grows with the viewport, and every text
+       size inside it is expressed in em, so everything scales together;
+     - the column cap is in ch units, so the measure stays at a constant ~76
+       characters per line no matter how large the type gets.
+   The result uses far more of a big display without thinning the density.
+   The column is centred, so the leftover space is symmetric. */
 .article {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 34px 52px 130px;
+  /* Sized in container units, not viewport units: the article's width is set
+     by the rail and the tutor dock, not by the window, so vw-based type stays
+     huge in a column the user just squeezed to 280px and the 38px headline
+     overflows. cqi tracks the column itself. */
+  container-type: inline-size;
+  padding: 34px clamp(20px, 2vw, 60px) 130px;
   scroll-behavior: smooth;
 }
-.article-col { max-width: 680px; }
+/* The size lives on the child, not on .article: an element cannot resolve cq
+   units against a container it declares itself, so putting it on .article
+   silently falls back to the viewport and the type stops tracking the column. */
+.article-col {
+  width: 100%;
+  max-width: 76ch;
+  margin: 0 auto;
+  font-size: clamp(16px, 1.5cqi, 19px);
+}
 
 .article-kicker {
-  font-size: 11.5px; font-weight: 600;
+  font-size: 0.72em; font-weight: 600;
   letter-spacing: .08em; text-transform: uppercase;
   color: var(--accent);
   margin-bottom: 10px;
 }
 .article-title {
   font-family: var(--font-display);
-  font-size: 38px; font-weight: 500;
+  font-size: 2.375em; font-weight: 500;
   line-height: 1.15; letter-spacing: -0.02em;
   color: var(--ink);
   margin: 0 0 12px;
+  /* A long single word in a hard-squeezed column must break, not overflow. */
+  overflow-wrap: break-word;
 }
+.section-title, .para, .article-blurb { overflow-wrap: break-word; }
 .article-blurb {
-  font-size: 17px; line-height: 1.55;
+  font-size: 1.06em; line-height: 1.55;
   color: var(--ink-2);
-  max-width: 600px;
+  max-width: 62ch;
 }
 .article-rule { height: 1px; background: var(--border); margin: 26px 0 30px; }
 
@@ -341,16 +365,16 @@ export const STYLES = `
 .section { margin: 0 0 8px; }
 .section-title {
   font-family: var(--font-display);
-  font-size: 24px; font-weight: 500;
+  font-size: 1.5em; font-weight: 500;
   line-height: 1.3;
   color: var(--ink);
   margin: 38px 0 14px;
   scroll-margin-top: 18px;
 }
-.section .section .section-title { font-size: 19px; margin: 26px 0 10px; }
+.section .section .section-title { font-size: 1.19em; margin: 26px 0 10px; }
 
 .para {
-  font-size: 16px; line-height: 1.68;
+  font-size: 1em; line-height: 1.68;
   color: var(--ink-2);
   margin: 0 0 16px;
   text-wrap: pretty;
@@ -377,7 +401,7 @@ export const STYLES = `
   overflow: visible;
 }
 .eq-block[data-latex] { padding-right: 92px; }
-.eq-block .eq-body { flex: 1; text-align: center; font-size: 18px; min-width: 0; overflow-x: auto; }
+.eq-block .eq-body { flex: 1; text-align: center; font-size: 1.125em; min-width: 0; overflow-x: auto; }
 .eq-block .katex { font-size: 1.0em; }
 .eq-block .katex-html { color: var(--ink); }
 .katex-mathml { position: absolute !important; clip: rect(1px,1px,1px,1px) !important; clip-path: inset(50%) !important; height: 1px !important; width: 1px !important; overflow: hidden !important; white-space: nowrap !important; }
@@ -392,7 +416,7 @@ export const STYLES = `
 }
 .eq-num {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 0.72em;
   color: var(--ink-4);
   white-space: nowrap;
 }
@@ -403,7 +427,7 @@ export const STYLES = `
   background: var(--canvas);
   color: var(--accent);
   font-family: inherit;
-  font-size: 12px; font-weight: 500;
+  font-size: 0.75em; font-weight: 500;
   padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
@@ -420,7 +444,7 @@ export const STYLES = `
   left: 24px; top: -8px;
   background: var(--canvas);
   padding: 0 7px;
-  font-size: 11px; font-weight: 600;
+  font-size: 0.69em; font-weight: 600;
   letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--ink-4);
@@ -435,12 +459,12 @@ export const STYLES = `
 }
 .kc-label {
   display: block;
-  font-size: 11.5px; font-weight: 600;
+  font-size: 0.72em; font-weight: 600;
   letter-spacing: .08em; text-transform: uppercase;
   color: var(--accent-ink);
   margin-bottom: 6px;
 }
-.kc-body { font-size: 15.5px; line-height: 1.62; color: var(--accent-ink); }
+.kc-body { font-size: 0.97em; line-height: 1.62; color: var(--accent-ink); }
 .kc-body .para { color: var(--accent-ink); }
 .hw-tested { box-shadow: inset 3px 0 0 var(--sage); }
 .hw-tested .kc-label::after { content: " [TESTED]"; color: var(--sage); font-size: 10px; font-weight: 500; }
@@ -454,12 +478,12 @@ export const STYLES = `
 }
 .fsb-label {
   display: block;
-  font-size: 11.5px; font-weight: 600;
+  font-size: 0.72em; font-weight: 600;
   letter-spacing: .08em; text-transform: uppercase;
   color: var(--sage);
   margin-bottom: 6px;
 }
-.fsb-body { font-size: 15.5px; line-height: 1.62; color: var(--ink-2); }
+.fsb-body { font-size: 0.97em; line-height: 1.62; color: var(--ink-2); }
 .fsb-body .para, .fsb-body p { color: var(--ink-2); margin: 6px 0; }
 .fsb-body .eq-block { margin: 8px 0; background: var(--canvas); }
 .fsb-body .eq-label { background: var(--canvas); }
@@ -473,12 +497,12 @@ export const STYLES = `
 }
 .sb-label {
   display: block;
-  font-size: 11.5px; font-weight: 600;
+  font-size: 0.72em; font-weight: 600;
   letter-spacing: .08em; text-transform: uppercase;
   color: var(--rose);
   margin-bottom: 6px;
 }
-.sb-body { font-size: 15.5px; line-height: 1.62; color: var(--ink-2); }
+.sb-body { font-size: 0.97em; line-height: 1.62; color: var(--ink-2); }
 .sb-body .para, .sb-body p { color: var(--ink-2); margin: 6px 0; }
 .sb-body .eq-block { margin: 8px 0; background: var(--canvas); }
 .sb-body .eq-label { background: var(--canvas); }
@@ -486,7 +510,7 @@ export const STYLES = `
 .info-list { margin: 8px 0 20px; padding-left: 18px; list-style: none; }
 .info-list li {
   position: relative;
-  font-size: 16px; line-height: 1.68;
+  font-size: 1em; line-height: 1.68;
   color: var(--ink-2);
   padding: 3px 0 3px 4px;
 }
@@ -508,23 +532,24 @@ export const STYLES = `
 .compare-card h4 {
   margin: 0 0 8px;
   font-family: var(--font-display);
-  font-size: 16px; font-weight: 600;
+  font-size: 1em; font-weight: 600;
   color: var(--ink);
 }
 
 /* Terms table — Lumen "terms" block */
 .data-table { margin: 8px 0 28px; overflow-x: auto; }
-.data-table table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.data-table table { width: 100%; border-collapse: collapse; font-size: 0.91em; }
 .data-table th {
   text-align: left;
   padding: 14px 0;
   font-family: var(--font-display);
-  font-size: 16px; font-weight: 600;
+  font-size: 1.1em; font-weight: 600;
   color: var(--ink);
   border-bottom: 1px solid var(--border);
 }
 .data-table td {
   padding: 14px 0;
+  font-size: 0.91em;
   color: var(--ink-3);
   line-height: 1.6;
   border-bottom: 1px solid var(--border);
@@ -539,8 +564,8 @@ export const STYLES = `
   padding: 20px 18px;
   margin: 12px 0 10px;
 }
-.figure-caption { font-size: 13px; line-height: 1.5; color: var(--ink-3); margin: 10px 0 28px; }
-.figure-num { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-4); }
+.figure-caption { font-size: 0.81em; line-height: 1.5; color: var(--ink-3); margin: 10px 0 28px; }
+.figure-num { font-family: var(--font-mono); font-size: 0.72em; color: var(--ink-4); }
 
 .graph-controls {
   display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
@@ -583,7 +608,7 @@ export const STYLES = `
   background: var(--surface);
   border: none;
   color: var(--ink-2);
-  font-family: var(--font-ui); font-size: 13.5px; font-weight: 500;
+  font-family: var(--font-ui); font-size: 0.84em; font-weight: 500;
   cursor: pointer;
   transition: color var(--t-micro) var(--ease);
 }
@@ -605,15 +630,15 @@ export const STYLES = `
   border-bottom: 1px solid var(--border);
 }
 .pp-badge {
-  font-size: 10px; font-weight: 600;
+  font-size: 0.63em; font-weight: 600;
   letter-spacing: .08em; text-transform: uppercase;
   padding: 3px 8px; border-radius: 999px;
 }
 .pp-badge-official { background: var(--accent); color: var(--canvas); }
 .pp-badge-ai { background: var(--surface-2); color: var(--ink-3); }
-.pp-source { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-4); }
+.pp-source { font-family: var(--font-mono); font-size: 0.72em; color: var(--ink-4); }
 .pp-difficulty {
-  font-family: var(--font-mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: 0.63em;
   color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em;
   padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px;
   margin-left: auto;
@@ -621,24 +646,24 @@ export const STYLES = `
 .pp-diff-intro { color: var(--sage); border-color: var(--sage-border); }
 .pp-diff-core { color: var(--ink-3); }
 .pp-diff-stretch { color: var(--accent); border-color: var(--accent); }
-.pp-statement { font-size: 15.5px; line-height: 1.62; color: var(--ink-2); }
+.pp-statement { font-size: 0.97em; line-height: 1.62; color: var(--ink-2); }
 .pp-statement .para { margin-bottom: 8px; }
 .pp-solution-wrap { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
 .pp-solution-toggle {
   background: none; border: none; padding: 4px 0;
   color: var(--accent); font-family: var(--font-ui);
-  font-size: 13px; font-weight: 500; cursor: pointer;
+  font-size: 0.81em; font-weight: 500; cursor: pointer;
 }
 .pp-solution-toggle:hover { color: var(--accent-hover); }
-.pp-solution-body { padding: 10px 0 2px; font-size: 15.5px; line-height: 1.62; color: var(--ink-2); }
+.pp-solution-body { padding: 10px 0 2px; font-size: 0.97em; line-height: 1.62; color: var(--ink-2); }
 .pp-solution-body .para { margin-bottom: 8px; }
 .pp-ai-sources { margin-top: 14px; padding: 12px 14px; background: var(--surface); border-radius: 8px; }
 .pp-ai-sources-label {
-  font-size: 10.5px; font-weight: 600;
+  font-size: 0.66em; font-weight: 600;
   letter-spacing: .08em; text-transform: uppercase;
   color: var(--ink-4); margin-bottom: 6px;
 }
-.pp-ai-sources-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-3); }
+.pp-ai-sources-list { margin: 0; padding-left: 18px; font-size: 0.78em; color: var(--ink-3); }
 .pp-ai-sources-list li { margin-bottom: 3px; line-height: 1.5; }
 .pp-ai-sources-list a { color: var(--ink-3); text-decoration: underline; text-decoration-color: var(--border); }
 .pp-ai-sources-list a:hover { color: var(--accent); text-decoration-color: var(--accent); }

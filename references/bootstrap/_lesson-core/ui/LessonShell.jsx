@@ -18,11 +18,18 @@ import { STYLES } from "../chat/chat.css.js";
 // standard `<Section title>` primitive gets an outline with no extra authoring.
 // ───────────────────────────────────────────────────────────────
 
-const SIDE_MIN = 320, SIDE_MAX = 760, SIDE_DEFAULT = 392;
-const BOTTOM_MIN = 180, BOTTOM_MAX = 620, BOTTOM_DEFAULT = 300;
+const SIDE_MIN = 320, SIDE_DEFAULT = 392;
+const BOTTOM_MIN = 180, BOTTOM_DEFAULT = 300;
 const WIN_MIN_W = 380, WIN_MIN_H = 320;
+// The docks have no fixed maximum: drag them as wide or as tall as the window
+// allows, stopping only where the article would be squeezed out of existence.
+const ARTICLE_MIN_W = 280, ARTICLE_MIN_H = 160;
+const RAIL_W = 262, RAIL_W_COLLAPSED = 48, STRIP = 9;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+const viewportW = () => (typeof window === "undefined" ? 1440 : window.innerWidth);
+const viewportH = () => (typeof window === "undefined" ? 900 : window.innerHeight);
 
 // Pointer-capture drag. onMove receives deltas from the pointerdown origin, so
 // callers close over the value at drag start and never accumulate rounding.
@@ -252,15 +259,38 @@ export function LessonShell({
   }, []);
 
   // ── Resize handles ──
+  // Bounds are computed from the live viewport rather than being constants, so
+  // the panel can be dragged to nearly the full window width.
+  const sideMax = useCallback(
+    () => Math.max(SIDE_MIN, viewportW() - (railOpen ? RAIL_W : RAIL_W_COLLAPSED) - STRIP - ARTICLE_MIN_W),
+    [railOpen],
+  );
+  const bottomMax = useCallback(
+    () => Math.max(BOTTOM_MIN, viewportH() - 66 - STRIP - ARTICLE_MIN_H),
+    [],
+  );
+
   const onResizeSide = useCallback((e) => {
     const w0 = sideW;
-    startDrag(e, (dx) => setSideW(clamp(Math.round(w0 - dx), SIDE_MIN, SIDE_MAX)));
-  }, [sideW]);
+    startDrag(e, (dx) => setSideW(clamp(Math.round(w0 - dx), SIDE_MIN, sideMax())));
+  }, [sideW, sideMax]);
 
   const onResizeBottom = useCallback((e) => {
     const h0 = bottomH;
-    startDrag(e, (_dx, dy) => setBottomH(clamp(Math.round(h0 - dy), BOTTOM_MIN, BOTTOM_MAX)));
-  }, [bottomH]);
+    startDrag(e, (_dx, dy) => setBottomH(clamp(Math.round(h0 - dy), BOTTOM_MIN, bottomMax())));
+  }, [bottomH, bottomMax]);
+
+  // Re-clamp when the window shrinks or the rail toggles, or a panel dragged
+  // wide on a large screen would push the article off the layout.
+  useEffect(() => {
+    const refit = () => {
+      setSideW((w) => clamp(w, SIDE_MIN, sideMax()));
+      setBottomH((h) => clamp(h, BOTTOM_MIN, bottomMax()));
+    };
+    refit();
+    window.addEventListener("resize", refit);
+    return () => window.removeEventListener("resize", refit);
+  }, [sideMax, bottomMax]);
 
   const onWindowDrag = useCallback((e) => {
     const g = win;

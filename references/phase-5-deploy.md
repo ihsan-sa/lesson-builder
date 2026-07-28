@@ -52,7 +52,7 @@ Prefer `@playwright/mcp` if it is available. Otherwise fall back to a Node scrip
 
 - KaTeX renders (no raw `\\frac` / `$$` visible in DOM; `.katex` nodes present).
 - All lesson tabs are clickable and switching tabs does not throw.
-- The graph preview tab renders every graph component without error.
+- Every graph component renders without error in the topic that hosts it.
 - Browser console has zero errors (warnings allowed).
 
 ### Failure mode
@@ -460,7 +460,7 @@ Deploy service kind: git-remote | cli | null
 Deploy service: <remote URL / CLI / null>
 Build verification: PASS
 Target: dist/<course>/<slug>/index.html
-Smoke check: KaTeX OK, tabs OK, graph preview OK, console clean
+Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
 Commit SHA: <sha>
@@ -485,7 +485,7 @@ Deploy service kind: git-remote | cli | null
 Deploy service: <remote URL / CLI / null>
 Build verification: PASS
 Target: dist/<course>/<slug>/index.html
-Smoke check: KaTeX OK, tabs OK, graph preview OK, console clean
+Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
 Update branch: lesson-update/<slug>-YYYYMMDD

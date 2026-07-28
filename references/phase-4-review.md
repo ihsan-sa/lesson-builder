@@ -106,7 +106,6 @@ Interaction script:
 - Cycle the tutor through all four placements (side, bottom, in-app window, real pop-out) and confirm **the transcript and session survive every switch** — a remount here silently starts a new session.
 - Click every topic in the rail; confirm each renders without error, KaTeX re-lays out (the `.katex` elements should be present after the switch), and equation numbers rebase to the new topic.
 - Click an equation's **Explain** pill; confirm the equation lands in the tutor's context chips.
-- Click the graph preview tab (if present); confirm the preview renders.
 - Run at least one chat edit-graph round-trip: ask the chatbot to modify a parameter, confirm the `<<EDIT_GRAPH>>` block is stripped from the visible response, and confirm the graph re-renders with the new parameter applied.
 
 Any console error, failed fetch, unhandled rejection, or visibly broken render from this script lands in the issue list.

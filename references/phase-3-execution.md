@@ -83,7 +83,7 @@ Main Claude reads each scratch file after the specialist returns and checks for 
 
 Read `references/template.md` to pull the skeleton. Fill in each `REPLACE` marker using the Phase 2 Lesson Plan and the collected specialist outputs:
 
-- **`TOPIC_CONTEXT`** — one entry per topic, keyed by `topic-N`. Must include equations, key variables, given values, and the learning objective. Add a `graph-preview` entry verbatim from the template (the Graph Preview tab's context string).
+- **`TOPIC_CONTEXT`** — one entry per topic, keyed by `topic-N`. Must include equations, key variables, given values, and the learning objective.
 - **`LESSON_CONTEXT`** — full course and lesson description from Phase 1's compiled package. Single template literal. Carries the chatbot's pedagogy stance (tutor, not answer key).
 - **`DEFAULT_GRAPH_PARAMS`** — one key per graph component. Parameter objects are lifted from specialist outputs. Keys use camelCase matching the graph function name.
 - **`TOPICS`** — one entry per tab with `id`, `tab`, `title`, `subtitle`, `content`. The `content` function takes `graphParams` (conventionally named `gp`) and returns JSX. Each topic's `content` body is stitched from its specialist scratch files plus UI primitives from `@core` (`<Section>`, `<P>`, `<Eq>`, `<M>`, `<KeyConcept>`, `<CollapsibleBlock>`, `<RefImg>`).
@@ -123,7 +123,7 @@ The `<Chatbot>` call at the bottom of `LessonApp` takes seven required props plu
 - **`topicContext`** — pass the `TOPIC_CONTEXT` object
 - **`lessonFile`** — e.g. `"src/<slug_underscored>.jsx"`, used in edit-graph round-trip instructions
 - **`graphSchema`** — pass the `GRAPH_SCHEMA` export
-- **`graphRenderId`** — pass the `graphRenderId` state (incrementing integer that keys the graph-preview tab so SVG components re-render after `<<EDIT_GRAPH>>` mutates params). Declare `const [graphRenderId, setGraphRenderId] = useState(0);` in LessonApp and have `onEditGraph` call `setGraphRenderId(id => id + 1)` after merging edits.
+- **`graphRenderId`** — pass the `graphRenderId` state (incrementing integer that forces SVG components to re-render after `<<EDIT_GRAPH>>` mutates params). Declare `const [graphRenderId, setGraphRenderId] = useState(0);` in LessonApp and have `onEditGraph` call `setGraphRenderId(id => id + 1)` after merging edits.
 
 The remaining props (`topicId`, `topicTitle`, `contextSnippets`, `onClearSnippet`, `onClearAllSnippets`, `open`, `setOpen`, `onEditGraph`, `graphParams`, `addSnippet`, `threadTrigger`, `threadCtxTrigger`) follow the template verbatim.
 
@@ -159,7 +159,6 @@ The graph-quality rules (component pattern with `{ params, mid = "" }` props and
 
 Matplotlib outputs arrive pre-verified by the specialist's own PNG self-view; full visual QA for every medium happens once, in Phase 4 (no separate in-phase review team). On assembly, base64-encode approved PNGs as `const IMG_X = "..."` for `<RefImg data={IMG_X} alt="..." caption="..." />`.
 
-**Graph Preview tab** (mandatory last tab): renders every graph in one scrollable view. Screenshot target for post-deploy verification and the student's "send this to chat for review" flow. TOPIC_CONTEXT entry is the verbatim template string.
 
 ### Step 8: post-assembly cleanup
 
@@ -365,9 +364,9 @@ Iterate over the Phase 2 topic change-list:
 
 Post-splice sanity pass verifies `GraphC` still has a definition and call site, and no dangling `gp.graphA|B|D` references remain.
 
-#### 4.4 Update the graph-preview tab
+#### 4.4 Verify every graph still has a call site
 
-Commonly missed. The `graph-preview` tab's `content` function renders every graph for screenshot verification. If refine/replace/add/remove changed the graph set, rewrite the content body to include **all final graphs** (kept + refined + replaced + added, minus removed). Missing this step means new graphs do not appear in visual-QA screenshots.
+Commonly missed. After refine/replace/add/remove, confirm each **final** graph (kept + refined + replaced + added, minus removed) is rendered in at least one topic, wrapped in `<LiveGraph graphKey renderId>`. A component with no call site is invisible to visual QA and escapes review; a call site whose component was removed is a hard render error.
 
 #### 4.5 Splice updated LESSON_CONTEXT if Phase 1 changed it
 

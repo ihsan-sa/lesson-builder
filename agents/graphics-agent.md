@@ -43,7 +43,7 @@ Non-negotiables — these are what visual-QA and the numerical spot-check fail b
 - **Curves come from the governing equation with physically realistic constants.** A diode curve needs a real saturation current (`Is ≈ 1e-14 A`) so the knee lands near 0.6 V; a MOSFET transfer characteristic needs `Vth` and the piecewise triode/saturation split; Bode plots use `Math.log10`, not hand-drawn asymptotes.
 - **Never clamp to hide overflow** (`Math.min(y * scale, maxY)` and friends). If the curve clips, the scale is wrong — fix the scale. Clamping flattens exponentials and masks the exact bugs review exists to catch.
 - **Scale design**: mixed-range data (forward mA vs reverse µA) gets split panels with independent scales, not one compressed axis. Distinct curves in a family stay visually separated (~150 px at the widest point). Y-axis units are practical: mA not A, dB not linear magnitude. Label tick marks at key values.
-- **Unique marker IDs** via the `mid` prop suffix — duplicate `<marker>` ids silently break arrowheads when a graph renders twice (content tab + graph-preview).
+- **Unique marker IDs** via the `mid` prop suffix — duplicate `<marker>` ids silently break arrowheads when a graph renders twice (e.g. the same component reused across two topics).
 - SVG text uses `fontFamily="'JetBrains Mono'"` at 9-11px; `viewBox` plus `width: "100%"` and an explicit `maxWidth` for responsive scaling.
 - If the brief adds parameters, return the matching `DEFAULT_GRAPH_PARAMS` entry and `GRAPH_SCHEMA` entry alongside the component (keys identical; schema `max` must match any hard clamp inside the component).
 
@@ -69,7 +69,7 @@ Hand-write the SVG; `viewBox` square or 16:9; stroke widths 1.5-2.5; gold for ac
 
 The brief carries the action:
 
-- **refine**: existing component source (by line range) + current `DEFAULT_GRAPH_PARAMS[<key>]` + `refine_brief`. **Preserve the function name exactly** — call sites and the graph-preview tab reference it. Also preserve the `params` prop shape, the `mid` prop, and the `eq-block` wrapper. Matplotlib refine: re-render the `.py`, regenerate the base64; the `const IMG_*` name stays, only the payload changes.
+- **refine**: existing component source (by line range) + current `DEFAULT_GRAPH_PARAMS[<key>]` + `refine_brief`. **Preserve the function name exactly** — call sites reference it. Also preserve the `params` prop shape, the `mid` prop, and the `eq-block` wrapper. Matplotlib refine: re-render the `.py`, regenerate the base64; the `const IMG_*` name stays, only the payload changes.
 - **replace**: same inputs plus a new function name from the brief. Cross-medium replacements go to the destination-type specialist, not you.
 - **add**: build from scratch per the build-mode contract.
 

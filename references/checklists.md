@@ -54,7 +54,7 @@ Every lesson imports chat + UI from `@core`. Lessons inlining old chat code (loc
 - [ ] `addSnippet` calls `routeLessonContext(clean, source)` (imported from `@core`) and returns early when it returns true. Without it, a student replying in a side-thread has every Ctrl+Click land in the main composer instead of the thread they are typing in.
 - [ ] `handleCtxAskInThread` exists and the ctx menu renders "Ask in a thread" for lesson selections (`chatMsgIdx == null && !threadId`). It sets `threadTrigger` with `msgIdx: null`, which is what tells `@core` to open a lesson-anchored thread.
 - [ ] The `handleContentClick` selector list matches the capture-phase gate in `@core/chat/Chatbot.jsx` and the hover rules in `@core/chat/chat.css.js`: `.eq-block, .key-concept, .formula-sheet-box, .summary-box, .practice-problem, .compare-card, .para, .info-list li, .section-title`. A class present in the CSS but absent from the handler renders a pointer cursor and a hover outline over an element that does nothing when clicked.
-- [ ] Every graph call site is wrapped in `<LiveGraph graphKey="<DEFAULT_GRAPH_PARAMS key>" renderId={renderId}>`, in content tabs AND in the graph-preview tab, and the topic's `content` signature is `(gp, renderId)`. Those two data attributes are the selector the post-`<<EDIT_GRAPH>>` visual-verification observation screenshots; without them the whole visual feedback loop silently no-ops.
+- [ ] Every graph call site is wrapped in `<LiveGraph graphKey="<DEFAULT_GRAPH_PARAMS key>" renderId={renderId}>` and the topic's `content` signature is `(gp, renderId)`. Those two data attributes are the selector the post-`<<EDIT_GRAPH>>` visual-verification observation screenshots; without them the whole visual feedback loop silently no-ops.
 - [ ] No inlined chat code in the lesson file. The lesson JSX should not define `ChatBubble`, `ThreadPanel`, `processResponse`, `buildSystemPrompt`, or `chatState` locally.
 - [ ] Uses `useKatex()` hook from `@core` for KaTeX loading. No manual CDN `<link>` tag injection.
 - [ ] `THEMES_G` imported from `@core/constants` (or defined inline for lessons that predate the constants module).
@@ -99,7 +99,7 @@ Theme failures are visually obvious; Phase 4 visual-QA catches regressions if sk
 - [ ] Graph marker IDs are unique across the entire file (no duplicate `id="ah"` or `id="arrowId"`). Clashing IDs silently break arrow rendering.
 - [ ] All graph text uses `fontFamily="'JetBrains Mono'"` (the shell's mono face). No system fonts, no sans-serif in SVG labels.
 - [ ] Graph equations must match the LaTeX equations in the same section. Discrepancies are caught by the Content Verification sub-agent's numerical spot-check but are much cheaper to prevent here.
-- [ ] Graph Preview tab exists as the **last** tab in the `TOPICS` array and renders every graph in the lesson. In update mode this is especially critical: a newly-added graph that is not also added to the graph-preview tab will not appear in visual-QA screenshots and will silently escape review.
+- [ ] Every graph appears in at least one topic. In update mode this is especially critical: a newly-added graph with no call site will not appear in visual-QA screenshots and will silently escape review.
 
 ### Graph scale design rules
 
@@ -228,7 +228,7 @@ The `<Chatbot>` signature expanded with the graph-schema feature.
 **Graph-editing props** (graph-schema feature):
 
 - [ ] `graphSchema={GRAPH_SCHEMA}` — passed so the chatbot knows the editable field shape of each graph. Without this, the runtime validator silently accepts arbitrary LLM edits.
-- [ ] `graphRenderId={graphRenderId}` — incrementing state that keys the graph-preview tab so it re-renders when `<<EDIT_GRAPH>>` mutates params. `const [graphRenderId, setGraphRenderId] = useState(0);` at the top of LessonApp, incremented by `onEditGraph`.
+- [ ] `graphRenderId={graphRenderId}` — incrementing state that forces graph components to re-render when `<<EDIT_GRAPH>>` mutates params. `const [graphRenderId, setGraphRenderId] = useState(0);` at the top of LessonApp, incremented by `onEditGraph`.
 
 **Existing session/UI props** (verify they still thread through):
 
@@ -409,7 +409,7 @@ Update mode only. Run after every splice edit and as final sweep before Phase 4.
 - [ ] `DEFAULT_GRAPH_PARAMS` keys match the current graph component set one-to-one. A removed graph must also have its `DEFAULT_GRAPH_PARAMS` entry removed; an added graph must have an entry inserted.
 - [ ] `GRAPH_SCHEMA` keys match `DEFAULT_GRAPH_PARAMS` keys one-to-one. Drift between the two is the most common Phase 4 failure after a splice.
 - [ ] No dangling imports or unused helpers after splicing. If a removed graph was the only user of a utility helper (e.g., `computeBandGap`), the helper should also be removed.
-- [ ] The `graph-preview` tab's rendered list includes all final graphs (new, refined, retained). A newly-added graph absent from graph-preview will not show up in visual-QA screenshots and will silently escape Phase 4 review.
+- [ ] Every final graph (new, refined, retained) has a live call site in some topic. A graph component with no call site will not show up in visual-QA screenshots and will silently escape Phase 4 review.
 - [ ] `TOPICS` array order matches the declared Phase 2 plan. A `reorder` action in the change-list must actually land in the final file; Grep-verify.
 - [ ] `TOPIC_CONTEXT` keys match `TOPICS` ids one-to-one after all additions, removals, and reorders. This is a post-splice re-check of the T14 invariant.
 - [ ] Manim `<video src=...>` paths resolve to actual files in `public/videos/`. A refined manim component that overwrote the `.mp4` at the same path will still pass this check; a replaced manim with a new filename requires the src to be updated.
@@ -430,7 +430,7 @@ Main Claude runs this after assembly, before Phase 4. Cheap gate catching common
 - [ ] Grep count: every `GRAPH_SCHEMA[<key>]` access has a matching key in the `GRAPH_SCHEMA` object literal.
 - [ ] File line-count delta matches expected splice magnitude. Compute `abs(lines_after - lines_before)`, compare to the declared change-list (roughly: refines are small deltas, adds are positive, removes are negative). A wild delta (e.g., ±500 lines for a single `refine`) indicates runaway edits and should halt the pipeline.
 - [ ] No stray `<<< >>> ===` conflict markers from any stash/merge/rebase that may have been in-flight.
-- [ ] The graph-preview tab content block renders every graph component by Grep-count match.
+- [ ] Every graph component defined in the file has at least one call site, by Grep-count match.
 - [ ] The `TOPIC_CONTEXT` object has the same number of keys as the `TOPICS` array has entries (quick sanity on T14 before Phase 4 runs the full check).
 
 ---

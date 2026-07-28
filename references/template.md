@@ -79,8 +79,6 @@ const TOPIC_CONTEXT = {
   // TODO: one entry per lesson topic. Example shape:
   "topic-1": `Topic: [Name]. Covers: [equations], [key variables], [given values]. [What the student needs to understand].`,
   "topic-2": `Topic: [Name]. Covers: ...`,
-  // The graph-preview entry is MANDATORY. Do not remove it.
-  "graph-preview": `Graph Preview tab. Shows all lesson graphs for visual inspection. The user can screenshot this tab and send it to the chatbot for review and corrections.`,
 };
 
 // ───────────────────────────────────────────────────────────────
@@ -154,7 +152,7 @@ export const GRAPH_SCHEMA = {
 // - `params` is the live slice from graphParams state (e.g. gp.myGraph).
 // - `mid` is an optional marker-id suffix used to disambiguate `<marker>`
 //   definitions when the same graph is rendered twice on one page (e.g.
-//   once in a content tab and once in the graph-preview tab).
+//   the same component reused across two topics).
 // - Use `G` (module-level theme binding) for colors.
 // - Spread DEFAULT_GRAPH_PARAMS into the merged params so partial updates
 //   from <<EDIT_GRAPH>> keep the unspecified defaults:
@@ -288,7 +286,7 @@ export const GRAPH_SCHEMA = {
 // params; the optional second arg is the graphRenderId — key a component on
 // it when it must re-render after an <<EDIT_GRAPH>> (most content ignores it).
 // Topic ids must match TOPIC_CONTEXT keys exactly (test_lesson.cjs checks
-// this). The final tab MUST be `graph-preview`.
+// this).
 //
 // How each field renders in the shell:
 //   tab       contents-rail row label (keep it short — the rail is 262px)
@@ -324,31 +322,6 @@ const TOPICS = [
   //     </Section>
   //   ),
   // },
-
-  // Graph Preview tab is MANDATORY. Renders every graph for screenshot-
-  // based review. Keep this entry last.
-  {
-    id: "graph-preview",
-    tab: "Graph Preview",
-    title: "Graph Preview",
-    subtitle: "Review",
-    blurb: "All lesson graphs in one place.",
-    content: (gp, renderId) => (
-      <Section title="All Graphs">
-        <P>
-          Every graph in this lesson rendered with the current parameters.
-          Use this tab to screenshot the full set and send it to the chat
-          for a visual review.
-        </P>
-        {/* TODO: render each graph component once, passing the matching
-            gp.<key> slice. Use mid="-preview" so marker ids do not clash
-            with the same graph rendered inside a content tab, and wrap each
-            in <LiveGraph graphKey="<key>" renderId={renderId}> exactly as the
-            content tabs do — this tab is the one the visual-verify flow
-            screenshots. */}
-      </Section>
-    ),
-  },
 ];
 
 // ───────────────────────────────────────────────────────────────
@@ -404,8 +377,8 @@ function LessonApp() {
   }, []);
 
   // Chatbot <<EDIT_GRAPH>> callback: shallow-merge per-key param edits.
-  // Also bump graphRenderId so the graph-preview tab re-renders SVGs that
-  // would otherwise stay mounted with stale props.
+  // Also bump graphRenderId so any graph that would otherwise stay mounted
+  // with stale props re-renders.
   const handleEditGraph = useCallback((edits) => {
     setGraphParams((prev) => {
       const next = { ...prev };
@@ -731,7 +704,6 @@ export default LessonApp;
 - **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it by name.
 - **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 verifies. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.
 - **`TOPIC_CONTEXT` keys must equal `TOPICS[i].id` values.** T14 enforces.
-- **The `graph-preview` tab is mandatory.** Renders every graph for screenshot review.
 - **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
 - **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
 - **No emojis** anywhere.
