@@ -5,7 +5,7 @@ New-mode Phase 3 starting point. Main Claude copies this skeleton into `src/<slu
 ## What's per-lesson vs from @core
 
 - **Per-lesson**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph components, `TOPICS`, `LessonApp`.
-- **From @core**: `LessonShell` (top bar, contents rail, article, tutor docking), `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Fable 5 as the default the chat opens with), hooks (`useKatex`, `useDesmos`).
+- **From @core**: `LessonShell` (top bar, contents rail, article, tutor docking), `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Opus 5 as the default the chat opens with, at `xhigh` effort), hooks (`useKatex`, `useDesmos`).
 - **External**: `server/proxy.js` is a 1-line shim, added by the file-scaffolding step.
 
 ## GRAPH_SCHEMA requirement

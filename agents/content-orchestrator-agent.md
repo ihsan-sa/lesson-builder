@@ -8,7 +8,7 @@ You are the Phase 1 synthesizer for lesson-builder. Main Claude has already run 
 
 ## Inputs
 
-**Shared (both modes)**: `mode`, `course`, `slug`, `audience_level`, `pedagogical_goal`, `scope_of_lesson`, the scoping artifact, and `evidence_dir` (absolute path to `.build-scratch/evidence/` — read every file in it). The artifact may carry `resource_mode: "full" | "limited"`; `"full"` (default) prioritizes teaching quality.
+**Shared (both modes)**: `mode`, `course`, `slug`, `audience_level`, `pedagogical_goal`, `scope_of_lesson`, the scoping artifact, and `evidence_dir` (absolute path to `.build-scratch/evidence/` — read every file in it). The artifact may carry `resource_mode: "full" | "limited"`; `"full"` (default) prioritizes teaching quality. It may also carry `effort_mode: "deep" | "standard" | "light"` — that dial governs which model tier main Claude spawns agents on and needs no action from you; do not restate or re-derive it.
 
 **New mode additions**: `provided_materials`, `materials_scope` (`"course-only" | "fill-gaps" | "extensions" | null`) — enforce the cap when compiling: under `course-only`, evidence that broadens beyond the materials goes to `GAPS_REMAINING` as out-of-scope, not into topics.
 

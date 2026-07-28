@@ -177,7 +177,29 @@ Browser (Vite dev server :5173)
 
 ## Agent team
 
-All agents are bundled at `agents/` — the skill is self-contained. Claude Code reads `agents/*.md` directly from the skill folder. Judgment-critical agents (content-orchestrator, medium-decider, content-review, research, scientific-accuracy) omit a `model:` line and therefore inherit the session model — a high-end session should not silently downgrade its judgment layer. Production and rubric agents pin `sonnet`.
+All agents are bundled at `agents/` — the skill is self-contained. Claude Code reads `agents/*.md` directly from the skill folder. Each agent's `model:` frontmatter is its **floor**, not its final assignment: judgment-critical agents (content-orchestrator, medium-decider, content-review, research, scientific-accuracy) omit the line and inherit the session model, production and rubric agents pin `sonnet`. Main Claude overrides both per spawn under the model policy below.
+
+## Model policy
+
+**Main Claude — the orchestrator session — decides the model for every spawn.** Pass `model` on the Agent tool call; it takes precedence over the agent's frontmatter. Frontmatter is only the fallback when no override is passed.
+
+The dial is `effort_mode`, detected at Phase 0 (see `references/phase-0-scoping.md`) and carried in the scoping artifact alongside `resource_mode`:
+
+| `effort_mode` | Trigger | Orchestrator + judgment agents | Production agents | Mechanical work |
+|---|---|---|---|---|
+| `deep` | User asks for maximum quality, "think hard", "go all out", a genuinely hard derivation, or a lesson they flag as high-stakes | `fable` | `opus` | `sonnet` |
+| `standard` | **Default.** No signal either way | `opus` | `sonnet` | `haiku` |
+| `light` | Resource-conscious phrasing (same triggers as `resource_mode: "limited"`) | `opus` | `sonnet` | `haiku` |
+
+**`standard` means Opus 5 at `xhigh` for anything requiring judgment** — it is the best balance of answer quality against token spend, and it is the right default for almost every lesson. Reach past it only on evidence: `fable` (Claude Fable 5) is for reasoning that Opus 5 has actually struggled with in this run, not for routine lessons. Reach below it freely: `sonnet` for rubric application and code generation against a spec, `haiku` for mechanical passes (file inventory, string substitution, format checks) where there is no judgment to exercise.
+
+Rules:
+- **Never downgrade the judgment layer below `opus`.** `light` cuts media richness and research depth (that is `resource_mode`'s job) — it does not cut the model that decides what the lesson teaches.
+- **`deep` promotes, it does not replace.** Mechanical work stays cheap at every effort level; paying Fable-5 rates to substitute a filename is waste.
+- **One dial, stated once.** Log the chosen `effort_mode` at Phase 0 and surface it in the plan for approval. Do not re-derive it per phase.
+- `effort_mode` and `resource_mode` are related but distinct: `light` implies `resource_mode: "limited"`, and `limited` caps `effort_mode` at `standard`. `deep` never implies `limited`.
+
+The student-facing tutor has its own default, set in `_lesson-core/constants/models.js`: Opus 5 at `xhigh`, with Fable 5, Sonnet 5, Opus 4.8 and Haiku 4.5 selectable from the settings popover. That is a runtime choice by the student and is independent of the build-time policy above.
 
 **Orchestration and content** (main Claude owns all worker spawns — subagents cannot spawn subagents; workers persist full output to `.build-scratch/evidence/` and return summaries):
 - `content-orchestrator-agent` — Phase 1 SYNTHESIS over persisted worker evidence (new: compile + conflict resolution; update: diff/classify driver)

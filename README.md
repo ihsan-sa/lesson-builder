@@ -56,10 +56,10 @@ Teaching quality is evidence-based: lessons are planned backward from measurable
 
 ## Key invariants
 
-- **Quality-first default**: `resource_mode: "full"` unless the user signalled otherwise.
+- **Quality-first default**: `resource_mode: "full"` and `effort_mode: "standard"` unless the user signalled otherwise.
 - **One human gate**, at Phase 2. No exceptions.
 - **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently. Media decisions go through one whole-lesson decider spawn.
-- **Self-contained agents**: all 12 agents bundled at `agents/`. No workspace or machine-global dir required. Judgment agents inherit the session model; production/rubric agents pin sonnet.
+- **Self-contained agents**: all 12 agents bundled at `agents/`. No workspace or machine-global dir required. Agent `model:` frontmatter is a floor — main Claude picks the tier per spawn from the `effort_mode` policy in `SKILL.md` (default: Opus 5 for judgment, Sonnet 5 for production, Haiku for mechanical; Fable 5 only on an explicit deep-work signal).
 - **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code.
 - **Per-lesson log** at `<lesson_root>/lesson_build.log.md`. Main Claude owns it; updates append rather than overwrite.
 - **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, TOPIC_CONTEXT invariants, template compliance, no inlined chat, no emojis, no direct API calls).

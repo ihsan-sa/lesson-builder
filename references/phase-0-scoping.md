@@ -25,6 +25,18 @@ Alongside mode detection, scan the initial message for resource-conscious signal
 
 `resource_mode` threads through every phase and spawn. Surface the detected value at Phase 0 confirmation. Log as `Resource mode: full|limited`; on ambiguity, default to `full` and note for confirmation.
 
+### Effort-mode detection
+
+`effort_mode` is the model dial — it decides which tier main Claude spawns each agent on (see the Model policy table in `SKILL.md`). Detect it in the same pass as `resource_mode`:
+
+- Maximum-quality signals — `think hard`, `go all out`, `deep`, `thorough`, `highest quality`, `this one matters`, `hardest`, an explicit request for Fable — → `effort_mode: "deep"`.
+- The resource-conscious triggers above → `effort_mode: "light"`.
+- Neither → `effort_mode: "standard"` (default).
+
+Two constraints when both fire: `light` forces `resource_mode: "limited"`, and `limited` caps `effort_mode` at `standard`. If the message carries both a deep signal and a cheap signal (*"do a really thorough job but keep it quick"*), the contradiction is the user's to resolve — ask rather than guessing, since the two pull opposite ways on cost.
+
+Log as `Effort mode: deep|standard|light` and surface it at Phase 0 confirmation alongside the resource mode. `standard` — Opus 5 at `xhigh` for the judgment layer — is the right answer for almost every lesson; do not promote to `deep` on enthusiasm alone.
+
 ## Question taxonomy — new mode
 
 New mode asks a fixed set of **always-asked** questions, plus one branch of **conditional** questions depending on whether the user already provided source material (textbook chapter, slide deck, problem set, lecture notes) or nothing at all.
