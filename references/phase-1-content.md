@@ -27,11 +27,31 @@ Main Claude passes the following from the scoping artifact:
 Subagents cannot spawn subagents, so the fan-out belongs to main Claude; the orchestrator is a **synthesis** agent over persisted worker outputs. Workers write their FULL output to `<lesson_root>/.build-scratch/evidence/<worker-id>.md` and return only a 1-paragraph summary — main Claude's context carries summaries, the synthesis agent reads the files.
 
 1. **Initial sweep (pure-research only)**: if `provided_materials` is empty and `research_depth` is `rough-sweep-first`, spawn one `research-agent` for a rough topic sweep, confirm the draft topic list with the user, then proceed.
-2. **Per-resource extraction, in parallel**: one `research-agent` in source-extraction mode per provided resource — equations, concepts, constants, comparisons, candidate topic groupings, practice problems per the extraction spec below. Each brief carries explicit boundaries (which resource is yours) so parallel workers don't duplicate.
+2. **Per-resource extraction, in parallel**: one `research-agent` in source-extraction mode per provided resource — equations, concepts, constants, comparisons, candidate topic groupings, practice problems per the extraction spec below, **and the relations between claims** (see "Relation recovery" below). Each brief carries explicit boundaries (which resource is yours) so parallel workers don't duplicate.
 3. **Topic-area research, in parallel with step 2**: `research-agent` topic-research spawns for coverage beyond the materials (bounded by `materials_scope`).
 4. **Gap-fill**: narrow `research-agent` spawns for concepts the first wave missed.
 5. **Synthesis**: spawn `content-orchestrator-agent` with the scoping artifact + `evidence_dir`. It compiles the package, resolves conflicts conservatively, and lists what it couldn't resolve in `GAPS_REMAINING`.
 6. **Content review**: spawn `content-review-agent` on the compiled package against the scoping artifact. On misalignment, run at most 2 corrective rounds (targeted worker re-spawns + re-synthesis, each round's new material reviewed by the next round); remaining issues stay in `GAPS_REMAINING` for main Claude to judge at the post-orchestrator check.
+
+### Relation recovery (every worker, both modes)
+
+A claim list is not teachable; the *relations* between claims are what a teaching arc is built from (`references/phase-2-plan.md` § Teaching arc). Every extraction and research worker records, alongside each equation / concept / constant, the relations that make it usable, typed as:
+
+| Relation | Records |
+|---|---|
+| `prerequisite` | what must be known before this claim can be understood |
+| `definitional` | which term or symbol this claim defines, or which definition it relies on |
+| `causal` | what this claim explains, and what explains it (mechanism, not correlation) |
+| `derivational` | what this result is derived from, and the non-obvious transformation in the derivation |
+| `contrastive` | what this claim is commonly confused with, and the feature that discriminates them |
+| `qualifying` | the assumption or validity condition under which the claim holds |
+| `application` | the situation in which the claim is used, and what deciding to use it looks like |
+
+Rules:
+
+- **A missing relation a novice must infer is a gap.** When both endpoint claims are sourced but the relation between them (why B follows from A; under what condition A holds) is not, record it in `GAPS_REMAINING` as `relation missing: <A> → <B> (<type>)` — a lesson that states both endpoints and leaves the learner to invent the link fails the Phase 4 gate question. Gap-fill spawns target relations as readily as claims.
+- **Concision never removes a mechanism, a warrant, a condition, or a transition.** Workers compress restatements and asides, never the relations.
+- Relations ride in the evidence files next to the claims they connect (`relations: [{ type, from, to, note, source }]`) and the orchestrator carries them into the package per topic.
 
 ### Tactical input-handling notes
 
@@ -75,6 +95,7 @@ If the source material embeds solutions (e.g., a past-final PDF with a solutions
 **Quality gate**:
 - Every equation has a source (lecture page, textbook section, URL).
 - Every variable defined.
+- Every non-trivial claim carries the relations a first-time learner needs (prerequisite, definitional, causal, derivational, contrastive, qualifying, application); missing ones are in `GAPS_REMAINING`, not silently absent.
 - Worked examples and solutions are welcome wherever they teach something (a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study). Cut any "here's an answer" block that doesn't extend understanding. The chatbot is separately governed by `LESSON_CONTEXT` — it is a tutor, not an answer key — and that pedagogy stance is not a content constraint: practice-problem cards in the lesson may carry worked solutions provided they are collapsed by default, provenance-marked, and sourced rather than fabricated (per the extraction spec above).
 - Concision: every paragraph teaches something. Cut filler. Match representation to structure (`references/teaching-communication.md`): equations carry formal relations, diagrams spatial structure, prose the causal and interpretive links — never "equation instead of prose" as a blanket rule.
 
@@ -89,6 +110,9 @@ HEADER_TITLE, HEADER_SUBTITLE
 TOPIC 1:
   id, tab, title, subtitle
   equations, concepts, constants, comparisons
+  relations: [ { type: prerequisite|definitional|causal|derivational|contrastive|qualifying|application,
+                 from, to, note, source } ]
+  documented_misconceptions: [ { belief, diagnostic_signature, source } ]   # only with evidence; empty is correct
   graphs_needed, manim_opportunities, interactive_opportunities
   practice_problems: [
     { statement, source, difficulty, approach_hint, solution, solution_provenance }
@@ -103,7 +127,7 @@ PRACTICE_PROBLEMS_INDEX: [{ topic_id, count, sources: [...] }]
 GAPS_REMAINING: [...]
 ```
 
-`context_string` per topic is the seed for `TOPIC_CONTEXT` in the final lesson file. `LESSON_CONTEXT` is the seed for the `LESSON_CONTEXT` constant consumed by the embedded chatbot.
+`context_string` per topic is the seed for `TOPIC_CONTEXT` in the final lesson file. `LESSON_CONTEXT` is the seed for the `LESSON_CONTEXT` constant consumed by the embedded chatbot. `relations` and `documented_misconceptions` are what Phase 2 builds each topic's `teaching_arc` from — an arc's `relation_to_previous` fields and `refute` moves must trace back to entries here.
 
 `practice_problems` is per-topic; the top-level `PRACTICE_PROBLEMS_INDEX` is a summary main Claude forwards into the Phase 2 plan so the user sees totals without reading every problem body at approval time. Empty arrays are fine (topic has no matching problems in the materials) — absence signals to Phase 2 that a "Practice" section should be skipped for that topic, not that one should be fabricated.
 

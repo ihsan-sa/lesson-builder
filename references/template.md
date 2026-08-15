@@ -700,9 +700,9 @@ export default LessonApp;
 
 ## Exposition exemplars (positive models for topic bodies)
 
-Two complete topic bodies that follow `references/teaching-communication.md`: substantive opening, prose carrying the causal links, every symbol defined at first use, one `KeyConcept` for the one critical conclusion (never a restatement), an in-domain example and a contrast, no analogy, the arc's exit check landed as a prediction-before-reveal. Imitate the shape, not the subject. Both parse as-is (imports from `@core` assumed).
+Two complete topic bodies that follow `references/teaching-communication.md`: substantive opening, one controlling claim per paragraph carried in prose, every symbol defined at first use, one `KeyConcept` holding the `exit_model` (a conclusion or decision rule — it never replaces the explanation that earns it), examples with declared functions, no analogy, the arc's `exit_evidence` landed as prediction-before-reveal checks that need no untaught definition, an ending that synthesizes. The JSX comments name the arc move each unit realizes — keep that habit in real lessons; it is what makes Phase 4's `arc` check cheap. Imitate the shape, not the subject. Both parse as-is (imports from `@core` assumed).
 
-**Concept arc** — `kind: concept`, question "Why does current increase when impedance decreases?", moves establish → formalize → infer → distinguish, exit check "If |Z| is halved at fixed voltage, what happens to |I|?":
+**Concept arc** — `kind: concept`; `central_question` "Why does current increase when impedance decreases?"; `entry_state.assumed` = phasor voltage/current, Ohm's law for resistors; moves establish (orient) → formalize (define) → infer (explain_mechanism) → distinguish (contrast); `example_sequence` = worked, contrasting_nonexample; `exit_model` "at fixed |V|, |I| = |V|/|Z| and ∠I = ∠V − ∠Z — magnitude and phase are set separately"; `exit_evidence` = recall + near_transfer:
 
 ```jsx
 const EXEMPLAR_CONCEPT_TOPIC = {
@@ -714,12 +714,14 @@ const EXEMPLAR_CONCEPT_TOPIC = {
   content: (gp, renderId) => (
     <>
       <Section title="Current at fixed voltage">
+        {/* move: establish + formalize (orient, define) — the fixed source and the governing relation */}
         <P>
           A sinusoidal source of fixed amplitude drives a series R–L–C branch. In AC steady state the whole
           branch is described by one complex number, its impedance <M>{"Z"}</M>, and the phasor current
           follows from the phasor voltage by Ohm's law in phasor form:
         </P>
         <Eq>{"\\tilde{I} = \\frac{\\tilde{V}}{Z}, \\qquad Z = R + j\\left(\\omega L - \\frac{1}{\\omega C}\\right)"}</Eq>
+        {/* move: infer (explain_mechanism) — the connecting sentence the equation alone does not carry */}
         <P>
           Here <M>{"\\tilde{V}"}</M> and <M>{"\\tilde{I}"}</M> are the voltage and current phasors,
           <M>{"\\omega"}</M> is the source's angular frequency in rad/s, and <M>{"R"}</M>, <M>{"L"}</M>,
@@ -728,12 +730,14 @@ const EXEMPLAR_CONCEPT_TOPIC = {
           <M>{"|Z|"}</M> increases <M>{"|\\tilde{I}|"}</M> in exact inverse proportion — halve
           <M>{"|Z|"}</M> and the current doubles.
         </P>
+        {/* move: distinguish (contrast) — the exit_model, stored once; it earns its place from the prose above */}
         <KeyConcept label="MAGNITUDE AND PHASE ARE SET SEPARATELY">
           <M>{"|Z|"}</M> fixes how large the current is; the angle of <M>{"Z"}</M> fixes how far the
           current lags or leads the voltage, since <M>{"\\angle\\tilde{I} = \\angle\\tilde{V} - \\angle Z"}</M>.
           A change that leaves <M>{"\\angle Z"}</M> alone leaves the phase shift alone, however much
           <M>{"|Z|"}</M> moves.
         </KeyConcept>
+        {/* example_sequence: worked, then contrasting_nonexample — placed after the learner knows what to attend to */}
         <P>
           Example: with <M>{"|\\tilde{V}| = 10\\ \\text{V}"}</M> and <M>{"|Z| = 5\\ \\Omega"}</M> the current is
           2 A; at <M>{"|Z| = 2.5\\ \\Omega"}</M> it is 4 A. Contrast: adding series resistance raises
@@ -743,6 +747,7 @@ const EXEMPLAR_CONCEPT_TOPIC = {
         </P>
       </Section>
       <Section title="Check yourself">
+        {/* exit_evidence: recall — requires only the exit_model, introduces nothing new */}
         <P>
           The source amplitude is fixed and <M>{"|Z|"}</M> is halved without changing <M>{"\\angle Z"}</M>.
           Predict the new current magnitude and phase before opening the answer.
@@ -753,13 +758,23 @@ const EXEMPLAR_CONCEPT_TOPIC = {
             unchanged, since only <M>{"\\angle Z"}</M> enters it.
           </P>
         </CollapsibleBlock>
+        {/* exit_evidence: near_transfer — same relation, new surface */}
+        <P>
+          A branch is retuned so that <M>{"|Z|"}</M> doubles while <M>{"\\angle Z"}</M> stays where it was.
+          Predict <M>{"|\\tilde{I}|"}</M> and the phase shift.
+        </P>
+        <CollapsibleBlock label="Answer">
+          <P>
+            <M>{"|\\tilde{I}|"}</M> halves; the phase shift is unchanged.
+          </P>
+        </CollapsibleBlock>
       </Section>
     </>
   ),
 };
 ```
 
-**Procedure arc** — `kind: procedure`, question "How do I find the Thevenin resistance of a network?", moves purpose → complete worked model → faded instance → independent application, exit check = the independent item:
+**Procedure arc** — `kind: procedure`; `central_question` "How do I find the Thevenin resistance of a network?"; moves establish (orient: what the procedure is for) → apply (worked model) → apply (faded instance) → check (independent application); `example_sequence` = worked, faded, transfer; `exit_model` "zero the independent sources, look in from the terminals, reduce"; `exit_evidence` = near_transfer (faded) + far_transfer (current source, on your own):
 
 ```jsx
 const EXEMPLAR_PROCEDURE_TOPIC = {
@@ -771,6 +786,7 @@ const EXEMPLAR_PROCEDURE_TOPIC = {
   content: (gp, renderId) => (
     <>
       <Section title="What the procedure is for">
+        {/* move: establish (orient) — why the procedure exists, then the procedure as a numbered list */}
         <P>
           Any linear two-terminal network can be replaced, as seen from its terminals, by a voltage source
           <M>{"V_{th}"}</M> in series with a resistance <M>{"R_{th}"}</M>; the replacement is what lets you
@@ -786,6 +802,7 @@ const EXEMPLAR_PROCEDURE_TOPIC = {
         </ol>
       </Section>
       <Section title="Worked example">
+        {/* example_sequence: worked — the complete model, with the common error named against it */}
         <P>
           A 12 V source in series with 4 Ω, then 12 Ω across the terminals. Nothing sits beyond the terminals,
           so there is no load to remove. Zero the source: the 12 V becomes a wire, and the 4 Ω and the 12 Ω now
@@ -799,6 +816,7 @@ const EXEMPLAR_PROCEDURE_TOPIC = {
         </P>
       </Section>
       <Section title="Now with one step left to you">
+        {/* example_sequence: faded — exit_evidence near_transfer */}
         <P>
           A 6 V source in series with 2 Ω, then 3 Ω across the terminals, then a 6 Ω load. Remove the load;
           short the source; the 2 Ω and 3 Ω are then in parallel across the terminals. Compute
@@ -809,6 +827,7 @@ const EXEMPLAR_PROCEDURE_TOPIC = {
         </CollapsibleBlock>
       </Section>
       <Section title="On your own">
+        {/* example_sequence: transfer — exit_evidence far_transfer (a current source, which the worked model never showed) */}
         <P>
           A 5 mA current source in parallel with 2 kΩ, then 3 kΩ in series to the output terminal (the other
           terminal is the bottom rail). Find <M>{"R_{th}"}</M> — decide first what zeroing a current source
@@ -826,7 +845,7 @@ const EXEMPLAR_PROCEDURE_TOPIC = {
 };
 ```
 
-What these model, move by move: the opening sentence is the first content-bearing claim (no "In this section…"); the connecting sentence after each equation states the inference the equation alone does not; the `KeyConcept` carries the one conclusion the prose has not already stated; the example instantiates and the contrast discriminates; the procedure is a numbered `<ol className="info-list">` (bullets are for parallel items only); the check is a prediction the learner commits to before the collapsed answer. `<ol className="info-list">` renders numbered steps via `@core` CSS while sharing the `.info-list li` context-capture selector, so no handler changes are needed.
+What these model, move by move: the opening sentence is the first content-bearing claim (no "In this section…", no hook); each paragraph has one controlling claim stated early; the connecting sentence after each equation states the inference the equation alone does not; the `KeyConcept` stores the `exit_model` once and never replaces the explanation that earns it; examples carry their declared function and land after the learner knows what to attend to; the procedure is a numbered `<ol className="info-list">` (bullets are for parallel items only); each check is a prediction the learner commits to before the collapsed answer, requiring the exit model and nothing new; the topic ends on its synthesis, not a caveat or a recap. `<ol className="info-list">` renders numbered steps via `@core` CSS while sharing the `.info-list li` context-capture selector, so no handler changes are needed.
 
 ## Notes for assembly agents
 
@@ -844,7 +863,7 @@ What these model, move by move: the opening sentence is the first content-bearin
 - **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
 - **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
 - **No emojis** anywhere.
-- **Prose follows `references/teaching-communication.md`**: authored against the topic's `teaching_arc`, opening substantive, causal links in prose (bullet lint: no "because / therefore / however" inside `<ul>` items; procedures as `<ol className="info-list">`), symbols defined at first use, `KeyConcept` once per critical conclusion, in-domain examples and contrasts over analogies, no historical asides or trivia, the exit check landed as an inline check. The exemplars above are the model; the Phase 4 reviewer's discourse kinds are the enforcement.
+- **Prose follows `references/teaching-communication.md`**: authored against the topic's `teaching_arc` in the Phase 3 assembly order (moves → explanation units → format → claim-before-support → bridges → definitions at first use → coherence pass → media at the move it serves), opening substantive, one controlling claim per paragraph, causal links in prose (bullet lint: no "because / therefore / however" inside `<ul>` items; procedures as `<ol className="info-list">`; no heading over one short paragraph; no nested lists), symbols defined at first use, `KeyConcept` stores a conclusion or decision rule and never replaces the explanation that earns it, in-domain examples with declared functions over analogies, no historical asides or trivia, the ending synthesizes to the `exit_model` and the `exit_evidence` lands as inline checks. The exemplars above are the model; the Phase 4 reviewer's discourse pass is the enforcement.
 - **Chatbot props**: the full prop list is the mount in the skeleton above. `institution` is the only optional identity prop — a plain string surfaced in the tutor system prompt; include it only when the lesson should name an institution, omit it otherwise. The chat panel and its toggle are PROD-gated inside `Chatbot` itself (dev-only); do not add per-lesson gating.
 - **Practice problems**: use `PracticeProblem` from `@core` — never a hand-rolled card. Statement visible, solution collapsed (`defaultOpen` false), provenance badge correct (`"official"` only for from-source solutions), `aiSources` populated for derived ones. See the canonical-pattern section in the skeleton.
 - **Desmos embeds** (`<DesmosGraph>`): pass a stable `state` prop — if the parent rebuilds the state object on every render, the calculator remounts on every render too. Wrap in `useMemo` if constructing from component state. The component strips `isPlaying:true` from any supplied state; animation is always student-initiated via Desmos's native per-slider Play button inside the expression panel (there is no custom overlay play button — the embed is student-drag-resizable instead). Confirm `VITE_DESMOS_KEY` is set in the workspace-root `.env.local` before relying on a Desmos embed (the template's `vite.config.js` points `envDir` at the workspace root, so the single root file serves every lesson). **Authoring the `state` object is the error-prone part** — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds must be STRINGS (`"0.1"`, not `0.1`) or `setState` crashes silently with no on-screen error. Read `references/desmos-schema.md` before writing your first embed.

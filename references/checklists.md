@@ -156,14 +156,19 @@ Run against the assembled lesson (Phase 4) and against the Phase 2 plan. The les
 
 Run against the assembled lesson (Phase 4) and while authoring (Phase 3). Rules canonical in `references/teaching-communication.md`; enforcement kinds in `agents/content-review-agent.md`; exemplars in `references/template.md` § Exposition exemplars.
 
-- [ ] **Authored against the arc.** Every topic with a `teaching_arc` preserves its dependency structure, its `question`, and its `exit_check` (moves may be merged or reordered). Gate question answered yes: the intended learner can reconstruct why every major step follows without inventing an unstated idea.
-- [ ] **Substantive opening.** The topic's first sentence is a content-bearing claim, or a 1–2 sentence organizer only where the topic needs a frame. No "In this section we will…".
+- [ ] **Authored against the arc.** Every topic with a `teaching_arc` preserves its dependency structure, its `central_question`, its `exit_model`, and its `exit_evidence` (moves may be merged or reordered). Gate question answered yes: the intended learner can reconstruct why every major step follows without inventing an unstated idea. Rubric gates clear (no 0 on macro-order / adequacy / inference / terminology; average ≥ 2.0; never economy 3 with adequacy ≤ 1).
+- [ ] **Substantive opening.** The topic's first sentence is a content-bearing claim, or a 1–2 sentence organizer only where the topic needs a frame. No "In this section we will…", no hook.
+- [ ] **One controlling claim per paragraph**, stated early and completed; given-to-new flow; paragraphs end on their conclusion; transitions say why the next idea follows.
+- [ ] **Headings mark moves.** No heading over one short paragraph; no generic "Overview" / "Key Ideas"; no nested lists; bullets have a lead-in stem and are parallel.
+- [ ] **Examples carry their declared function** (`worked / faded / contrasting_nonexample / boundary / transfer`) and land after the learner knows what feature to notice; misconception moves only where documented.
+- [ ] **Ending synthesizes** to the `exit_model`; exit checks require it and introduce nothing new; only genuinely optional depth is collapsed.
 - [ ] **Dependency before consequence.** No consequence before its rule, exception before base case, representation before it is taught, result before its assumptions.
 - [ ] **Inference links stated** for the stated `audience_level`; adjacent equations have the connecting sentence; every symbol defined at first use; validity conditions stated where they change the result.
 - [ ] **Representation matches structure.** Prose for causal/logical links; `<ol className="info-list">` for procedures; tables for comparisons; `<ul>` only for parallel items — bullet lint: no "because / therefore / however / whereas" inside list items.
 - [ ] **Say each thing once.** No proposition repeated across `<P>` + `<KeyConcept>` + caption + summary; `KeyConcept` once per critical conclusion; no closing summary that restates the section.
 - [ ] **No analogy by default; no seductive detail.** In-domain examples and contrasts instead; an analogy only for a known-hard concept, fully mapped with its limits stated; no historical asides, trivia, or "fun intuition".
 - [ ] **Interleaved / deferred checks labelled** so a later pass does not "fix" a desirable difficulty as a defect.
+- [ ] **Media declare a learner action** (predict / observe / explain / revise) with a prediction before and an interpretation after; no medium stands in for the sentence that states the relation.
 
 ---
 

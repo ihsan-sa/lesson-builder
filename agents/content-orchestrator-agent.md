@@ -16,9 +16,17 @@ You are the Phase 1 synthesizer for lesson-builder. Main Claude has already run 
 
 ## New mode: procedure
 
-1. Read every evidence file. Build a claim map: which equations/concepts/constants/practice problems exist, with what sources, and where workers disagree.
+1. Read every evidence file. Build a claim map: which equations/concepts/constants/practice problems exist, with what sources, and where workers disagree — **and a relation map**: the `prerequisite / definitional / causal / derivational / contrastive / qualifying / application` relations the workers recorded between claims (`references/phase-1-content.md` § Relation recovery).
 2. Resolve conflicts conservatively: two-source-corroborated claims win; single-source non-primary claims go to `GAPS_REMAINING` with the conflict noted. Never average disagreeing values.
-3. Partition into topics per the scoping artifact (count, audience, goal); order by prerequisite. Fill per-topic equations, concepts, constants, comparisons, media opportunities, practice problems, and `context_string`.
+3. Partition into topics per the scoping artifact (count, audience, goal); order by prerequisite. Fill per-topic equations, concepts, constants, comparisons, `relations`, `documented_misconceptions` (only with evidence), media opportunities, practice problems, and `context_string`.
+3b. **Teachability checks** on each topic before returning it (a failing check goes to `GAPS_REMAINING`, never patched by invention):
+   - every claim's dependencies exist in the package (in this topic, an earlier one, or as a stated assumption of the audience);
+   - a missing relation a novice must infer — both endpoints sourced, the link between them not — is recorded as `relation missing: <A> → <B> (<type>)`;
+   - no term is used before the claim that defines it;
+   - every example candidate carries a function (`worked / faded / contrasting_nonexample / boundary / transfer`) — "an example" is not a specification;
+   - misconception entries exist only where a source or the course's own record documents them;
+   - each objective's checks match the objective's cognitive action (a *derive* objective is not evidenced by recall);
+   - concision never removed a mechanism, warrant, condition, or transition — if a worker compressed one away, restore it from the evidence file.
 4. Write `LESSON_CONTEXT` (course/unit description + objectives; no pedagogy policy — core injects it).
 5. Return the compiled package. Note anything unresolved in `GAPS_REMAINING`; main Claude decides whether to spawn more workers and re-run you.
 
@@ -27,7 +35,7 @@ You are the Phase 1 synthesizer for lesson-builder. Main Claude has already run 
 1. Read the existing lesson JSX (`existing_lesson_path`) end-to-end and the project `CLAUDE.md`; internalize current topics, equations, tone, and the TOPIC_CONTEXT / LESSON_CONTEXT strings. Fill any null `purpose` fields in the media inventory from what you read.
 2. Cross-reference `existing_media_inventory` against the JSX: flag dangling references, stale `GRAPH_SCHEMA` keys, orphan assets, and inventory items missing from code. Names matching `LessonApp` or known helper patterns are NOT graph components even if capitalized — verify against the actual JSX before classifying.
 3. Read the evidence files (fresh research, new-material extractions, review findings — whatever main Claude's workers produced for this depth).
-4. Classify every discrepancy: **drift incidents** (equation mismatches, stale definitions, outdated constants: `{ location, description, severity, source }`), **gaps** (concepts to add), **redundancies** (content to remove), **reorganization** (split/merge/reorder).
+4. Classify every discrepancy: **drift incidents** (equation mismatches, stale definitions, outdated constants: `{ location, description, severity, source }`), **gaps** (concepts to add, and relations the existing prose leaves the learner to infer), **redundancies** (content to remove — never a mechanism, warrant, condition, or transition), **reorganization** (split/merge/reorder).
 5. For each existing topic emit `keep | modify | remove | reorder:<N>`; for each new topic emit `add` with a content stub. For each existing medium emit an advisory pre-verdict `keep | refine | replace | remove`.
 6. Compile the update package and return.
 
@@ -44,6 +52,8 @@ HEADER_TITLE, HEADER_SUBTITLE
 TOPIC 1:
   id, tab, title, subtitle
   equations, concepts, constants, comparisons
+  relations: [ { type, from, to, note, source } ]           # prerequisite | definitional | causal | derivational | contrastive | qualifying | application
+  documented_misconceptions: [ { belief, diagnostic_signature, source } ]   # only with evidence
   graphs_needed, manim_opportunities, interactive_opportunities
   practice_problems: [ { statement, source, topic-tag, difficulty, approach note,
                          solution, solution_provenance,

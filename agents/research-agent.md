@@ -26,10 +26,14 @@ The brief names either a topic area to research OR a provided source file to ext
   constants: [ { symbol: "...", value: "...", units: "...", sources: [ ... ] } ],
   comparisons: [ { contrast: "...", explanation: "...", sources: [ ... ] } ],   // where contrasts teach (regimes, limiting cases)
   misconceptions: [ { faulty_idea: "...", why_wrong: "...", correct_conception: "...", sources: [ ... ] } ],  // when documented
+  relations: [ { type: "prerequisite|definitional|causal|derivational|contrastive|qualifying|application",
+                 from: "<claim/equation/concept>", to: "<claim/equation/concept>", note: "the link itself", sources: [ ... ] } ],
   sources_consulted: [ ... ],
-  gaps: [ "what could not be sourced to the required bar" ]
+  gaps: [ "what could not be sourced to the required bar", "relation missing: <A> -> <B> (<type>)" ]
 }
 ```
+
+`relations` are what make the claims teachable (`references/phase-1-content.md` § Relation recovery): for every non-trivial equation or concept, record what it depends on, what it defines or relies on, what it explains, what it is derived from (and the non-obvious step), what it is confused with (and the discriminating feature), the condition under which it holds, and where it is used. A relation a novice would have to infer, whose endpoints you sourced but whose link you could not, goes in `gaps` — never leave both endpoints in the body with the link silently absent. Compress restatements and asides freely; never compress away a mechanism, warrant, condition, or transition.
 
 `sources` arrays carry the ≥2 independent corroborating sources for every non-trivial equation, constant, and claim (one suffices only for a primary authoritative reference — NIST, CODATA, the original paper). Stay inside the brief's scope bounds — do not broaden past named subtopics or the `materials_scope` cap. Unsourced material goes in `gaps`, never in the body.
 

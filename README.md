@@ -52,7 +52,7 @@ flowchart TD
 
 For a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*. The skill flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced at Phase 0 for explicit override.
 
-Teaching quality is evidence-based: lessons are planned backward from measurable objectives, each topic gets a **teaching arc** (the explanation's moves and exit check, planned before any prose exists), prose follows the discourse rules in `references/teaching-communication.md` (shortest explanation with no necessary inference unstated, representation matched to structure, analogies off by default, no seductive detail), the embedded tutor follows a withhold-first pedagogy policy plus a communication layer with response modes and numeric scope defaults (both injected from the shared `_lesson-core` so every lesson runs the same current rules), a Phase 4 pedagogy gate checks every objective is assessed and every arc survived, the content reviewer flags discourse defects by kind (and is calibrated against twelve seeded fixtures), and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
+Teaching quality is evidence-based: lessons are planned backward from measurable objectives, each topic gets a **teaching arc** (central question, entry state, purposed moves, example functions, exit model and exit evidence — planned before any prose exists, and rejected if its moves can be reordered without changing meaning), prose follows the discourse rules in `references/teaching-communication.md` (shortest explanation with no necessary inference unstated, one controlling claim per paragraph, representation matched to structure, analogies off by default, no seductive detail), the embedded tutor follows a withhold-first pedagogy policy plus the teaching spec's communication block with seven response modes and budgets (both injected from the shared `_lesson-core` so every lesson runs the same current rules), a Phase 4 pedagogy gate checks every objective is assessed and every arc survived, the content reviewer runs an exhaustive accuracy pass and a calibrated discourse pass scored on a 0–3 rubric (and is calibrated against twenty-four blind seeded fixtures in `evals/teaching/`), and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
 
 ## Key invariants
 
@@ -102,8 +102,9 @@ references/
   template.md                  Lesson JSX skeleton (new-mode starting point) + exposition exemplars
   teaching-communication.md    Discourse layer: representation/exposition rules, analogy policy,
                                teaching arc, tutor response modes (canonical; mirrored in the tutor prompt)
-  teaching-review-fixtures.md  Blind calibration set for the content reviewer (12 seeded failures)
-  teaching-review-fixtures-key.md  Answer key + calibration procedure (never shown to the reviewer)
+evals/teaching/                Calibration + benchmark assets: lesson-fragments/ (12 blind reviewer
+                               fixtures), tutor-cases.jsonl (12 tutor fixtures, 6 probes, 100 stratified
+                               cases), rubric.md, expected-failures.json (answer key), README.md (how to run)
   server-template.md           package.json, vite.config.js, proxy shim, test_lesson.cjs
   checklists.md                KaTeX safety, template compliance, splice + post-splice checks
   desmos-schema.md             Desmos state schema + string-vs-number footguns

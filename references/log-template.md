@@ -5,7 +5,7 @@ Reference for main Claude when writing the per-lesson build trail during lesson-
 **Pipeline-v2 fields (2026-07)** — the skeletons below predate several fields that later phases now READ BACK from the log; whenever the phase docs name them, record them even though the older skeletons don't show a slot:
 
 - Phase 0: the full scoping artifact incl. `lesson_file`, `course_name`; update mode: `stashed: stash@{0} (<oid>)` with the stash OID and the branch the stash was taken on.
-- Phase 2: `Approval: PENDING → APPROVED/ABORTED by user at <timestamp>` in BOTH modes; per-media `media_id` + `original_intent` in the plan (incl. `keep` rows); per-topic `objectives:` blocks; per-topic `teaching_arc:` blocks in full (Phase 3 authors against them, Phase 4's `arc` check reads them back).
+- Phase 2: `Approval: PENDING → APPROVED/ABORTED by user at <timestamp>` in BOTH modes; per-media `media_id` + `original_intent` in the plan (incl. `keep` rows); per-topic `objectives:` blocks; per-topic `teaching_arc:` blocks in full (central question, entry state, purposed moves, example sequence, exit model, exit evidence — Phase 3 authors against them, Phase 4's `arc` check reads them back); any `Arc rejected (reorder test): …` lines.
 - Phase 3: `Branch:` (actual name incl. any collision suffix — Phase 5 consumes it verbatim) and `Base SHA:`.
 - Phase 4: the unresolved list covers EVERY open issue at exit with origin + attempted/no-attempt reason (incl. never-attempted low-confidence minors, keep-media findings, coverage gaps).
 - Phase 5: `deploy_code` (from the build-all inventory), stash recovery outcome by OID.
