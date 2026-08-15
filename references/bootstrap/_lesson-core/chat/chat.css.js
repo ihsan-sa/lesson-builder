@@ -521,6 +521,13 @@ export const STYLES = `
   border-radius: 50%;
   background: var(--accent);
 }
+/* Ordered procedures: <ol className="info-list"> renders numbered steps
+   (representation rule — numbered list for a procedure, bullets only for
+   parallel items) while sharing .info-list li in every context-capture
+   selector list, so no handler or hover rule needs a new class. */
+ol.info-list { list-style: decimal; padding-left: 22px; }
+ol.info-list li::before { content: none; }
+ol.info-list li::marker { color: var(--accent); font-family: var(--font-mono); font-size: 0.9em; }
 
 .compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 12px 0 24px; }
 .compare-card {

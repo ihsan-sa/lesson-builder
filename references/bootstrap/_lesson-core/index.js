@@ -11,7 +11,7 @@ export { routeLessonContext, hasFocusedThread } from "./chat/contextRouter.js";
 // Canonical tutoring policy (exported for tooling that needs the text, e.g.
 // the Lumen packager appending it to a bridged lessonContext). Lessons do NOT
 // paste it into LESSON_CONTEXT — buildSystemPrompt injects it automatically.
-export { PEDAGOGY_POLICY } from "./chat/buildSystemPrompt.js";
+export { PEDAGOGY_POLICY, TEACHING_COMMUNICATION, TEACHING_EXEMPLARS } from "./chat/buildSystemPrompt.js";
 
 // The Lumen shell: top bar, contents rail (+ scroll-spy), article container,
 // and tutor placement (side / bottom / in-app window / real browser window).

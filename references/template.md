@@ -298,24 +298,31 @@ export const GRAPH_SCHEMA = {
 // headings the topic renders — no separate outline manifest to keep in sync.
 
 const TOPICS = [
-  // TODO: one entry per topic. Example:
+  // TODO: one entry per topic. The prose is authored against the topic's
+  // teaching_arc from the approved plan, under references/teaching-
+  // communication.md; full positive exemplars (a concept arc and a procedure
+  // arc) are in references/template.md § "Exposition exemplars". Shape:
   // {
   //   id: "topic-1",
-  //   tab: "Topic 1",
-  //   title: "Full Title of Topic 1",
-  //   subtitle: "Core result",
-  //   blurb: "One or two sentences framing what this topic establishes.",
+  //   tab: "Impedance",
+  //   title: "Impedance sets the current",
+  //   subtitle: "Core relation",
+  //   blurb: "For a fixed source voltage, |Z| sets how much current flows and its angle sets when.",
   //   content: (gp, renderId) => (
-  //     <Section title="Section Heading">
+  //     <Section title="Current at fixed voltage">
   //       <P>
-  //         Body text with inline math <M>{"E = hf"}</M> and a block
-  //         equation below.
+  //         A sinusoidal source of fixed amplitude drives a series R-L-C branch.
+  //         In AC steady state the branch is one complex number, its impedance
+  //         <M>{"Z"}</M>, and the phasor current follows from the phasor voltage:
   //       </P>
-  //       <Eq>{"E_n = \\frac{n^2 \\pi^2 \\hbar^2}{2 m_e a^2}"}</Eq>
-  //       <KeyConcept label="KEY IDEA">
-  //         Energy is quantized. Remember: use \\lt and \\gt inside KaTeX,
-  //         never bare &lt; or &gt;.
-  //       </KeyConcept>
+  //       <Eq>{"\\tilde{I} = \\tilde{V}/Z, \\qquad Z = R + j\\left(\\omega L - \\tfrac{1}{\\omega C}\\right)"}</Eq>
+  //       <P>
+  //         Because <M>{"|\\tilde{V}|"}</M> is fixed, the current magnitude is
+  //         <M>{"|\\tilde{V}|/|Z|"}</M>: halve <M>{"|Z|"}</M> and the current
+  //         doubles. (Symbols defined at first use; the sentence after the
+  //         equation carries the inference the equation alone does not.
+  //         KaTeX: use \\lt and \\gt, never bare &lt; or &gt;.)
+  //       </P>
   //       <LiveGraph graphKey="myGraph" renderId={renderId}>
   //         <MyGraph params={gp.myGraph} />
   //       </LiveGraph>
@@ -691,6 +698,136 @@ function LessonApp() {
 export default LessonApp;
 ```
 
+## Exposition exemplars (positive models for topic bodies)
+
+Two complete topic bodies that follow `references/teaching-communication.md`: substantive opening, prose carrying the causal links, every symbol defined at first use, one `KeyConcept` for the one critical conclusion (never a restatement), an in-domain example and a contrast, no analogy, the arc's exit check landed as a prediction-before-reveal. Imitate the shape, not the subject. Both parse as-is (imports from `@core` assumed).
+
+**Concept arc** — `kind: concept`, question "Why does current increase when impedance decreases?", moves establish → formalize → infer → distinguish, exit check "If |Z| is halved at fixed voltage, what happens to |I|?":
+
+```jsx
+const EXEMPLAR_CONCEPT_TOPIC = {
+  id: "topic-2",
+  tab: "Impedance",
+  title: "Impedance sets the current",
+  subtitle: "Core relation",
+  blurb: "For a fixed source voltage, the impedance magnitude sets how much current flows and its angle sets when.",
+  content: (gp, renderId) => (
+    <>
+      <Section title="Current at fixed voltage">
+        <P>
+          A sinusoidal source of fixed amplitude drives a series R–L–C branch. In AC steady state the whole
+          branch is described by one complex number, its impedance <M>{"Z"}</M>, and the phasor current
+          follows from the phasor voltage by Ohm's law in phasor form:
+        </P>
+        <Eq>{"\\tilde{I} = \\frac{\\tilde{V}}{Z}, \\qquad Z = R + j\\left(\\omega L - \\frac{1}{\\omega C}\\right)"}</Eq>
+        <P>
+          Here <M>{"\\tilde{V}"}</M> and <M>{"\\tilde{I}"}</M> are the voltage and current phasors,
+          <M>{"\\omega"}</M> is the source's angular frequency in rad/s, and <M>{"R"}</M>, <M>{"L"}</M>,
+          <M>{"C"}</M> are the element values. Because the source amplitude <M>{"|\\tilde{V}|"}</M> is
+          fixed, the current magnitude is <M>{"|\\tilde{I}| = |\\tilde{V}|/|Z|"}</M>: reducing
+          <M>{"|Z|"}</M> increases <M>{"|\\tilde{I}|"}</M> in exact inverse proportion — halve
+          <M>{"|Z|"}</M> and the current doubles.
+        </P>
+        <KeyConcept label="MAGNITUDE AND PHASE ARE SET SEPARATELY">
+          <M>{"|Z|"}</M> fixes how large the current is; the angle of <M>{"Z"}</M> fixes how far the
+          current lags or leads the voltage, since <M>{"\\angle\\tilde{I} = \\angle\\tilde{V} - \\angle Z"}</M>.
+          A change that leaves <M>{"\\angle Z"}</M> alone leaves the phase shift alone, however much
+          <M>{"|Z|"}</M> moves.
+        </KeyConcept>
+        <P>
+          Example: with <M>{"|\\tilde{V}| = 10\\ \\text{V}"}</M> and <M>{"|Z| = 5\\ \\Omega"}</M> the current is
+          2 A; at <M>{"|Z| = 2.5\\ \\Omega"}</M> it is 4 A. Contrast: adding series resistance raises
+          <M>{"|Z|"}</M> and lowers the current, but so does moving the source frequency away from resonance
+          with <M>{"R"}</M> untouched — both act through <M>{"|Z|"}</M>, which is the only thing the current
+          magnitude responds to.
+        </P>
+      </Section>
+      <Section title="Check yourself">
+        <P>
+          The source amplitude is fixed and <M>{"|Z|"}</M> is halved without changing <M>{"\\angle Z"}</M>.
+          Predict the new current magnitude and phase before opening the answer.
+        </P>
+        <CollapsibleBlock label="Answer">
+          <P>
+            The magnitude doubles, since <M>{"|\\tilde{I}| = |\\tilde{V}|/|Z|"}</M>; the phase shift is
+            unchanged, since only <M>{"\\angle Z"}</M> enters it.
+          </P>
+        </CollapsibleBlock>
+      </Section>
+    </>
+  ),
+};
+```
+
+**Procedure arc** — `kind: procedure`, question "How do I find the Thevenin resistance of a network?", moves purpose → complete worked model → faded instance → independent application, exit check = the independent item:
+
+```jsx
+const EXEMPLAR_PROCEDURE_TOPIC = {
+  id: "topic-4",
+  tab: "Thevenin",
+  title: "Finding the Thevenin resistance",
+  subtitle: "Procedure",
+  blurb: "Zero the independent sources, look in from the terminals, reduce.",
+  content: (gp, renderId) => (
+    <>
+      <Section title="What the procedure is for">
+        <P>
+          Any linear two-terminal network can be replaced, as seen from its terminals, by a voltage source
+          <M>{"V_{th}"}</M> in series with a resistance <M>{"R_{th}"}</M>; the replacement is what lets you
+          answer "what does this network deliver to a load?" without re-solving the network for every load.
+          <M>{"R_{th}"}</M> is the resistance seen looking into the terminals with every independent source
+          set to zero — a voltage source becomes a short circuit and a current source an open circuit,
+          because a zeroed source contributes no excitation and only its internal resistance remains.
+        </P>
+        <ol className="info-list">
+          <li>Remove the load from the terminals.</li>
+          <li>Set every independent source to zero (voltage source → short, current source → open); leave dependent sources in place.</li>
+          <li>Reduce what remains by series / parallel combination as seen from the terminals.</li>
+        </ol>
+      </Section>
+      <Section title="Worked example">
+        <P>
+          A 12 V source in series with 4 Ω, then 12 Ω across the terminals. Nothing sits beyond the terminals,
+          so there is no load to remove. Zero the source: the 12 V becomes a wire, and the 4 Ω and the 12 Ω now
+          both connect the top terminal to the bottom one — they are in parallel, not in series as the original
+          drawing suggests.
+        </P>
+        <Eq>{"R_{th} = 4 \\parallel 12 = \\frac{4 \\cdot 12}{4 + 12} = 3\\ \\Omega"}</Eq>
+        <P>
+          The common error is to add them (16 Ω): that treats the source as still in place and the two resistors
+          as carrying one common current, which they do not once the source is shorted.
+        </P>
+      </Section>
+      <Section title="Now with one step left to you">
+        <P>
+          A 6 V source in series with 2 Ω, then 3 Ω across the terminals, then a 6 Ω load. Remove the load;
+          short the source; the 2 Ω and 3 Ω are then in parallel across the terminals. Compute
+          <M>{"R_{th}"}</M> before opening the answer.
+        </P>
+        <CollapsibleBlock label="Answer">
+          <P><M>{"R_{th} = 2 \\parallel 3 = 6/5 = 1.2\\ \\Omega"}</M>.</P>
+        </CollapsibleBlock>
+      </Section>
+      <Section title="On your own">
+        <P>
+          A 5 mA current source in parallel with 2 kΩ, then 3 kΩ in series to the output terminal (the other
+          terminal is the bottom rail). Find <M>{"R_{th}"}</M> — decide first what zeroing a current source
+          does to the branch it sits in.
+        </P>
+        <CollapsibleBlock label="Answer">
+          <P>
+            The current source becomes an open, leaving 2 kΩ in series with 3 kΩ from the terminals:
+            <M>{"R_{th} = 5\\ \\text{k}\\Omega"}</M>.
+          </P>
+        </CollapsibleBlock>
+      </Section>
+    </>
+  ),
+};
+```
+
+What these model, move by move: the opening sentence is the first content-bearing claim (no "In this section…"); the connecting sentence after each equation states the inference the equation alone does not; the `KeyConcept` carries the one conclusion the prose has not already stated; the example instantiates and the contrast discriminates; the procedure is a numbered `<ol className="info-list">` (bullets are for parallel items only); the check is a prediction the learner commits to before the collapsed answer. `<ol className="info-list">` renders numbered steps via `@core` CSS while sharing the `.info-list li` context-capture selector, so no handler changes are needed.
+
 ## Notes for assembly agents
 
 - **Do not inline `LessonShell`, `Chatbot`, `STYLES`, or UI primitives.** Everything in `_lesson-core/index.js` comes from `@core`. Local copies drift and fail review.
@@ -707,6 +844,7 @@ export default LessonApp;
 - **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
 - **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
 - **No emojis** anywhere.
+- **Prose follows `references/teaching-communication.md`**: authored against the topic's `teaching_arc`, opening substantive, causal links in prose (bullet lint: no "because / therefore / however" inside `<ul>` items; procedures as `<ol className="info-list">`), symbols defined at first use, `KeyConcept` once per critical conclusion, in-domain examples and contrasts over analogies, no historical asides or trivia, the exit check landed as an inline check. The exemplars above are the model; the Phase 4 reviewer's discourse kinds are the enforcement.
 - **Chatbot props**: the full prop list is the mount in the skeleton above. `institution` is the only optional identity prop — a plain string surfaced in the tutor system prompt; include it only when the lesson should name an institution, omit it otherwise. The chat panel and its toggle are PROD-gated inside `Chatbot` itself (dev-only); do not add per-lesson gating.
 - **Practice problems**: use `PracticeProblem` from `@core` — never a hand-rolled card. Statement visible, solution collapsed (`defaultOpen` false), provenance badge correct (`"official"` only for from-source solutions), `aiSources` populated for derived ones. See the canonical-pattern section in the skeleton.
 - **Desmos embeds** (`<DesmosGraph>`): pass a stable `state` prop — if the parent rebuilds the state object on every render, the calculator remounts on every render too. Wrap in `useMemo` if constructing from component state. The component strips `isPlaying:true` from any supplied state; animation is always student-initiated via Desmos's native per-slider Play button inside the expression panel (there is no custom overlay play button — the embed is student-drag-resizable instead). Confirm `VITE_DESMOS_KEY` is set in the workspace-root `.env.local` before relying on a Desmos embed (the template's `vite.config.js` points `envDir` at the workspace root, so the single root file serves every lesson). **Authoring the `state` object is the error-prone part** — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds must be STRINGS (`"0.1"`, not `0.1`) or `setState` crashes silently with no on-screen error. Read `references/desmos-schema.md` before writing your first embed.

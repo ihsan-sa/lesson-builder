@@ -13,7 +13,8 @@ The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShe
 - `references/bootstrap.md` — read FIRST on every run. One Glob decides whether the workspace is fresh; if `<workspace_root>/_lesson-core/` is missing, run the bootstrap procedure before Phase 0.
 - `references/update-mode.md` — read FIRST for update mode. Covers mode detection, 5 media actions, branch/stash/merge invariants, no-grandfathering rule.
 - `references/phase-0-scoping.md` through `references/phase-5-deploy.md` — phase procedures for both modes.
-- `references/template.md` — new-mode lesson skeleton.
+- `references/template.md` — new-mode lesson skeleton + exposition exemplars.
+- `references/teaching-communication.md` — how lessons and the tutor explain: representation rules, exposition rules, analogy policy, teaching arc, tutor response modes. Read before Phase 2 (arcs), Phase 3 (prose), and Phase 4 (discourse review). Reviewer calibration set: `references/teaching-review-fixtures.md` (+ `-key.md`).
 - `references/server-template.md` — Vite config, proxy shim, package.json.
 - `references/checklists.md` — KaTeX safety, template compliance, 17-test suite, splice checklists.
 - `references/graph-schema-guide.md` — `GRAPH_SCHEMA` derivation and update-mode backfill.
@@ -27,6 +28,8 @@ The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShe
 If the user flags limited resources — phrases like "quick pass", "keep it cheap", "fast update" — the skill flips to resource-conscious mode: prefer prose and static SVG over manim/interactive, cap research depth at `light` or `targeted`, and break ties toward cheaper actions. Main Claude detects the flag from the initial message and threads `resource_mode: "full" | "limited"` through the scoping artifact into every phase and specialist brief. Log the value (`Resource mode: full|limited`) for traceability.
 
 Under `resource_mode: "full"` (the default) agents must not silently downgrade media richness, research depth, fix-loop iterations, or visual-QA coverage to save time. Cheaper runs require an explicit user signal.
+
+**Explanations are planned, not improvised.** Content architecture (backward design, prerequisite ordering) and interaction architecture (the tutor's retrieval-first policy) were always specified; the discourse layer — how each explanation unfolds — is specified in `references/teaching-communication.md` and enforced end to end: Phase 2 emits a `teaching_arc` per topic, Phase 3 authors prose against it (shortest explanation that leaves no necessary inference unstated; representation matched to structure; analogies off by default; no seductive detail), Phase 4's `content-review-agent` flags discourse defects by kind and checks the arc survived, and the tutor prompt carries the same rules as `TEACHING_COMMUNICATION` with response modes and numeric scope defaults. "Prefer equations over prose" is not a rule anywhere in this skill — prose is the medium for causal reasoning.
 
 **Practice problems from source materials are gold.** When the user's provided materials contain past finals, past midterms, homework questions, or problem sets, Phase 1 extracts each problem with its source attribution and full worked solution; Phase 2 plans them into a per-topic practice section; Phase 3 renders them via the template's `PracticeProblem` card pattern (statement visible, solution collapsed, provenance-marked). These are the highest-value calibration content the lesson can carry — they're the actual questions the student will be graded on. Do NOT fabricate practice problems via research; include only real, attributed ones (course materials, or textbook end-of-chapter problems under `materials_scope: "extensions"`). Collapsed, sourced solutions on practice cards are compatible with the tutor's withhold-first PEDAGOGY POLICY — the policy governs the chatbot's dialogue, not the lesson's attributed practice material.
 
@@ -83,15 +86,17 @@ Phase 1 — Content Analysis   Main Claude fans out extraction/research workers
                               (evidence persisted to .build-scratch/evidence/);
                               content-orchestrator-agent synthesizes. Honors
                               materials_scope to cap or broaden research.
-Phase 2 — Plan               medium-decider-agent (new: ranked media; update: 5-way
-                              keep/refine/replace/remove/add). Human approval gate.
-                              Deploy intent surfaced in the plan's DEPLOY: block.
-Phase 3 — Execution          Parallel specialists. New: assemble from scratch.
+Phase 2 — Plan               Objectives + teaching_arc per topic; medium-decider-agent
+                              (new: ranked media; update: 5-way keep/refine/replace/
+                              remove/add). Human approval gate. Deploy intent surfaced
+                              in the plan's DEPLOY: block.
+Phase 3 — Execution          Parallel specialists; main Claude authors prose against
+                              the arcs. New: assemble from scratch.
                               Update: git branch + splice assembly.
                               Both: write/update private-by-default .gitignore
                               covering materials/, source/, notes/, *.local, .env*.
-Phase 4 — Review + Fix       Parallel code/content/test/visual-QA + pedagogy gate.
-                              Progress-aware fix loop.
+Phase 4 — Review + Fix       Parallel code/content/test/visual-QA + pedagogy gate
+                              (+ discourse kinds and arc check). Progress-aware fix loop.
                               Update: no-grandfathering + regression-watch stop rule.
 Phase 5 — Deploy             Branches on deploy_action. Build verify runs under every
                               action (sanity check). Gitignore-override question
@@ -152,7 +157,7 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
 - `<<DESMOS>>` — bot emits a Desmos state JSON; client validates + hydrates a live calculator. Animation control is Desmos's own per-slider Play button inside the expression panel; `isPlaying:true` is stripped upstream so only the student initiates animation. Requires `VITE_DESMOS_KEY` in `.env.local`; fails loud if missing. Authors embed `<DesmosGraph state={...}/>` directly in lesson JSX for pre-authored interactive graphs. State schema is error-prone — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain.{min,max}`, `polarDomain.{min,max}` must be JSON strings, not numbers, or `setState` crashes silently. Read `references/desmos-schema.md` before authoring either surface.
 - `<<REINFORCE>>` — bot records a durable heuristic about the student, covering three first-class trigger categories: (1) MEDIA signals, (2) STATED PREFERENCES on tone/register/analogy use/explanation depth/format, (3) CORRECTIONS of a prior approach. The client accumulates entries into `[REINFORCED BEHAVIORS]` injected back via ACTIVE CONTEXT and the system prompt treats them as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response, not just media choices. Lesson planning implication: seed each topic with a diverse media mix so the media-signal arm has something to learn from; the preference and correction arms work regardless.
 
-**Chat runtime facts** authors and reviewers should know: the canonical tutoring PEDAGOGY POLICY (retrieval-first, least-help-first hint ladder, task-level feedback) is injected by `@core/chat/buildSystemPrompt.js` — lessons do NOT paste it into `LESSON_CONTEXT`, and legacy lessons that did are marker-detected and not double-injected. The chat panel renders only in dev — `import.meta.env.PROD` gates it (and all `/session` fetches) out of static deploys, which have no proxy. The chat opens on `DEFAULT_MODEL`/`DEFAULT_EFFORT` from `constants/models.js` (the `default: true` entry; keyboard-shortcut chars must be unique and avoid j/g). The proxy passes the selected model name to the `claude` CLI unchanged, so a specific version pick runs that exact version. `<Chatbot>` accepts an optional `institution` prop (e.g. `institution="University X"`) that appears in the tutor system prompt; omit it and no institution is mentioned.
+**Chat runtime facts** authors and reviewers should know: the canonical tutoring PEDAGOGY POLICY (retrieval-first, least-help-first hint ladder, task-level feedback) and the TEACHING COMMUNICATION layer (representation rules, response modes with default scopes, anti-preamble, anti-sycophancy, few-shot exemplars) are injected by `@core/chat/buildSystemPrompt.js` — lessons do NOT paste either into `LESSON_CONTEXT`, and legacy lessons that pasted the policy are marker-detected and not double-injected. The system prompt must stay under the proxy's 28 000-char argv threshold (currently ~20.8k before `LESSON_CONTEXT`), so keep `LESSON_CONTEXT` to course specifics. The chat panel renders only in dev — `import.meta.env.PROD` gates it (and all `/session` fetches) out of static deploys, which have no proxy. The chat opens on `DEFAULT_MODEL`/`DEFAULT_EFFORT` from `constants/models.js` (the `default: true` entry; keyboard-shortcut chars must be unique and avoid j/g). The proxy passes the selected model name to the `claude` CLI unchanged, so a specific version pick runs that exact version. `<Chatbot>` accepts an optional `institution` prop (e.g. `institution="University X"`) that appears in the tutor system prompt; omit it and no institution is mentioned.
 
 **Ctrl+Click context gate** (client-side UX, added late in the dev loop): clicking a lesson content block or chat reply block to add it to chat context now requires the Ctrl key to be held. `body.ctx-ctrl-held` gates hover highlights and the pointer cursor; a capture-phase document click listener stops non-Ctrl clicks before they reach the per-lesson `handleContentClick`. Author-testing note: mention this in lesson-level CLAUDE.md if a human tester will QA the lesson — they will otherwise wonder why plain clicks stopped adding context.
 
@@ -207,7 +212,7 @@ The student-facing tutor has its own default, set in `_lesson-core/constants/mod
 
 **Orchestration and content** (main Claude owns all worker spawns — subagents cannot spawn subagents; workers persist full output to `.build-scratch/evidence/` and return summaries):
 - `content-orchestrator-agent` — Phase 1 SYNTHESIS over persisted worker evidence (new: compile + conflict resolution; update: diff/classify driver)
-- `content-review-agent` — pedagogical content review (Phase 1 + Phase 4)
+- `content-review-agent` — pedagogical content + discourse review (Phase 1 + Phase 4; also grades tutor transcripts and the calibration fixtures)
 - `research-agent` — source extraction, topic research (equations/concepts with sources), claim verification
 
 **Media planning and production**:

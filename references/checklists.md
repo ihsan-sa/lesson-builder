@@ -1,6 +1,6 @@
 # Lesson Builder Checklists
 
-Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 17-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
+Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Exposition (discourse) · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 17-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
 
 ## Purpose
 
@@ -149,6 +149,21 @@ Run against the assembled lesson (Phase 4) and against the Phase 2 plan. The les
 - [ ] **Hint ladder, not answer dump.** The PEDAGOGY POLICY (injected by `@core/chat/buildSystemPrompt.js`) encodes least-help-first (nudge -> hint -> step -> answer as last resort) and step-level interaction. Confirm the lesson's `LESSON_CONTEXT` does not weaken it to "just give the answer."
 - [ ] **Misconception refutation where one exists.** For any topic with a known misconception, `TOPIC_CONTEXT` names the faulty idea + correct conception so the tutor can diagnose-then-refute. Inline copy that addresses the misconception states it, marks it false, and gives the causal reason — not a bare correct statement.
 - [ ] **Feedback is task-focused, never ego.** No person-praise ("you're a natural"), no points / streaks / badges / leaderboards anywhere in lesson copy or tutor steering. Competence feedback is informational and about the work.
+
+---
+
+## Exposition (discourse)
+
+Run against the assembled lesson (Phase 4) and while authoring (Phase 3). Rules canonical in `references/teaching-communication.md`; enforcement kinds in `agents/content-review-agent.md`; exemplars in `references/template.md` § Exposition exemplars.
+
+- [ ] **Authored against the arc.** Every topic with a `teaching_arc` preserves its dependency structure, its `question`, and its `exit_check` (moves may be merged or reordered). Gate question answered yes: the intended learner can reconstruct why every major step follows without inventing an unstated idea.
+- [ ] **Substantive opening.** The topic's first sentence is a content-bearing claim, or a 1–2 sentence organizer only where the topic needs a frame. No "In this section we will…".
+- [ ] **Dependency before consequence.** No consequence before its rule, exception before base case, representation before it is taught, result before its assumptions.
+- [ ] **Inference links stated** for the stated `audience_level`; adjacent equations have the connecting sentence; every symbol defined at first use; validity conditions stated where they change the result.
+- [ ] **Representation matches structure.** Prose for causal/logical links; `<ol className="info-list">` for procedures; tables for comparisons; `<ul>` only for parallel items — bullet lint: no "because / therefore / however / whereas" inside list items.
+- [ ] **Say each thing once.** No proposition repeated across `<P>` + `<KeyConcept>` + caption + summary; `KeyConcept` once per critical conclusion; no closing summary that restates the section.
+- [ ] **No analogy by default; no seductive detail.** In-domain examples and contrasts instead; an analogy only for a known-hard concept, fully mapped with its limits stated; no historical asides, trivia, or "fun intuition".
+- [ ] **Interleaved / deferred checks labelled** so a later pass does not "fix" a desirable difficulty as a defect.
 
 ---
 
@@ -364,12 +379,12 @@ When Phase 4 catches a suspect graph, content-review-agent writes a small Node s
 
 ## Content concision rule
 
-Phase 3 execution agents reference this when writing `<P>` blocks alongside components.
+Phase 3 references this when writing `<P>` blocks alongside components. It is the redundancy half of `references/teaching-communication.md`; the other half — never delete a connecting inference — applies with equal force.
 
-- [ ] Every `<P>` block must teach something the student cannot get from the equation alone.
-- [ ] Do not restate what the equation already says. Example anti-pattern: writing "this equation tells us that X increases with Y" when that fact is obvious from the formula.
-- [ ] Use prose to explain *why*, *when*, and *watch out for*, not *what*. The equation is the *what*.
-- [ ] If a concept is best conveyed by a graph or equation, let the graph or equation do the work. Do not narrate around it.
+- [ ] Every `<P>` block must teach something the student cannot get from the equation alone: the causal link, the interpretation, the validity condition, the step from the previous equation to this one.
+- [ ] Do not restate what the equation already says. Anti-pattern: "this equation tells us that X increases with Y" when the formula shows it — but DO write the sentence that says *why* it does, if the learner could not supply that.
+- [ ] Use prose to explain *why*, *when*, *how this follows*, and *watch out for*; the equation is the *what*.
+- [ ] Multiple representations only when each adds something (equation = formal relation, graph = behaviour, prose = interpretation). A graph caption that restates the paragraph is redundancy, not reinforcement.
 
 ---
 

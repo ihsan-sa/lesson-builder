@@ -15,7 +15,7 @@ Update mode operates on an existing lesson rather than building from scratch. Sa
 - Update mode is a **branch** in the same pipeline, not a parallel pipeline.
 - **Phase 0** adds mode detection, mode confirmation, working-tree check, research-depth question, scope-of-change question, optional media hints.
 - **Phase 1** has content-orchestrator's update branch: read existing JSX end-to-end, build a media inventory, diff against user concerns / new materials, classify drift / gaps / redundancies / reorganization.
-- **Phase 2** uses `medium-decider-agent`'s 5-way taxonomy (`keep / refine / replace / remove / add`) and presents a **change-list** approval view rather than a full plan dump.
+- **Phase 2** uses `medium-decider-agent`'s 5-way taxonomy (`keep / refine / replace / remove / add`) and presents a **change-list** approval view rather than a full plan dump. `add` topics and content-rewrite `modify` topics also get a `teaching_arc` (`references/phase-2-plan.md` § Teaching arc); `keep` topics do not.
 - **Phase 3** does git branch setup, splice assembly against the existing JSX (not skeleton instantiation), post-splice sanity pass.
 - **Phase 4** is mode-agnostic in mechanism; two update-specific rules apply: no-grandfathering, regression-watch.
 - **Phase 5** commits to the update branch and merges `--no-ff` to main; handles stash recovery; leaves branch + stash intact on failure for manual recovery.

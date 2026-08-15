@@ -39,10 +39,26 @@ checks_required: [template_compliance, katex_safety, babel_parse, svg_markup, gr
 
 ### 2. `content-review-agent`
 
-Pedagogical review against the Lesson Plan, the compiled content package from Phase 1, and the original source materials. Two shapes depending on mode:
+Pedagogical review against the Lesson Plan (objectives + `teaching_arc` per topic), the compiled content package from Phase 1, the original source materials, and the discourse rules in `references/teaching-communication.md`. Two shapes depending on mode:
 
 - **New mode**: review content for accuracy, clarity, and alignment with the scope agreed in Phase 0. Flag hallucinated equations, missing caveats, wrong constants, missing variable definitions, or drift between what the Lesson Plan promised and what the JSX actually teaches.
 - **Update mode**: review against the Phase 2 change-list specifically. The change-list is the contract; this reviewer's job is to catch drift between what the user approved and what landed in the JSX. If the change-list says "replace the Shockley diode derivation with the piecewise-linear model", this reviewer confirms the piecewise-linear model is now present AND the old Shockley derivation is actually gone. Drift in either direction is flagged.
+
+**Discourse layer (both modes).** The same spawn walks every topic's prose for the discourse issue kinds — `sequence`, `missing_prerequisite`, `missing_inference`, `representation_mismatch`, `redundancy`, `example_quality`, `analogy`, `seductive_detail`, `hedging`, `filler`, `terminology` — and runs the `arc` check on every topic that has a `teaching_arc`: dependency structure, purpose, and exit check preserved (reordering or merging moves is not a violation). It answers the gate question per topic (*could the intended learner reconstruct why every major step follows, without inventing an unstated intermediate idea?*) in `topic_gates` and returns per-topic `diagnostics` (bullet density, causal-connector bullets, analogies per 1000 words, hedge/filler hits, undefined symbols, paragraph-length distribution). The kinds table and severity calibration are canonical in `agents/content-review-agent.md`; the rules they enforce are in `references/teaching-communication.md`. Kind and severity are orthogonal — the reviewer rates each instance `minor` or `major`; discourse kinds never rate `blocker`.
+
+**Spawn brief template**:
+
+```
+lesson_path: <absolute path to src/<slug>.jsx>
+mode: new | update
+audience_level: <from the scoping artifact>
+lesson_plan: <path or inline: objectives + teaching_arc per topic; update mode: for add / rewritten modify topics>
+change_list: <Phase 2 change-list if update mode, else null>
+sources: <cited materials the reviewer must re-read>
+read_first: references/teaching-communication.md
+```
+
+**Reviewer calibration** is a maintenance step, not a per-run one: after any change to `agents/content-review-agent.md` or `references/teaching-communication.md`, run the reviewer against `references/teaching-review-fixtures.md` per `references/teaching-review-fixtures-key.md` and require all twelve seeded failures flagged.
 
 ### 3. Build + test
 
@@ -134,8 +150,10 @@ Checks, per topic:
 - **At least one transfer item across the topic's checks**, tagged distinctly from recall. A topic whose only checks parrot back what was just shown fails the transfer requirement.
 - **Misconception refutation where one is declared.** If the Phase 2 plan / `TOPIC_CONTEXT` names a known misconception for the topic, the inline copy or a check must state it, mark it false, and give the causal reason — a bare correct statement does not refute.
 - **No myth in the shipped copy.** The lesson copy and tutor steering contain none of the `SKILL.md` "Do NOT build these" items — no learning-styles routing, Dale's-cone "remember X%", 2-sigma promise, gamification (points / badges / leaderboards), or Hattie-rank/effect-size badge. This is a cheap text scan mirroring the SaaS `myth-lint.ts`; treat a hit as a major (copy fix), and never resolve it by reintroducing the myth.
+- **Arc preserved and the gate question answered.** For every topic with a `teaching_arc`, the reviewer's `arc` check passes (dependencies, purpose, exit check intact) and `topic_gates[].reconstructible` is true. A false gate answer names the unstated step; the fix is to state it, not to delete the surrounding reasoning.
+- **Discourse floor.** No `major` discourse finding left open on a new-mode topic or a rewritten update topic: no consequence before its rule, no inference the stated audience cannot supply, no unmapped or misleading analogy, no seductive-detail passage, no causal argument fragmented into bullets, no undefined symbol carrying the point. `minor` discourse findings (a stray hedge, a small redundancy) are logged and fixed when the fix is local; they never block.
 
-Severity: an objective with no assessment, or a topic with no retrieval/active-practice primitive, is a **major** (the lesson is structurally passive — fix by adding the missing check, not by deleting the objective). A missing transfer item or unrefuted declared-misconception is a **major** in new mode, a **minor** in a `keep`-only update topic. A myth hit is a **major** copy fix. These are pedagogy-quality majors: they do not halt the handoff by themselves (per the major/minor handoff rule below), but under `resource_mode: "full"` the fix loop should clear them rather than forward them — a passive lesson is the failure mode this whole change exists to prevent.
+Severity: an objective with no assessment, or a topic with no retrieval/active-practice primitive, is a **major** (the lesson is structurally passive — fix by adding the missing check, not by deleting the objective). A missing transfer item or unrefuted declared-misconception is a **major** in new mode, a **minor** in a `keep`-only update topic. A myth hit is a **major** copy fix. A broken arc or a false gate answer is a **major** on the topic that carries the arc. These are pedagogy-quality majors: they do not halt the handoff by themselves (per the major/minor handoff rule below), but under `resource_mode: "full"` the fix loop should clear them rather than forward them — a passive lesson is the failure mode this whole change exists to prevent, and an unreconstructible explanation is the discourse-layer equivalent. Discourse fixes are prose edits main Claude makes directly against `references/teaching-communication.md`; the reviewer's `suggested_fix` names the move, not the wording.
 
 ---
 
@@ -168,7 +186,7 @@ Main Claude assembles the issue list across all reviewers into a single structur
 | Source | Mapping |
 |---|---|
 | `code-review-agent` | each entry in `blockers`/`majors`/`minors` → one record at that severity; confidence 1.0 for grep/parse-backed items, else 0.8 |
-| `content-review-agent` | issues carry severity + confidence already; location = its `location` |
+| `content-review-agent` | issues carry severity + confidence already; location = its `location`; prefix `description` with the `kind` (e.g. `[missing_inference] …`) so discourse findings stay distinguishable in the trace; `topic_gates` and `diagnostics` are logged verbatim under the pedagogy-gate line, not turned into issues |
 | 17-test suite / build / Babel | one record per failing test, severity blocker, confidence 1.0, location = test id + file |
 | `visual-qa-agent` | each `findings[]` entry → severity `fail`→major, `issue`→minor; location = artifact + its `location` field |
 | `scientific-accuracy-agent` | verdict `fail` → one major (confidence 0.9), `issue` → one minor (0.7); location = artifact; details = description |
@@ -275,6 +293,7 @@ Sub-sections under the Phase 4 header:
 ## Phase 4 — Review
 - Code review findings: [count by severity, representative examples]
 - Content review findings: [count by severity, representative examples]
+- Discourse findings: [count by kind (sequence / missing_inference / representation_mismatch / redundancy / analogy / seductive_detail / …), majors vs minors, arc check per topic, gate answers, diagnostics summary]
 - Test results: [17/17 PASS | X/17 with failing test ids]
 - Visual QA findings per medium:
   - SVG: [visual-qa + scientific-accuracy verdicts, findings]
@@ -282,7 +301,7 @@ Sub-sections under the Phase 4 header:
   - Manim: [visual-qa (motion dimension) + scientific-accuracy verdicts, findings]
   - Interactive demos: [interaction + visual-qa + scientific-accuracy verdicts, findings]
 - Change-list sanity (update mode only): [pass/fail, mismatches]
-- Pedagogy gate: [per-topic: objectives-assessed pass/fail, retrieval/active-practice present, transfer item present, misconception refuted, myth scan clean]
+- Pedagogy gate: [per-topic: objectives-assessed pass/fail, retrieval/active-practice present, transfer item present, misconception refuted, myth scan clean, arc preserved, gate question reconstructible]
 - Playwright headed test: [pass/fail, captured issues]
 - Fix loop iterations:
   - Iteration 1: [issues before, issues after, tests before, tests after, diff lines, self-assessment, stop rules fired]

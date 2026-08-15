@@ -29,6 +29,10 @@ Verify each against the running app (sandbox recipe: bootstrap fresh workspace �
 15. **`defineGraph`** — single typed declaration generating `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, validation, and prompt metadata (removes the manual key-parity invariant + backfill machinery).
 16. **Eval suites as release gates** — builder fixture bank (interrupted/resumed runs, dirty trees, capability-missing fallbacks, branch collisions, malformed agent returns) graded on environment outcomes; multi-turn tutor evals (hint-ladder compliance, insistence, injection resistance, thread isolation); runtime contract tests (SSE byte-split fuzz, route-manifest parity, XSS corpus, component-example rendering). skill-creator plugin can host the description/trigger evals.
 
+## Teaching-quality eval (from the 2026-08 teaching spec, Stage 5)
+
+17. **Blind A/B of the discourse layer** — old vs. new pipeline on real lesson excerpts and real student questions, graded on logical sequence, inference completeness, directness, information economy, coherence (connected argument vs. assembled facts), representation fit, terminology precision, example quality, analogy discipline, adaptive support, and whether each tutor question was pedagogically justified. Average length is not a success metric. Reversal conditions live in `references/teaching-communication.md` § Guardrails. Stages 1 and 4 (tutor probes; reviewer fixtures) are runnable now and were run at landing; Stages 2–3 (generated-lesson checks) need real builds.
+
 ## Explicitly rejected / kept as-is
 
 - Bearer-token auth on the proxy: loopback bind + CORS + argv allowlists cover the local threat model; tokens add Vite plumbing for little gain until the copilot split (#13).

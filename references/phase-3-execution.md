@@ -1,6 +1,6 @@
 # Phase 3 — Execution
 
-Contents: Shared conventions (scratch dir, private-by-default .gitignore, logging, parallel spawning) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
+Contents: Shared conventions (scratch dir, private-by-default .gitignore, logging, parallel spawning, prose authoring against the teaching arc) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
 
 ## Purpose
 
@@ -57,6 +57,22 @@ One specialist per media item, spawned concurrently. Each spawn prompt = the ite
 
 **Degenerate cases**: text-only topics skip specialist spawns; main Claude writes content directly from Phase 1. Fully text-only lessons skip Step 1 entirely. The harness queues concurrent spawns on its own — no manual batching needed; just log the fan-out count.
 
+### Prose authoring against the teaching arc (both modes)
+
+Main Claude writes every inline `<P>`, `<Eq>` framing sentence, `<KeyConcept>`, check, and section opening — specialists produce media, not exposition. That prose is authored **against the topic's `teaching_arc` from the approved plan**, under the rules in `references/teaching-communication.md` (read it before writing the first topic body; the lesson-side exemplars are in `references/template.md` § Exposition exemplars). Phase 3 must not invent explanatory architecture while writing JSX — that improvisation is what produced verbose, analogy-heavy, bullet-fragmented lessons.
+
+Working rules, in the order they bite:
+
+1. **Walk the arc.** Take the moves in order; each `idea` becomes the proposition a paragraph (or an equation plus its connecting sentence) carries. Merge, reorder, or omit moves when the prose reads better for it — but never break a dependency (an idea before the idea it rests on), the arc's purpose (its `question`), or its `exit_check`. Phase 4's `arc` issue kind checks exactly those three.
+2. **Open substantively.** The first sentence of a topic is its first content-bearing claim, or a 1–2 sentence organizer only when the topic needs a frame (a comparison, a multi-stage derivation). No "In this section we will…".
+3. **Match representation to relationship.** Prose for causal and logical links; equation + one connecting sentence for a formal relation; table for a comparison; numbered list for a procedure; bullets only for genuinely parallel items — if the items need "because / therefore / however", it is prose. `KeyConcept` once per critical conclusion, never as a restatement.
+4. **State the inference links** the stated `audience_level` cannot supply. Two adjacent equations need the sentence that gets from one to the other. Define every symbol at first use; state validity conditions where they change the result.
+5. **No analogies by default; no seductive detail.** In-domain examples and contrasts are welcome and cheap; an analogy needs a stated reason (known-hard concept, or the plan asked for it) and the full bridging pattern. No historical asides, trivia, or "fun intuition".
+6. **Land the exit check.** The arc's `exit_check` becomes an inline check in the topic (a prediction-before-reveal in a `CollapsibleBlock`, a recall prompt, a faded worked example, or a `PracticeProblem` when a real sourced problem fits) — it is one of the objective checks the Phase 4 pedagogy gate looks for. Interleaved items from earlier topics carry a visible label ("mixed review") so they are not later "fixed" as misplaced.
+7. **Say each thing once.** Before moving to the next topic, scan for the same proposition appearing as paragraph + callout + caption + summary and keep the one representation that carries it best.
+
+Media captions and `<InteractiveDemo description>` text written by specialists are subject to the same rules; main Claude checks them at the assembly quality gate (Step 7 new mode / 4.6 update mode). Gate question before handing any topic to Phase 4: *could the intended learner reconstruct why every major step follows, without inventing an unstated intermediate idea?*
+
 ## New-mode execution
 
 ### Step 1: spawn medium specialists
@@ -86,7 +102,7 @@ Read `references/template.md` to pull the skeleton. Fill in each `REPLACE` marke
 - **`TOPIC_CONTEXT`** — one entry per topic, keyed by `topic-N`. Must include equations, key variables, given values, and the learning objective.
 - **`LESSON_CONTEXT`** — full course and lesson description from Phase 1's compiled package. Single template literal. Carries the chatbot's pedagogy stance (tutor, not answer key).
 - **`DEFAULT_GRAPH_PARAMS`** — one key per graph component. Parameter objects are lifted from specialist outputs. Keys use camelCase matching the graph function name.
-- **`TOPICS`** — one entry per tab with `id`, `tab`, `title`, `subtitle`, `content`. The `content` function takes `graphParams` (conventionally named `gp`) and returns JSX. Each topic's `content` body is stitched from its specialist scratch files plus UI primitives from `@core` (`<Section>`, `<P>`, `<Eq>`, `<M>`, `<KeyConcept>`, `<CollapsibleBlock>`, `<RefImg>`).
+- **`TOPICS`** — one entry per tab with `id`, `tab`, `title`, `subtitle`, `content`. The `content` function takes `graphParams` (conventionally named `gp`) and returns JSX. Each topic's `content` body is stitched from its specialist scratch files plus UI primitives from `@core` (`<Section>`, `<P>`, `<Eq>`, `<M>`, `<KeyConcept>`, `<CollapsibleBlock>`, `<RefImg>`); the prose between and around the media is authored against the topic's `teaching_arc` per "Prose authoring against the teaching arc" above, with the exit check landed as an inline check.
 - **Header title and subtitle** — lesson title and course tagline (both supplied during Phase 0 scoping as free-text fields).
 - **`<Chatbot>` props** — see Step 5.
 
@@ -158,6 +174,8 @@ The graph-quality rules (component pattern with `{ params, mid = "" }` props and
 - **Marker-ID collisions** across the assembled file (two graphs sharing `id="arrow"`): fix during assembly via each component's `mid` suffix.
 
 Matplotlib outputs arrive pre-verified by the specialist's own PNG self-view; full visual QA for every medium happens once, in Phase 4 (no separate in-phase review team). On assembly, base64-encode approved PNGs as `const IMG_X = "..."` for `<RefImg data={IMG_X} alt="..." caption="..." />`.
+
+**Prose self-check while pasting** (cheap, catches what Phase 4 would otherwise send back): the topic opens with a substantive sentence; no `<ul>` whose items carry "because / therefore / however" (bullet lint); every symbol in an `<Eq>` is defined in the surrounding prose or earlier in the topic; no analogy that the arc did not call for; no proposition repeated across `<P>` + `<KeyConcept>` + caption; the arc's `exit_check` is present as an inline check. Fix inline — this is main Claude's own prose, not a specialist's.
 
 
 ### Step 8: post-assembly cleanup
@@ -351,8 +369,8 @@ Replace the string literal with the new base64. No other edits.
 
 Iterate over the Phase 2 topic change-list:
 
-- **`modify`**: update the TOPIC_CONTEXT entry for `topic-N` and rewrite the `content` function body. Preserve the `id`, `tab`, `title`, `subtitle` fields unless Phase 2 explicitly renamed them.
-- **`add`**: insert a new TOPICS array entry at the Phase 2-specified position, add a new TOPIC_CONTEXT entry keyed by the new `topic-N` id, insert any new components the topic references (these come from `.build-scratch/add/`).
+- **`modify`**: update the TOPIC_CONTEXT entry for `topic-N` and rewrite the `content` function body — against the topic's `teaching_arc` when the approved plan gave it one (content-function rewrites do; media-only or equation-fix modifies do not), per "Prose authoring against the teaching arc" above. Preserve the `id`, `tab`, `title`, `subtitle` fields unless Phase 2 explicitly renamed them.
+- **`add`**: insert a new TOPICS array entry at the Phase 2-specified position, add a new TOPIC_CONTEXT entry keyed by the new `topic-N` id, insert any new components the topic references (these come from `.build-scratch/add/`). The new topic's prose is authored against its `teaching_arc` (every `add` topic has one).
 - **`remove`**: delete the TOPICS array entry and the matching TOPIC_CONTEXT entry. **Media referenced only by the removed topic and marked for removal** gets deleted from the component block; **media referenced by multiple topics** is preserved even if the current topic is gone. Track the cross-reference count as you walk. This is a common source of silent breakage.
 - **`reorder`**: reorder the TOPICS array entries in place. TOPIC_CONTEXT keys stay the same (they are IDs, not indices), so no reshuffle there.
 
@@ -381,6 +399,7 @@ This is the backstop against silent splice corruption. Run all checks; fail loud
 3. **DEFAULT_GRAPH_PARAMS to usage**: for every key in `DEFAULT_GRAPH_PARAMS`, Grep for `gp.<key>` in the TOPICS content functions. Fail if any key is unused. Dead keys indicate an incomplete remove splice.
 4. **GRAPH_SCHEMA to DEFAULT_GRAPH_PARAMS key match**: extract the top-level keys of both and diff. Fail if the sets are not identical. Chatbot `<<EDIT_GRAPH>>` relies on this invariant.
 5. **Line count delta sanity**: if the delta exceeds ±25% of the original file size, pause and warn. Large deltas are legitimate in full-mode updates, but a 2x blowup usually means a copy-paste duplication.
+6. **Prose self-check on rewritten topics**: for every `modify` / `add` topic, run the same self-check as new-mode Step 7 (substantive opening, bullet lint, symbols defined, no uncalled-for analogy, no cross-component restatement, exit check present). Untouched `keep` topics are not rewritten to the new rules in this pass — Phase 4 may still flag them, and those findings are logged as known-issues per the keep-media rule.
 
 #### 4.7 GRAPH_SCHEMA backfill if missing
 

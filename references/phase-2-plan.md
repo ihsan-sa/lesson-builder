@@ -1,6 +1,6 @@
 # Phase 2: Plan
 
-Contents: Purpose · Inputs · Objectives-first backward design · Procedure (6 steps) · medium-decider driving · Lesson Plan artifact formats · Human approval gate · Request-changes loop · Handoff to Phase 3.
+Contents: Purpose · Inputs · Objectives-first backward design · Teaching arc per topic · Procedure (6 steps) · medium-decider driving · Lesson Plan artifact formats · Human approval gate · Request-changes loop · Handoff to Phase 3.
 
 ## Purpose
 
@@ -28,11 +28,46 @@ Before Step 1's topic split, main Claude extracts the objective skeleton from th
 
 This objective → evidence → ordering skeleton is the contract Step 1 partitions against and that the Phase 4 pedagogy gate (`references/phase-4-review.md`) verifies. It is consistent with the evidence grades — stating objectives is only weakly effective on its own, so the leverage is in the **checks that force retrieval against them**, never in a myth (no learning-styles routing, no "remember X%", no gamified objectives; see the `SKILL.md` guardrail).
 
+## Teaching arc per topic (discourse plan)
+
+The objective skeleton says *what* each topic must let the learner do; the **teaching arc** says *how the explanation unfolds*, idea by idea, so that Phase 3 authors prose against a plan instead of improvising explanatory structure while writing JSX (the improvised default is the verbose, analogy-heavy, bullet-fragmented output this artifact exists to prevent). Rules, kinds, default arcs, and the gate question are canonical in `references/teaching-communication.md` § Teaching arc — read it before writing arcs.
+
+After the objective skeleton and before the medium-decider spawn, main Claude writes one `teaching_arc` per topic:
+
+```yaml
+teaching_arc:
+  kind: concept   # concept | derivation | procedure | comparison | misconception_repair | application
+  question: Why does current increase when impedance decreases?
+  moves:
+    - move: establish
+      idea: The applied voltage is fixed.
+    - move: formalize
+      idea: Current follows I = V/Z.
+    - move: infer
+      idea: Reducing |Z| therefore increases |I|.
+    - move: distinguish
+      idea: "|Z| sets current magnitude; the phase of Z sets current phase."
+  exit_check: If |Z| is halved at fixed voltage, what happens to |I|?
+```
+
+- **One arc per topic is the common case.** A topic that genuinely contains two separable explanatory units of different kinds (a concept, then a procedure built on it) carries a list of arcs in teaching order, each with its own `exit_check`. Do not split a single line of reasoning into several arcs to make them short.
+- **`kind` picks the default move sequence** from the table in `teaching-communication.md`; use only the moves this concept and this audience need. A simple idea takes two moves; a hard derivation may spend paragraphs on one move.
+- **Each `idea` is a proposition, not a heading** — "the applied voltage is fixed", not "voltage". Order the moves so that every idea depends only on ideas above it or on stated prerequisites (the prerequisite-ordering rule applied inside the topic).
+- **`exit_check` is one of the topic's objective checks** (recall or transfer, from the skeleton) phrased as the question the learner answers at the end of the arc; it is what the last move builds toward.
+- **Audience calibrates density.** Under a first-year `audience_level`, spell out inference links that an upper-year arc may leave implicit — the arc for the same topic legitimately differs by audience.
+- **The arc is a dependency plan, not a screenplay.** Phase 3 may merge, reorder, or omit moves when the prose is better for it, provided the dependency structure, the purpose, and the exit check survive; Phase 4's `arc` check verifies exactly that, not move-by-move fidelity.
+
+Update mode: `add` topics always get an arc; `modify` topics get one when the change rewrites the topic's explanatory line (a content-function rewrite), not for a media-only or equation-fix change; `keep` topics carry none, and Phase 4's `arc` check applies only to topics that have one. Log the arcs with the plan (they are the Phase 4 reviewer's input) — the approval-gate summary shows only `kind` and `question` per topic.
+
 ## Procedure
 
 ### Step 1: Split compiled content into logical topic units
 
 Main Claude reads the compiled content package and partitions it into topics matching the user's scope from Phase 0. One topic per tab in the final lesson. The split follows the objective skeleton above — each topic owns its objectives, their checks, and its place in the prerequisite ordering, so the `TOPICS` order reflects prerequisites rather than source sequence. In update mode, topic boundaries are already determined by the Phase 1 verdicts (`keep`, `modify`, `add`, `remove`, `reorder`), so Step 1 reconciles them against the scoping artifact's `scope_of_change` — if the user asked for "specific topics", topics outside that list default to `keep` regardless of drift unless the drift is severe enough to block the lesson.
+
+### Step 1.5: Write the teaching arc per topic
+
+Per the "Teaching arc per topic" section above: one `teaching_arc` per topic (a list only for topics with two separable explanatory units), authored from the objective skeleton and the Phase 1 content package before any medium is chosen — the medium serves the arc, not the reverse. Pass the arcs to the decider as part of each topic's context so its media rationale can name the move a medium serves.
 
 ### Step 2: Spawn medium-decider-agent — ONE spawn for the whole lesson
 
@@ -66,6 +101,7 @@ Main Claude merges the decider's verdicts and briefs (plus web-image pre-flight 
 - Tallying change-list counts (update mode) so the approval-gate summary can show honest `keep/refine/replace/remove/add` totals.
 - Flagging any internal inconsistencies (e.g., a topic marked `add` that depends on an equation marked `remove`).
 - **Persisting the objective skeleton** (the `objectives:` blocks from the backward-design step, checks tagged recall/transfer) into the plan and log — the Phase 4 pedagogy gate verifies the shipped lesson against exactly these, so a plan without them leaves the gate nothing to check. Update mode: objectives ride on `modify`/`add` topics; `keep` topics inherit theirs from the existing `TOPIC_CONTEXT`.
+- **Persisting the teaching arcs** (Step 1.5) into the plan and log in full — Phase 3 authors against them and Phase 4's `content-review-agent` receives them verbatim for the `arc` check. A topic whose arc is missing at compile time goes back to Step 1.5; do not present the gate without it.
 - **Forwarding `PRACTICE_PROBLEMS_INDEX`** from the Phase 1 package into the plan's `Practice problems index:` section so the user sees per-topic problem totals and solution provenance at the approval gate without reading every problem body.
 - **Forwarding deploy intent from the scoping artifact** into a `DEPLOY:` section of the plan. Every Lesson Plan (both modes) includes `Action: <deploy_action>`, `Service: <deploy_service>` (or "GitHub → workspace-configured host auto-deploy" when `deploy_action == "push-to-github"`), and `Course materials in commit: asked at Phase 5` (or "N/A — no materials provided" when `provided_materials` is empty). The user sees deploy intent at the approval gate alongside the content plan so approval covers both.
 - **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
@@ -134,6 +170,7 @@ Topics:
   - id, title, subtitle, tab label
   - objectives: [{ objective: "<observable verb on content>",
                    checks: [{ type: recall | transfer, description }] }]
+  - teaching_arc: { kind, question, moves: [{ move, idea }], exit_check }   (a list when the topic has two units)
   - media: [{ media_id, type, specialist, original_intent, execution_brief }]
   - equations, key concepts
   - practice_problems: N (sources: "Final 2024 — Q3", "PS4 — Q2", ...) | none (no matching problems in materials)
@@ -172,8 +209,10 @@ Branch: lesson-update/<slug>-YYYYMMDD
 
 TOPICS CHANGING:
   [ADD]     topic-N "Title" — why / media items count
+            arc: <kind> — "<question>"          (full teaching_arc in the log)
   [MODIFY]  topic-1 "Title" — equations changed N, concepts added N,
             content removed N, media actions (keep/refine/replace/remove/add counts)
+            arc: <kind> — "<question>" | none (media/equation-only change)
   [REMOVE]  topic-4 "Title" — why / media affected
   [REORDER] topics-2,3,5 → new order — why
 
@@ -249,8 +288,11 @@ LESSON PLAN
 Course/Slug: <course> / <slug>
 Topics:
   1. "Topic A" — inline prose + 1 SVG graph
+     arc: concept — "Why does current increase when impedance decreases?"
   2. "Topic B" — interactive demo (parameter slider) + manim animation
+     arc: derivation — "Where does the resonant frequency come from?"
   3. "Topic C" — SVG plot + matplotlib RefImg
+     arc: comparison — "Thevenin or Norton — which equivalent, when?"
 Graph schema draft:
   firstGraph:  { param1: { type: "float", min: 0.1, max: 10 } }
   secondGraph: { param2: { type: "float", min: 1,   max: 1000 } }
@@ -274,7 +316,7 @@ Lesson Plan written to:
   (see "## Phase 2 — Plan")
 
 Condensed summary:
-  7 topics, 12 media items total
+  7 topics, 12 media items total (objectives + teaching arcs per topic in the log)
   Media mix: 5 SVG graphs, 3 interactive demos, 2 manim videos, 2 matplotlib RefImgs
   Estimated Phase 3 time: ~8 min (2 manim renders dominate)
   Largest topic: "<topic title>" (3 media items)
@@ -360,6 +402,7 @@ Question: Which items need revision?
 
 Options:
   [Topic-2 content] — re-run content-orchestrator-agent on topic-2
+  [Topic-2 arc]     — rewrite topic-2's teaching arc (order / framing question / exit check)
   [Topic-2 media]   — re-run medium-decider-agent, revising topic-2 only
   [Global media mix] — re-run medium-decider-agent across all topics
   [Structural drift items] — adjust GRAPH_SCHEMA backfill plan
@@ -369,7 +412,8 @@ Options:
 ```
 
 Routing:
-- **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, then re-run `medium-decider-agent` with the revised topic flagged (the spawn still sees all topics so diversity and dedup stay coherent; it revises only what changed).
+- **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, rewrite that topic's `teaching_arc` if its explanatory line changed, then re-run `medium-decider-agent` with the revised topic flagged (the spawn still sees all topics so diversity and dedup stay coherent; it revises only what changed).
+- **Arc changes** (the user wants a topic explained in a different order or from a different question): no agent spawn required. Main Claude rewrites that topic's `teaching_arc` in the log per `references/teaching-communication.md` and re-presents the gate.
 - **Media-only changes** (medium type wrong, specialist brief wrong): re-run `medium-decider-agent` with the user's revision noted. Cheaper than re-running content orchestration.
 - **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
 - **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates the full deploy triple — `deploy_action` / `deploy_service_kind` / `deploy_service` — on the scoping artifact in place (dropping `deploy_service_kind` breaks Phase 5's push branching), rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
@@ -389,7 +433,7 @@ If the user selects **abort**, main Claude:
 
 On approval, main Claude has:
 
-1. An **approved Lesson Plan artifact** written to `<lesson_root>/lesson_build.log.md` with an `Approval: APPROVED by user at <timestamp>` line.
+1. An **approved Lesson Plan artifact** written to `<lesson_root>/lesson_build.log.md` with an `Approval: APPROVED by user at <timestamp>` line — including every topic's `objectives` and `teaching_arc`, which Phase 3 authors prose against and Phase 4 reviews against.
 2. The **medium-decider verdict list** (all topics, from the single Step 2 spawn). Each verdict carries its `specialist` routing field and its execution brief — the brief plus the topic's content package is the Phase 3 spawn prompt, refined by anything the approval loop changed.
 3. **Web-image pre-flight results** (when applicable): license-verified candidate URLs and target paths that the Phase 3 `web-image-agent` spawns consume.
 4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create and what stash ref (if any) to honor. Phase 3 Step 1 runs `git checkout -b <branch>` before any specialist spawns.

@@ -52,7 +52,7 @@ flowchart TD
 
 For a faster, cheaper pass, say so in the initial prompt. Trigger phrases: *"quick pass"*, *"fast update"*, *"keep it cheap"*, *"avoid manim"*, *"skip research"*, *"minor tweak"*. The skill flips to `resource_mode: "limited"`: prose and static SVG over manim/interactive, research capped at `light` or `targeted`, fix loop stops earlier. The detected mode is surfaced at Phase 0 for explicit override.
 
-Teaching quality is evidence-based: lessons are planned backward from measurable objectives, the embedded tutor follows a withhold-first pedagogy policy (hint ladder before answers, injected from the shared `_lesson-core` so every lesson runs the same current policy), a Phase 4 pedagogy gate checks every objective is assessed, and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
+Teaching quality is evidence-based: lessons are planned backward from measurable objectives, each topic gets a **teaching arc** (the explanation's moves and exit check, planned before any prose exists), prose follows the discourse rules in `references/teaching-communication.md` (shortest explanation with no necessary inference unstated, representation matched to structure, analogies off by default, no seductive detail), the embedded tutor follows a withhold-first pedagogy policy plus a communication layer with response modes and numeric scope defaults (both injected from the shared `_lesson-core` so every lesson runs the same current rules), a Phase 4 pedagogy gate checks every objective is assessed and every arc survived, the content reviewer flags discourse defects by kind (and is calibrated against twelve seeded fixtures), and a debunked-myths guardrail (learning styles, Dale's cone percentages, gamification badges, etc.) blocks intuitive-but-wrong patterns from shipping.
 
 ## Key invariants
 
@@ -99,7 +99,11 @@ references/
   phase-3-execution.md         New-mode assembly + update-mode splice algorithm
   phase-4-review.md            Parallel reviews + progress-aware fix loop
   phase-5-deploy.md            Build verify + commit/merge/push + rollback
-  template.md                  Lesson JSX skeleton (new-mode starting point)
+  template.md                  Lesson JSX skeleton (new-mode starting point) + exposition exemplars
+  teaching-communication.md    Discourse layer: representation/exposition rules, analogy policy,
+                               teaching arc, tutor response modes (canonical; mirrored in the tutor prompt)
+  teaching-review-fixtures.md  Blind calibration set for the content reviewer (12 seeded failures)
+  teaching-review-fixtures-key.md  Answer key + calibration procedure (never shown to the reviewer)
   server-template.md           package.json, vite.config.js, proxy shim, test_lesson.cjs
   checklists.md                KaTeX safety, template compliance, splice + post-splice checks
   desmos-schema.md             Desmos state schema + string-vs-number footguns

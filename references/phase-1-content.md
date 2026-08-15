@@ -76,7 +76,7 @@ If the source material embeds solutions (e.g., a past-final PDF with a solutions
 - Every equation has a source (lecture page, textbook section, URL).
 - Every variable defined.
 - Worked examples and solutions are welcome wherever they teach something (a solved example inside a derivation, a practice-problem section with collapsed solutions, a fully-worked case study). Cut any "here's an answer" block that doesn't extend understanding. The chatbot is separately governed by `LESSON_CONTEXT` — it is a tutor, not an answer key — and that pedagogy stance is not a content constraint: practice-problem cards in the lesson may carry worked solutions provided they are collapsed by default, provenance-marked, and sourced rather than fabricated (per the extraction spec above).
-- Concision: every paragraph teaches something. Cut filler. Prefer an equation or diagram over prose.
+- Concision: every paragraph teaches something. Cut filler. Match representation to structure (`references/teaching-communication.md`): equations carry formal relations, diagrams spatial structure, prose the causal and interpretive links — never "equation instead of prose" as a blanket rule.
 
 ### New-mode compiled content package schema
 
