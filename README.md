@@ -125,3 +125,7 @@ Claude Code auto-discovers skills there. Trigger by asking Claude to create, bui
 A sibling `_lesson-core/` module is required at the workspace root. If it does not already exist, the skill installs it from `references/bootstrap/_lesson-core/` before Phase 0 (see `references/bootstrap.md`). `VITE_DESMOS_KEY` in a workspace-root `.env.local` is required for any lesson that embeds `<DesmosGraph/>` or the chatbot `<<DESMOS>>` protocol; obtain a free educational key at https://www.desmos.com/api. Each lesson's `vite.config.js` points `envDir` at the workspace root, so that single `.env.local` serves every lesson.
 
 The embedded chatbot requires the `claude` CLI on `PATH` (the Express proxy spawns it per chat session; no API key is stored in the workspace). The chat panel renders in dev only — static production builds ship without it.
+
+## License
+
+[MIT](LICENSE) © 2026 Ihsan Salari. Lessons you build with the skill are yours; only the skill and the `_lesson-core` module it installs are covered by this license.
