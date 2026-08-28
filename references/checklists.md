@@ -420,6 +420,22 @@ Update mode only. Run before scoping closes. Failures surface at mode confirmati
 
 ---
 
+## Consolidate pre-flight checklist *(update_kind: consolidate)*
+
+Course-level restructures only. Run once, before the consolidation plan is compiled — a restructure that fails halfway is the most expensive failure the skill has. Procedure and plan format: `references/course-curation.md` §6.
+
+- [ ] Every slug in `course_scope` passes the update-mode pre-flight above. One failing lesson blocks the whole run; do not consolidate around it.
+- [ ] Every affected lesson root has a clean working tree. A multi-lesson restructure is never stashed piecemeal — a dirty tree aborts rather than stashes.
+- [ ] The affected lesson set is closed: no topic being moved is referenced (call site, shared asset, cross-lesson link) by a lesson outside `course_scope`. If one is, either add that lesson to the scope or drop the move.
+- [ ] Execution order lists destinations before sources, and every `remove` in a source lesson has a matching `add` in a destination lesson already earlier in the order.
+- [ ] Every moved medium's asset path, component name, `DEFAULT_GRAPH_PARAMS` key, and `GRAPH_SCHEMA` key are named in the plan; destination lessons lacking `GRAPH_SCHEMA` carry an explicit backfill item.
+- [ ] Every shared asset has exactly one owner lesson named in the plan.
+- [ ] Each source lesson's remaining topic list is stated with a yes/no on whether its arc still holds; a lesson left below 2 topics is merged, not shipped as a stub.
+- [ ] `COURSE.md` map rows for every affected slug (including any new or retired one) are drafted in the plan, so the write-back is mechanical.
+- [ ] The plan carries one approval gate for the whole course; per-lesson runs record `Approval: INHERITED from consolidation plan <hash>` and prompt for nothing.
+
+---
+
 ## Update-mode splice checklist *(update mode)*
 
 Update mode only. Run after every splice edit and as final sweep before Phase 4. Pairs with the assembly algorithm in `references/phase-3-execution.md`.
@@ -458,6 +474,7 @@ Main Claude runs this after assembly, before Phase 4. Cheap gate catching common
 ## Cross-references
 
 - Graph schema derivation: `references/graph-schema-guide.md`
+- Course layer (COURSE.md, materials inbox, chunk triage, consolidate): `references/course-curation.md`
 - Phase 3 execution (splice algorithm): `references/phase-3-execution.md`
 - Phase 4 review (parallel reviews, fix loop): `references/phase-4-review.md`
 - Shared chat + UI core: `<workspace_root>/_lesson-core/`

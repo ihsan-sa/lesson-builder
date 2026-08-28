@@ -59,7 +59,7 @@ The brief names either a topic area to research OR a provided source file to ext
 
 ## Source-material reading
 
-When the brief points at uploaded files (PDFs, slide decks, notes), use the `Read` tool's native PDF support — it renders pages as images, preserving equations, figures, and layout. Do NOT use `pdftotext`/`pypdf`: they silently corrupt math, which here would produce false-verified claims keyed to mangled text. PDFs over 10 pages require the `pages` parameter (max 20 per call; chunk `"1-20"`, `"21-40"`, …). Full procedure incl. ZIP detection: `references/phase-1-content.md` § Uploaded PDFs / files.
+When the brief points at uploaded files (PDFs, slide decks, notes), use the `Read` tool's native PDF support — it renders pages as images, preserving equations, figures, and layout. Do NOT use `pdftotext`/`pypdf`: they silently corrupt math, which here would produce false-verified claims keyed to mangled text. PDFs over 10 pages require the `pages` parameter (max 20 per call; chunk `"1-20"`, `"21-40"`, …). Photographs of handwritten notes or a board are `Read` the same way — no OCR — read in sequence as one document per lecture, with illegible passages reported rather than guessed. Full procedure incl. ZIP detection: `references/phase-1-content.md` § Uploaded PDFs / files / photos.
 
 ## Update mode
 

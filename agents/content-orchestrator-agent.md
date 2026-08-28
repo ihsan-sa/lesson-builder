@@ -41,7 +41,7 @@ You are the Phase 1 synthesizer for lesson-builder. Main Claude has already run 
 
 ## Source-material reading
 
-When you must spot-check a claim against an original PDF/slide file, use the `Read` tool's native PDF support (renders pages as images; preserves equations/figures/layout). Never `pdftotext`/`pypdf` — they silently corrupt math. PDFs over 10 pages require `pages: "N-M"` (max 20/call). Full procedure: `references/phase-1-content.md` § Uploaded PDFs / files.
+When you must spot-check a claim against an original PDF/slide file, use the `Read` tool's native PDF support (renders pages as images; preserves equations/figures/layout). Never `pdftotext`/`pypdf` — they silently corrupt math. PDFs over 10 pages require `pages: "N-M"` (max 20/call). Photographs of handwritten notes or a board are `Read` the same way — no OCR — with all the photos of one lecture read in sequence as one document, and anything illegible raised as a question rather than guessed. Full procedure: `references/phase-1-content.md` § Uploaded PDFs / files / photos.
 
 ## Return schema: new mode
 

@@ -1,6 +1,6 @@
 ---
 name: lesson-builder
-description: "Build or update interactive JSX lesson apps in a workspace that follows the `<workspace_root>/<course>/claude_lessons/<slug>/` layout. Supports two modes: (1) new mode — build a lesson from scratch via a 6-phase multi-agent pipeline (scoping → content analysis → plan + approval gate → execution → review → deploy); (2) update mode — modify an existing lesson in place (content, media, structure). Trigger when the user asks to create, build, make, write, or add a lesson, OR when the user asks to update, rework, revise, improve, refresh, modify, tweak, fix, or enhance an existing lesson, OR references an existing lesson by course and slug. Replaces the legacy jsx-lesson skill for new builds and all updates."
+description: "Build or update interactive JSX lesson apps in a workspace that follows the `<workspace_root>/<course>/claude_lessons/<slug>/` layout. Supports two modes: (1) new mode — build a lesson from scratch via a 6-phase multi-agent pipeline (scoping → content analysis → plan + approval gate → execution → review → deploy); (2) update mode — modify an existing lesson in place (content, media, structure), including its course-level `consolidate` variant that restructures topics across several lessons under one approval. Trigger when the user asks to create, build, make, write, or add a lesson, OR when the user asks to update, rework, revise, improve, refresh, modify, tweak, fix, or enhance an existing lesson, OR references an existing lesson by course and slug, OR asks to restructure, re-split, consolidate, merge, or split lessons in a course, OR hands over new course material (notes, slides, photos, problem sets) for a course built incrementally from a `COURSE.md`. Replaces the legacy jsx-lesson skill for new builds and all updates."
 ---
 
 # Lesson Builder
@@ -11,7 +11,8 @@ The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShe
 
 **Before starting a run**, read the references relevant to the detected mode:
 - `references/bootstrap.md` — read FIRST on every run. One Glob decides whether the workspace is fresh; if `<workspace_root>/_lesson-core/` is missing, run the bootstrap procedure before Phase 0.
-- `references/update-mode.md` — read FIRST for update mode. Covers mode detection, 5 media actions, branch/stash/merge invariants, no-grandfathering rule.
+- `references/update-mode.md` — read FIRST for update mode. Covers mode detection, 5 media actions, branch/stash/merge invariants, no-grandfathering rule, `consolidate`.
+- `references/course-curation.md` — read when `<workspace_root>/<course>/COURSE.md` exists, when material arrives in chunks over a term, or on a restructure verb. Course context, the committed course materials inbox, chunk triage, batching, and the `consolidate` cross-lesson restructure.
 - `references/phase-0-scoping.md` through `references/phase-5-deploy.md` — phase procedures for both modes.
 - `references/template.md` — new-mode lesson skeleton + exposition exemplars.
 - `references/teaching-communication.md` — how lessons and the tutor explain: representation rules, exposition rules (explanation unit, given-to-new, signal vs. seductive detail, example functions), analogy policy, teaching arc, tutor response modes with budgets. Read before Phase 1 (relation recovery), Phase 2 (arcs), Phase 3 (prose), and Phase 4 (discourse pass). Calibration and benchmark assets: `evals/teaching/` (blind reviewer fragments, tutor cases, rubric, answer key).
@@ -62,7 +63,47 @@ Before the scoping interview, run regex + Glob detection on the user's initial m
 
 Phase 0's first question always confirms mode. Detection is a hint; the user has final say.
 
+**Restructure verbs** — `restructure|re-split|consolidate|merge <lessons>|split <lesson>|re-balance` with a course reference — assign `mode=update` with `update_kind=consolidate` and a `course_scope` lesson list. `consolidate` is update mode planned once at course level and executed lesson by lesson; see `references/course-curation.md` §6.
+
 See `references/update-mode.md` for the full decision tree and edge cases.
+
+## Session modes and gates
+
+Every gate in this skill was written for a user at a terminal. That is one of three session modes, and the other two are ordinary: a course is often driven from a chat channel, and builds are often dispatched to a headless worker. **`AskUserQuestion` MUST NOT fire in a channel-driven or headless session** — it renders a terminal dialog nobody will see, so the run either hangs until it is killed or proceeds on a default the user never chose.
+
+**Detection rule**, checked in this order. The first that matches wins:
+
+1. **The user or the harness says so** — the task text, system prompt, or operator brief states the session is driven from a channel, is headless, is a worker, or has no terminal. Stated beats inferred.
+2. **A worker environment variable is set** — `CC_ROLE=worker` (or the equivalent variable the harness names in its brief) → `headless`.
+3. **No TTY on stdin** — the session was started non-interactively (piped input, a `-p`-style one-shot, a scheduler) → `headless`, unless a channel transport is present, in which case → `channel`.
+4. **Messages arrive over a chat transport rather than the terminal** — the user's turns come in as channel messages and replies go back the same way (a chat app such as Slack bridged to the session, an issue thread, a bot DM) → `channel`.
+5. Otherwise → `interactive`.
+
+Detection needs no phase state, so resolve it at session start — before the bootstrap gate, whose core-refresh offer is itself a gate — and record it once as `session_mode: "interactive" | "channel" | "headless"` in the Phase 0 scoping artifact, logged as `Session mode: <value>`. Do not re-derive it per gate. **On ambiguity, never assume `interactive`** — an unseen dialog is a dead run, while a plan posted as a message or written to a journal is readable in every mode.
+
+**How each gate is delivered:**
+
+| `session_mode` | Delivery |
+|---|---|
+| `interactive` | `AskUserQuestion`, exactly as the phase docs describe. |
+| `channel` | Post the gate as **one message**: the same body the dialog would have carried, ending with the reply keywords. Accept `go` / `approve` (proceed), `changes: <text>` (the request-changes loop), `abort`. Then wait — silence is not approval, and no default fires. |
+| `headless` | Write the full artifact to the journal the harness names (a `cc`-style harness names `~/.cc/state/<repo>/<track>/progress.md`; ask for the path if the brief does not give one) under a `## PLAN FOR APPROVAL <hash>` heading, then stop with `BLOCKED: plan awaiting approval` as the last line. Do not proceed. The run resumes when a later task text carries `APPROVED PLAN <hash>` matching the current plan's hash — then go straight to Phase 3 without asking again. |
+
+**The hash** is the first 8 hex characters of the SHA-256 of the exact artifact text under the heading, computed after the final edit to it (`sha256sum` on the extracted block, or any stable equivalent — state which). It is the approval's referent: if the plan changes at all, the hash changes, and an `APPROVED PLAN <hash>` that does not match the current plan is **not** approval — re-emit the plan under its new hash and block again. Record `Approval: APPROVED via APPROVED PLAN <hash> at <timestamp>` in `lesson_build.log.md` so the log still proves Phase 3 may run.
+
+**This applies to every user gate the skill has**, not just Phase 2: the Phase 0 interview and mode confirmation, the working-tree/stash choice, the legacy-lesson opt-in, Phase 1's rough-sweep topic-list confirmation, Phase 2's approval and its request-changes loop, Phase 5's gitignore-override and stash-pop questions, the bootstrap core-refresh offer, and `consolidate`'s single course-level gate.
+
+**Blocking is reserved for decisions that cannot be defaulted.** In `channel` and `headless` sessions:
+
+- Gates with a documented safe default take it, state it in the artifact, and do **not** block: gitignore override → no override; a dirty working tree → abort rather than stash or discard (never discard without an explicit answer); orphan assets → `keep`; stash-pop → leave the stash in place and report its ref.
+- Gates with no safe default block: the Phase 2 plan approval (and the consolidation plan), mode confirmation when the candidate lesson is unresolved, and the legacy-lesson opt-in.
+- In `headless`, Phase 0's interview does not block. Apply the aggressive-defaults policy (`references/phase-0-scoping.md`), plus `COURSE.md` where it exists, and carry the resulting assumptions into the `PLAN FOR APPROVAL` block as an `ASSUMPTIONS` section — the single blocking gate then covers scoping and plan together.
+
+## Course context (incremental courses)
+
+A course built from small chunks over a term — outline first, then material every few days — needs a view the lesson-scoped pipeline does not have. When `<workspace_root>/<course>/COURSE.md` exists, Phase 0 reads it before the interview: the lesson map (slug ↔ outline units ↔ status) resolves which lesson new material belongs to, `## Conventions` supplies the sibling-lesson conventions the interview would otherwise infer by globbing, and `## Pending chunks` lists filed-but-unbuilt material. `<workspace_root>/<course>/materials/` is then a recognised, **committed** materials inbox — distinct from the private, gitignored `<lesson_root>/materials/` — and `provided_materials` entries may reference it in place.
+
+`references/course-curation.md` is the reference: course context, the inbox, chunk triage (refine / add topic / new lesson / restructure) with its triggers, the batching rule that keeps a one-line correction from paying a full review bill, and the `consolidate` cross-lesson restructure. None of it is required — a workspace with no `COURSE.md` runs exactly as before.
 
 ## Workspace bootstrap (fresh-workspace gate)
 
@@ -78,18 +119,20 @@ Acceptance criterion: after bootstrap + new-mode Phases 0-4, a skeleton lesson m
 ## Pipeline (6 phases)
 
 ```
-Phase 0 — Scoping            AskUserQuestion interview. Mode-branched questions.
-                              Captures materials_scope (course-only/fill-gaps/extensions),
-                              deploy_action (push-to-github/push-to-custom/commit-only/skip),
-                              and deploy_service.
+Phase 0 — Scoping            Interview delivered per session_mode. Mode-branched
+                              questions. Captures materials_scope (course-only/
+                              fill-gaps/extensions), deploy_action (push-to-github/
+                              push-to-custom/commit-only/skip), deploy_service, and
+                              course_context when the course has a COURSE.md.
 Phase 1 — Content Analysis   Main Claude fans out extraction/research workers
                               (evidence persisted to .build-scratch/evidence/);
                               content-orchestrator-agent synthesizes. Honors
                               materials_scope to cap or broaden research.
 Phase 2 — Plan               Objectives + teaching_arc per topic; medium-decider-agent
                               (new: ranked media; update: 5-way keep/refine/replace/
-                              remove/add). Human approval gate. Deploy intent surfaced
-                              in the plan's DEPLOY: block.
+                              remove/add). Human approval gate, delivered per
+                              session_mode. Deploy intent surfaced in the plan's
+                              DEPLOY: block.
 Phase 3 — Execution          Parallel specialists; main Claude authors prose against
                               the arcs. New: assemble from scratch.
                               Update: git branch + splice assembly.
@@ -106,7 +149,7 @@ Phase 5 — Deploy             Branches on deploy_action. Build verify runs unde
                               push per deploy_action, stash recovery.
 ```
 
-**One mandatory human approval gate** at Phase 2, regardless of mode. Execution starts only after the user approves the Lesson Plan artifact (new mode: full plan; update mode: change-list summary).
+**One mandatory human approval gate** at Phase 2, regardless of mode. Execution starts only after the user approves the Lesson Plan artifact (new mode: full plan; update mode: change-list summary). *How* the gate is delivered depends on `session_mode` — dialog, channel message, or a journal block plus `BLOCKED` (see § Session modes and gates). `consolidate` runs one course-level gate covering every affected lesson instead.
 
 **One log document** at `<lesson_root>/lesson_build.log.md`, owned by main Claude. Update runs append a `## Update YYYY-MM-DD (run-id: <hash>)` section, preserving prior history.
 
@@ -237,7 +280,7 @@ Every agent respects `resource_mode: "full" | "limited"`. Absent field → `"ful
 ## Execution guidance
 
 - **Scale the fan-out to the lesson.** A 1-2 topic lesson wants single agents per phase (one research pass, no per-resource teams); a 6+ topic lesson justifies the full parallel fan-out. Media DECISIONS always go through one whole-lesson medium-decider spawn — never per-topic deciders, which cannot coordinate diversity or dedup. Independent PRODUCTION (one specialist per media item) parallelizes freely.
-- **One AskUserQuestion approval gate** at the end of Phase 2. No exceptions.
+- **One approval gate** at the end of Phase 2 — `AskUserQuestion` when interactive, a channel message or a `PLAN FOR APPROVAL` journal block otherwise. No exceptions, and no `AskUserQuestion` in a session with no terminal.
 - **Log every phase transition** to `lesson_build.log.md`. Update mode appends, never overwrites.
 - **Fix deterministic failures first** (parse, tests, build) — they are unambiguous and other findings are often their symptoms — then iterate the progress-aware fix loop until the lesson meets the quality bar under `resource_mode: "full"`. Stop rules halt on demonstrable regression or stall, with an absolute cap of 6 iterations. Under `"limited"`, tighten stop rules aggressively.
 - **Update mode: always create a branch** before Phase 3 work. Never splice on main.

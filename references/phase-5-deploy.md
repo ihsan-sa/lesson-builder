@@ -77,7 +77,7 @@ Before firing the question, compile two awareness lists. These surface prior-sta
 - **Already-tracked private paths** — run `git ls-files -- <candidate gitignored paths>`. Any file committed in a prior run (before the gitignore was added, or under a prior override) is still in history and still public if the repo is public. Display with a one-line warning: "These files are already in git history. A 'no override' answer here does NOT unpublish them — use `git filter-repo` or equivalent if removal is required, or `git rm --cached <path>` to drop them from the next commit while keeping the working copy."
 - **Out-of-scope materials** — paths in `provided_materials` that live outside `<lesson_root>/`. These can't be staged directly regardless of gitignore; surface count + paths so the user knows.
 
-Then fire a single `AskUserQuestion`:
+Then fire a single `AskUserQuestion` (interactive sessions only — see the default rule below):
 
 > "The lesson's `.gitignore` currently excludes these private paths from commits by default:
 >
@@ -102,7 +102,9 @@ Record the answer as `gitignore_override: "none" | "all" | "custom:<explicit fil
 
 **Why ask here and not at Phase 0 / Phase 2**: at Phase 0 the user hasn't seen the actual file list (they just gave us a folder or a link); by Phase 5 the gitignore is in place and we can show concrete paths, sizes, and history state. Asking with real data prevents surprise-publishes. The Phase 2 plan records `Course materials in commit: asked at Phase 5` rather than forcing an early answer.
 
-**Default selection rule for non-interactive runs** (rare — the skill normally runs with a user present): default to `none` (no override, keep everything gitignored). Never auto-override without an explicit user answer, because anything gitignored is gitignored for a reason and auto-publishing is irreversible.
+**Default selection rule when `session_mode` is not `interactive`** (`SKILL.md` § Session modes and gates): this gate has a safe default, so it does not block. Take `none` — no override, everything stays gitignored — state the choice and the list it applied to in the final report, and carry on. In a `channel` session the same message may offer the override for a later run; it does not wait for the answer. Never auto-override without an explicit user answer, because anything gitignored is gitignored for a reason and auto-publishing is irreversible.
+
+Course-inbox files (`origin: "course-inbox"`, under `<course>/materials/`) are never candidates here: they live outside `<lesson_root>`, so they appear in the *out-of-scope materials* awareness list. Their tracked-or-ignored status is a workspace `.gitignore` question the user owns (`references/course-curation.md` §3).
 
 ## Step 2a — New-mode deploy
 
@@ -343,7 +345,7 @@ On conflict (should not happen from a clean branch): halt, surface conflict file
 
 ### 7. Stash recovery
 
-If Phase 0 stashed local changes (`stashed: stash@{0} (<oid>)` in the Phase 0 log, echoed in Phase 3's `Stash ref:`), prompt the user via AskUserQuestion:
+If Phase 0 stashed local changes (`stashed: stash@{0} (<oid>)` in the Phase 0 log, echoed in Phase 3's `Stash ref:`), prompt the user — via `AskUserQuestion` in an interactive session; in a `channel` or `headless` session take the safe default (**leave it stashed**, log and report the OID) rather than applying a stash into a tree nobody is watching:
 
 > "Restore stashed changes from `<oid>`? The stash was created before this update run to protect your uncommitted work."
 
@@ -373,6 +375,17 @@ Write to the log doc under `### Phase 5 — Deploy (update)` (nested under the c
 ### 9. Surface final report
 
 See "Final report format" below. Include regression-watch entries from Phase 4 in addition to the standard unresolved list.
+
+## Step 3 — Course-map write-back (conditional)
+
+Runs in both modes, only when `course_root` is set (i.e. `<workspace_root>/<course>/COURSE.md` exists), only after the deploy step succeeded, and only over the two mechanical fields the pipeline owns (`references/course-curation.md` §8):
+
+1. **The lesson map row** for each lesson this run built or updated — status (`live`, or `needs-update` when the run merged with a known open finding from Phase 4), topic count, and the run-id.
+2. **The pending chunks and materials-index rows this run consumed** — `status: pending` → `status: built (<run-id>)`, and the materials index's "consumed by" column.
+
+Everything else in `COURSE.md` is the user's text: outline, conventions, open questions, and unconsumed chunks are read, never rewritten. If `COURSE.md` does not exist, this step does nothing — the pipeline never creates one, because it would be guessing at the course's outline.
+
+Whether the edit is committed follows the run's own `deploy_action`: under `push-to-github` / `push-to-custom` / `commit-only` it rides in the same commit (it is a tracked workspace file outside `<lesson_root>`, so stage it explicitly); under `skip` it stays in the working tree. `consolidate` runs write back once per lesson as that lesson completes, so a partially-completed restructure leaves a map that matches what actually shipped. Log `Course map: updated (<slug> -> live, N chunks marked built)` or `Course map: N/A (no COURSE.md)`.
 
 ## Rollback on failure (update mode)
 
@@ -421,6 +434,7 @@ The final report is surfaced to the user as the last action of Phase 5 (after al
 - Update branch: <name>        (update mode only)
 - Deploy dashboard: <host-specific URL or "see workspace deploy docs">
 - Live URL (after hosted build finishes): <host-specific URL>
+- Course map: updated (<slug> -> live, N chunks marked built) | N/A (no COURSE.md)
 
 ## Unresolved items from Phase 4
 - <item 1 with reason>
