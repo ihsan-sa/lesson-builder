@@ -1,6 +1,6 @@
 # Phase 1: Content Analysis
 
-Contents: New-mode orchestration (inputs, procedure, PDF handling, practice-problem extraction, package schema) · Course context inputs · Update-mode orchestration (inventory pre-scan, inputs, research-depth branches, drift classification, package schema) · Consolidate: course-scope inventory · Post-orchestrator review · Handoff to Phase 2.
+Contents: New-mode orchestration (inputs, procedure, PDF and photo handling, practice-problem extraction, package schema) · Course context inputs · Update-mode orchestration (inventory pre-scan, inputs, research-depth branches, drift classification, package schema) · Consolidate: course-scope inventory · Post-orchestrator review · Handoff to Phase 2.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ Main Claude passes the following from the scoping artifact:
 - `evidence_dir`: absolute path to `<lesson_root>/.build-scratch/evidence/` holding every worker's persisted output
 - `course`, `slug`
 - `audience_level`, `pedagogical_goal`, `scope_of_lesson`
-- `provided_materials`: list of file paths (PDFs, ZIPs, slides, problem sets, lecture notes) or `null`
+- `provided_materials`: list of file paths (PDFs, ZIPs, slides, problem sets, lecture notes, **photographs of handwritten notes or a board**) or `null`
 - `materials_scope: "course-only" | "fill-gaps" | "extensions" | null` — load-bearing when materials are provided; main Claude must forward it verbatim. `course-only` caps the orchestrator's research to prerequisite lookups the materials clearly assume; `fill-gaps` lets research fill background and missing derivations but not broaden the topic; `extensions` permits broadening to related topics, deeper treatment, and applications beyond the materials. Pure-research runs (no materials) ignore it.
 - `new_lesson_context`: any research scope directives the user gave (rough topic list, textbook to parallel, research depth, number of topics target)
 - `course_context`: the block Phase 0 built from `<course>/COURSE.md`, when one exists (`references/phase-0-scoping.md` § Course context). The `## Conventions` fields are constraints, not hints — notation, symbol choices, and depth stated there govern extraction and synthesis, and a source that contradicts them is reconciled toward the course's own usage with the discrepancy noted. The map row says which outline unit this lesson owns, which is the boundary research must not quietly cross.
@@ -58,7 +58,7 @@ Rules:
 
 Apply inside per-resource deep-review teams and gap-fill `research-agent` spawns.
 
-**Uploaded PDFs / files**:
+**Uploaded PDFs / files / photos**:
 
 PDFs are the most error-prone input type in the pipeline. The `Read` tool has native PDF support — it returns rendered pages as multimodal input, so equations, figures, tables, and multi-column layouts survive intact. **Default to `Read`.** `pdftotext` and `pypdf` silently corrupt math (Greek letters, superscripts, subscripts, fractions, matrix alignment) and layout, and are reserved for bulk programmatic mining only.
 
@@ -72,6 +72,12 @@ PDFs are the most error-prone input type in the pipeline. The `Read` tool has na
 3. **`pdftotext` / `pypdf` fallback** — ONLY for programmatic bulk mining (e.g., regex-scanning equation labels across a 200-page reference, or building an index across many chapters where visual review per page is infeasible). Never for math content, figures, tables, or layout-sensitive material. If extracted text looks garbled, discard it and switch to `Read`.
 
 4. **Verification requirement**: any equation or numerical value produced by a text-extractor must be cross-checked against the `Read`-rendered page before it enters the content package. This is non-optional for math and physics lessons — text-extract corruption is silent and frequently survives into the lesson JSX unless caught here.
+
+5. **Photographs of handwritten notes and boards** — a phone photo of a lecture page, a notebook spread, a whiteboard. For a course built incrementally this is a primary input, often the most common one, so treat it as a first-class material type rather than an afterthought.
+   - **`Read` the image directly.** The tool renders it as multimodal input; handwriting, sketched figures, and margin annotations arrive as they are. There is no OCR step, and no OCR tool should be introduced — it would flatten the diagrams and mangle the math for no gain.
+   - **Read a lecture's photos in sequence, as one unit.** Several photos of one board or one set of pages are a single document split by a camera: order them (filename, capture time, or the user's own numbering), `Read` them in one pass, and extract from the whole before extracting from any one frame. A derivation that runs across three photos is one derivation. Note overlaps and re-photographed frames rather than double-counting them.
+   - **Illegible means ask, never guess.** If a symbol, exponent, subscript, or whole line cannot be made out — bad angle, glare, cut-off edge, ambiguous handwriting — record it as an open question and put it to the user with the photo and the location ("photo 2, third line: `<what is legible>` — is this ρ or p?"). Handwriting misread into a lesson is worse than a question: it looks authoritative, it survives review because nothing else contradicts it, and the student learns it wrong. A guessed symbol is never allowed to enter the content package; an unreadable region is either resolved by the user or excluded with the gap recorded.
+   - Photos carry the same `materials_scope` and the same practice-problem scan as any other material, and their provenance tag is the filename plus the frame (`"<file> — photo 2"`).
 
 **Practice-problem extraction**: alongside equations and concepts, each per-resource deep-review team **must** scan for practice problems — past finals, past midterms, homework questions, problem-set questions, worked examples, in-lecture practice prompts. These are the highest-value calibration content the lesson can offer because they are the actual questions the student will be graded on; no research-fabricated problem can match that signal. For each problem found, extract:
 - **statement**: the question verbatim (preserve LaTeX / figures / any given values).
@@ -270,7 +276,7 @@ Main Claude passes (after running whatever worker spawns the research depth call
 - `research_depth`: `"light"` | `"targeted"` | `"full"`
 - `scope_of_change`: `"any"` | `"specific"` | `"full-replace"`
 - `scope_topics`: the approved topic list from the scoping artifact (required when `scope_of_change == "specific"` — without it the orchestrator cannot know which topics to research)
-- `new_materials`: any new file paths the user provided with this update — including course-inbox paths (`<course>/materials/<file>`) carried over from the pending chunks this run consumes, each tagged with the chunk's one-line note so the orchestrator knows what the user said the material was for
+- `new_materials`: any new file paths the user provided with this update — PDFs, slides, problem sets, photographs of handwritten notes or a board (read per item 5 of § Uploaded PDFs / files / photos), including course-inbox paths (`<course>/materials/<file>`) carried over from the pending chunks this run consumes, each tagged with the chunk's one-line note so the orchestrator knows what the user said the material was for
 - `materials_scope`: forwarded verbatim whenever `new_materials` is non-empty (applies at every research depth, including `full`)
 - `course_context`: as in new mode. In update mode it also bounds the diff: a drift incident against a claim the course's own conventions state differently is a convention question for the user, not a correction to make silently.
 - `concerns`: free-text user concerns captured in scoping

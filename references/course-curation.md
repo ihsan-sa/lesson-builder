@@ -61,14 +61,16 @@ provided_materials:
 
 **Committed means committed to the workspace repo — decide that once, deliberately.** Course material is routinely copyrighted, so a committed inbox is appropriate only in a repo whose visibility the user has accepted. Two consequences the pipeline must respect:
 
-- The workspace `.gitignore` template ignores `**/materials/`, which swallows the inbox. Making it committed needs an explicit carve-out (`!<course>/materials/` plus `!<course>/materials/**`, and the course carve-out block in `references/bootstrap/workspace-root/gitignore.template`).
-- **The skill does not add that carve-out itself.** Report it once — "the course inbox at `<course>/materials/` is currently ignored; add the carve-out if you want it tracked" — and let the user edit `.gitignore`. This is the same invariant as Phase 5's: the skill never relaxes a gitignore on the user's behalf, because publishing copyright material is not reversible.
+- The workspace `.gitignore` template ignores `**/materials/`, which swallows the inbox — and its per-course carve-out pattern (`<course>/*` then `!<course>/claude_lessons/`) swallows `COURSE.md` along with it. Tracking either needs explicit re-allows: `!<course>/COURSE.md`, `!<course>/materials/`, `!<course>/materials/**`, written at the end of the file so they win over the earlier ignores. The block is documented at the bottom of `references/bootstrap/workspace-root/gitignore.template`.
+- **The skill does not add those re-allows itself.** Report the state once at the first gate — "the course inbox at `<course>/materials/` (and `COURSE.md`) is currently ignored; add the carve-out if you want it tracked" — and let the user edit `.gitignore`. This is the same invariant as Phase 5's: the skill never relaxes a gitignore on the user's behalf, because publishing copyright material is not reversible. An ignored inbox still works — the pipeline reads it from disk either way; it is only the durable, cloneable copy that is missing.
 
 Static deploys never carry the inbox: it is outside `<lesson_root>` and nothing in the build reads it.
 
 ## 4. Chunk triage
 
 A **chunk** is one delivery of material: a photo of a board, a slide deck, a page of notes, a problem set, plus whatever the user said when they sent it ("wk3, covers X; the derivation in Y is examinable"). Triage decides where it lands. Run it against `COURSE.md`'s outline + lesson map, and record the verdict on the chunk's `## Pending chunks` row.
+
+**Photographs are the common case and are triaged like any other chunk.** A phone photo of a lecture page or a whiteboard is ordinary material: `Read` it directly (no OCR — `references/phase-1-content.md` § Uploaded PDFs / files / photos, item 5), and treat *all the photos of one lecture as one chunk*, filed under one `## Pending chunks` row and one date, because a derivation photographed across three frames is one derivation and triaging the frames separately would scatter one topic across three verdicts. Two exceptions to a single verdict: if the batch legibly spans two outline units, split the row at the unit boundary; and **a photo whose content cannot be made out does not get a guessed verdict** — file it, mark the row `triage: unassigned (illegible — <what is unclear>)`, and ask the user. It stays pending and never rides into a build on an assumption.
 
 ### Outcomes
 

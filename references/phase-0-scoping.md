@@ -4,7 +4,7 @@ Contents: Mode detection recap · Resource-mode detection · Session-mode detect
 
 ## Purpose
 
-Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short AskUserQuestion interview whose questions adapt to the detected mode and to whatever materials the user provided. Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes. Phase 0 assumes the fresh-workspace bootstrap gate has already run — if `<workspace_root>/_lesson-core/` is missing, the bootstrap procedure in `references/bootstrap.md` installs it before any Phase 0 question fires (see `SKILL.md`).
+Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short interview whose questions adapt to the detected mode and to whatever materials the user provided — as `AskUserQuestion` calls when the session is interactive, and in the channel or headless form otherwise (§ Session-mode detection). Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes. Phase 0 assumes the fresh-workspace bootstrap gate has already run — if `<workspace_root>/_lesson-core/` is missing, the bootstrap procedure in `references/bootstrap.md` installs it before any Phase 0 question fires (see `SKILL.md`).
 
 ## Mode detection recap
 
@@ -176,7 +176,7 @@ audience_level: "..."
 pedagogical_goal: "survey" | "working" | "mastery"
 scope_of_lesson: "single" | "multi (count: N)"
 provided_materials:                # possibly empty in either mode; update mode captures newly attached materials
-  - type: "textbook chapter" | "slides" | "problem set" | "notes" | "none"
+  - type: "textbook chapter" | "slides" | "problem set" | "notes" | "photos" | "none"   # "photos" = photographed handwritten notes or a board
     path_or_ref: "..."             # an uploaded path, a URL, or "<course>/materials/<file>" for an inbox file
     origin: "upload" | "course-inbox"   # optional; "course-inbox" files are committed and read in place
 materials_scope: "course-only" | "fill-gaps" | "extensions" | null   # null iff provided_materials is empty
@@ -297,7 +297,7 @@ Main Claude writes the following to `<lesson_root>/lesson_build.log.md` under `#
 - **Working tree state** (update mode only): `clean` / `stashed: <stash-ref>` / `discarded`.
 - **Scoping artifact**: the full YAML-ish block from the section above, indented under a "Scoping artifact:" label.
 - **Timestamps**: phase start and phase end in ISO 8601 local time.
-- **User answers (raw)**: the verbatim AskUserQuestion answers, in order, for traceability when things go sideways later.
+- **User answers (raw)**: the verbatim answers, in order, for traceability when things go sideways later — or, in a `headless` run, the assumed values with their source.
 
 For update mode, if `lesson_build.log.md` does not yet exist, create it with a header noting "first recorded update; lesson pre-existed". For new mode, create the log file fresh with the standard header (`# Lesson Build Log — <course> / <slug>`, `Started: <timestamp>`, `Skill: lesson-builder v<...>`).
 

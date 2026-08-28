@@ -122,7 +122,7 @@ STRUCTURAL DRIFT REPAIRS:
   - Chatbot props reconcile: <delta or "none">
 ```
 
-This block lands in `<lesson_root>/lesson_build.log.md` under `### Phase 2 — Plan (update)` and is the condensed summary shown at the AskUserQuestion approval gate. The full plan stays in the log; the gate surfaces only the change-list to avoid AskUserQuestion truncation.
+This block lands in `<lesson_root>/lesson_build.log.md` under `### Phase 2 — Plan (update)` and is the condensed summary shown at the approval gate in whatever form `session_mode` calls for. The full plan stays in the log; the gate surfaces only the change-list to avoid `AskUserQuestion` truncation.
 
 ## 5. Branch / stash / merge invariants
 
@@ -221,7 +221,7 @@ The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<
 - **Missing `GRAPH_SCHEMA`**: lessons predating the graph-schema feature lack the `GRAPH_SCHEMA` export. Phase 3 backfills from current `DEFAULT_GRAPH_PARAMS` per `references/graph-schema-guide.md`. Surface it in the Phase 2 approval gate under "structural drift repairs" so the user sees the backfill coming.
 - **Dirty working tree**: Phase 0's working-tree check asks before proceeding. Either stash or abort; the skill never proceeds through dirt silently.
 - **Splice-heavy editing risk**: real lessons can run to thousands of lines. Babel parse catches syntax but not semantic drift. The post-splice sanity pass in Phase 3 step 4.6 is the backstop — do not skip it.
-- **Casual one-liner requests**: Phase 0 can balloon to ~5 update-specific questions. For a one-liner like "fix the tangent-slope graph in <slug>", prefer aggressive defaults (`light`, `specific: [<ComponentName>]`, no media hints) and present one condensed "here's what I'm assuming, change anything?" AskUserQuestion instead of 5 separate questions.
+- **Casual one-liner requests**: Phase 0 can balloon to ~5 update-specific questions. For a one-liner like "fix the tangent-slope graph in <slug>", prefer aggressive defaults (`light`, `specific: [<ComponentName>]`, no media hints) and present one condensed "here's what I'm assuming, change anything?" confirmation instead of 5 separate questions — an `AskUserQuestion` when interactive, one message in a `channel` session, and in `headless` an `ASSUMPTIONS` block folded into the Phase 2 gate (`SKILL.md` § Session modes and gates).
 
 ## 11. Phase-by-phase cross-reference
 

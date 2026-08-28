@@ -463,7 +463,7 @@ When orphan count is > 0 and any pre-verdict is `remove`, the condensed summary 
 
 ### Request-changes loop
 
-If the user selects **request changes**, main Claude fires a follow-up `AskUserQuestion` asking which items to revise. Example:
+If the user selects **request changes**, main Claude asks which items to revise — a follow-up `AskUserQuestion` in an interactive session, the same list as one message or journal block otherwise. Example:
 
 ```
 Question: Which items need revision?
@@ -483,7 +483,7 @@ Routing:
 - **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, rewrite that topic's `teaching_arc` if its explanatory line changed, then re-run `medium-decider-agent` with the revised topic flagged (the spawn still sees all topics so diversity and dedup stay coherent; it revises only what changed).
 - **Arc changes** (the user wants a topic explained in a different order, from a different central question, or toward a different exit model): no agent spawn required. Main Claude rewrites that topic's `teaching_arc` in the log per `references/teaching-communication.md`, re-applies the reorder test, and re-presents the gate.
 - **Media-only changes** (medium type wrong, specialist brief wrong): re-run `medium-decider-agent` with the user's revision noted. Cheaper than re-running content orchestration.
-- **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
+- **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` (interactive sessions; elsewhere the same list, in the gate's delivery form) lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
 - **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates the full deploy triple — `deploy_action` / `deploy_service_kind` / `deploy_service` — on the scoping artifact in place (dropping `deploy_service_kind` breaks Phase 5's push branching), rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
 
 Outside an interactive session the loop is the same, minus the menu: a `channel` reply of `changes: <text>` routes by what it names (content / arc / media / orphans / deploy) and the revised view is posted as the next message; a `headless` run re-emits the revised plan under a **new** hash, since the previous hash approved text that no longer exists.

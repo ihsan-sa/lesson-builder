@@ -77,7 +77,7 @@ Before firing the question, compile two awareness lists. These surface prior-sta
 - **Already-tracked private paths** — run `git ls-files -- <candidate gitignored paths>`. Any file committed in a prior run (before the gitignore was added, or under a prior override) is still in history and still public if the repo is public. Display with a one-line warning: "These files are already in git history. A 'no override' answer here does NOT unpublish them — use `git filter-repo` or equivalent if removal is required, or `git rm --cached <path>` to drop them from the next commit while keeping the working copy."
 - **Out-of-scope materials** — paths in `provided_materials` that live outside `<lesson_root>/`. These can't be staged directly regardless of gitignore; surface count + paths so the user knows.
 
-Then fire a single `AskUserQuestion`:
+Then fire a single `AskUserQuestion` (interactive sessions only — see the default rule below):
 
 > "The lesson's `.gitignore` currently excludes these private paths from commits by default:
 >

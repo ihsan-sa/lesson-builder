@@ -70,4 +70,21 @@ chat_*.png
 #
 # Replace <COURSE_DIR> with the actual directory name (e.g. `MATH101`).
 # Without the explicit `!…pdf` re-allow, the `*.pdf` rule above would drop it.
+#
+# Incremental course (a course curated from a `COURSE.md` — see
+# `references/course-curation.md`). Two extra re-allows, added only if the user
+# wants the course's durable state and materials inbox tracked:
+#
+#   !<COURSE_DIR>/COURSE.md
+#   !<COURSE_DIR>/materials/
+#   !<COURSE_DIR>/materials/**
+#
+# The directory line and the `/**` line are both needed: the first re-includes
+# the directory that `**/materials/` above excluded, the second re-includes its
+# contents past the `*.pdf` rule. Because these sit at the end of the file they
+# win over the earlier ignores.
+#
+# THIS TRACKS COURSE MATERIAL, WHICH IS ROUTINELY COPYRIGHTED. Add it only in a
+# repo whose visibility the user has accepted; the skill reports that the inbox
+# is ignored and never adds the carve-out on the user's behalf.
 # ---------------------------------------------------------------------------

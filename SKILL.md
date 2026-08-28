@@ -119,10 +119,11 @@ Acceptance criterion: after bootstrap + new-mode Phases 0-4, a skeleton lesson m
 ## Pipeline (6 phases)
 
 ```
-Phase 0 — Scoping            AskUserQuestion interview. Mode-branched questions.
-                              Captures materials_scope (course-only/fill-gaps/extensions),
-                              deploy_action (push-to-github/push-to-custom/commit-only/skip),
-                              and deploy_service.
+Phase 0 — Scoping            Interview delivered per session_mode. Mode-branched
+                              questions. Captures materials_scope (course-only/
+                              fill-gaps/extensions), deploy_action (push-to-github/
+                              push-to-custom/commit-only/skip), deploy_service, and
+                              course_context when the course has a COURSE.md.
 Phase 1 — Content Analysis   Main Claude fans out extraction/research workers
                               (evidence persisted to .build-scratch/evidence/);
                               content-orchestrator-agent synthesizes. Honors
