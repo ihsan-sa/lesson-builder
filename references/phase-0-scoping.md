@@ -1,10 +1,10 @@
 # Phase 0 — Scoping Interview
 
-Contents: Mode detection recap · Resource-mode detection · New-mode questions · Update-mode questions · Scoping artifact format · Aggressive defaults for one-liners · Log output · Handoff.
+Contents: Mode detection recap · Resource-mode detection · Session-mode detection · Course context · New-mode questions · Update-mode questions · Scoping artifact format · Aggressive defaults for one-liners · Log output · Handoff.
 
 ## Purpose
 
-Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short AskUserQuestion interview whose questions adapt to the detected mode and to whatever materials the user provided. Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes. Phase 0 assumes the fresh-workspace bootstrap gate has already run — if `<workspace_root>/_lesson-core/` is missing, the bootstrap procedure in `references/bootstrap.md` installs it before any Phase 0 question fires (see `SKILL.md`).
+Phase 0 runs before content work and produces the **scoping artifact** that drives downstream phases. Main Claude conducts a short interview whose questions adapt to the detected mode and to whatever materials the user provided — as `AskUserQuestion` calls when the session is interactive, and in the channel or headless form otherwise (§ Session-mode detection). Leave Phase 0 with enough to either spawn `content-orchestrator-agent` against a clear scope (new) or against a known lesson root with a bounded re-sweep (update). No research, orchestrator spawns, or file writes before Phase 0 completes. Phase 0 assumes the fresh-workspace bootstrap gate has already run — if `<workspace_root>/_lesson-core/` is missing, the bootstrap procedure in `references/bootstrap.md` installs it before any Phase 0 question fires (see `SKILL.md`).
 
 ## Mode detection recap
 
@@ -38,6 +38,35 @@ Two constraints when both fire: `light` forces `resource_mode: "limited"`, and `
 Log as `Effort mode: deep|standard|light` and surface it at Phase 0 confirmation alongside the resource mode. `standard` — Opus 5 at `xhigh` for the judgment layer — is the right answer for a routine lesson; promote to `deep` when the work is genuinely high-consequence, not on enthusiasm alone.
 
 Under `deep`, also tell the user at the confirmation that subagent effort follows the session, so a max-effort session is what makes `deep` actually deep — the pipeline can set the model tier per spawn but cannot set effort (see the Model policy in `SKILL.md`).
+
+### Session-mode detection
+
+Phase 0 also decides **how questions get asked at all**. The ordered detection rule and the per-mode gate forms are canonical in `SKILL.md` § Session modes and gates; resolve `session_mode: "interactive" | "channel" | "headless"` here, once, before the first question fires, and log it as `Session mode: <value>`.
+
+What it changes inside Phase 0:
+
+- **`interactive`** — the interview runs as written below: batched `AskUserQuestion` calls.
+- **`channel`** — the same questions, posted as **one message** with the options written out, answered in the user's own words. Batch harder than the 4-per-call dialog limit suggests: a course-channel user will answer a compact numbered list in one reply, and a second round-trip costs minutes, not milliseconds.
+- **`headless`** — the interview does not run and does not block. Take the aggressive defaults at the end of this doc (extended to new mode, which normally forbids them), fill everything `COURSE.md` can supply (§ Course context), and carry the result into Phase 2's `PLAN FOR APPROVAL` block as an `ASSUMPTIONS` section. The one blocking gate then covers scoping and plan together. Never invent a `course` or `slug` this way — if neither the task text nor `COURSE.md` names the target lesson, that is a no-safe-default gate: block.
+
+The working-tree question (update-mode Q2) is the one Phase 0 gate that can destroy work. In `channel` and `headless` sessions its safe default is **abort**, never stash-and-continue and never discard.
+
+## Course context
+
+Before the first question, Glob `<workspace_root>/<course>/COURSE.md` (and, when `course` is not yet known, `<workspace_root>/*/COURSE.md`). If it exists, read it — it is the course's stated shape, and every field it supplies is one the interview does not ask. Full contract: `references/course-curation.md` §2.
+
+What Phase 0 takes from it:
+
+- **Lesson map** → resolves `candidate_root` for an update whose lesson reference was ambiguous ("wk3 notes" → the row whose outline unit covers week 3), and tells a new-mode build which slug and numbering come next.
+- **`## Conventions`** → `course_name`, `audience_level`, `pedagogical_goal`, notation and media preferences, `model_after`. A stated convention beats one inferred from a sibling lesson's JSX — prefer it, and fall back to the sibling Glob only for what the section does not cover.
+- **`## Pending chunks`** → material already filed but not built. Surface the pending set at the confirmation; the batching rule in `references/course-curation.md` §5 decides whether this run consumes it.
+- **`## Materials index`** → what each inbox file covers and which lesson consumed it.
+
+Also Glob the **course materials inbox** at `<workspace_root>/<course>/materials/`. Files there are ordinary source material and may be listed in `provided_materials` by their course-relative path with `origin: "course-inbox"` — they are committed and referenced in place, never copied into the private `<lesson_root>/materials/`. The two directories and their differing privacy postures are set out in `references/course-curation.md` §3.
+
+When `COURSE.md` is absent, nothing changes: the interview asks what it always asked.
+
+**`consolidate` runs** (`update_kind: "consolidate"`) scope Phase 0 to the course, not a lesson: confirm the restructure's reason, resolve the affected lesson set from the lesson map, and run the working-tree check across **every** affected lesson root — one dirty tree blocks the run. No per-lesson interview happens; the per-lesson change-lists are settled in the consolidation plan (`references/course-curation.md` §6).
 
 ## Question taxonomy — new mode
 
@@ -131,6 +160,8 @@ Phase 0 output is a structured artifact written to the log and passed to Phase 1
 
 ```
 mode: "new" | "update"
+update_kind: "lesson" | "consolidate"   # update mode only; "consolidate" is the course-level restructure
+session_mode: "interactive" | "channel" | "headless"   # how every gate is delivered (SKILL.md)
 resource_mode: "full" | "limited"   # default "full"; "limited" only if user explicitly signalled a quick pass
 course: "<course display code>"
 course_name: "<full course name>"   # wired into the Chatbot courseName prop at Phase 3
@@ -145,9 +176,17 @@ audience_level: "..."
 pedagogical_goal: "survey" | "working" | "mastery"
 scope_of_lesson: "single" | "multi (count: N)"
 provided_materials:                # possibly empty in either mode; update mode captures newly attached materials
-  - type: "textbook chapter" | "slides" | "problem set" | "notes" | "none"
-    path_or_ref: "..."
+  - type: "textbook chapter" | "slides" | "problem set" | "notes" | "photos" | "none"   # "photos" = photographed handwritten notes or a board
+    path_or_ref: "..."             # an uploaded path, a URL, or "<course>/materials/<file>" for an inbox file
+    origin: "upload" | "course-inbox"   # optional; "course-inbox" files are committed and read in place
 materials_scope: "course-only" | "fill-gaps" | "extensions" | null   # null iff provided_materials is empty
+course_root: "<workspace_root>/<course>/" | null      # set iff <course>/COURSE.md exists
+course_context:                                       # omit entirely when course_root is null
+  map_row: "<slug> | <outline unit(s)> | <topic count> | <status>"
+  conventions_applied: [...]        # fields taken from ## Conventions rather than asked or inferred
+  pending_chunks: [...]             # rows this run consumes; [] when the run builds none of them
+  triage_verdict: "refine" | "add-topic" | "new-lesson" | "restructure" | null
+course_scope: [<slug>, ...]         # consolidate only: every affected lesson, in execution order
 deploy_action: "push-to-github" | "push-to-custom" | "commit-only" | "skip"
 deploy_service_kind: "git-remote" | "cli" | null   # null unless deploy_action == "push-to-custom"
 deploy_service: "<remote URL>" | "<CLI command>" | null   # populated iff deploy_action == "push-to-custom"
@@ -245,16 +284,20 @@ For terse one-liners (e.g. "fix the `<component>` in `<slug>`", "update the `<sl
 
 **Confirmation**: "Here's what I'm assuming for this update — change anything?" with a compact bullet list including `resource_mode`. Options: `Looks good, proceed`, `Change some fields`, `Run the full 5-question interview`. On partial change, ask only the flagged fields. Aggressive defaults never apply in new mode.
 
+**Exception — `session_mode: "headless"`**: aggressive defaults apply in **both** modes and their triggers are waived (there is no one to run an interview with). Fill every field from the task text, `COURSE.md`, and the existing `lesson_build.log.md`, in that order of authority; the confirmation is not asked but is written verbatim into the Phase 2 `PLAN FOR APPROVAL` block as `ASSUMPTIONS`, so the single blocking gate covers it. A field with no source and no safe default — which lesson, which course — blocks instead of being guessed.
+
 ## Output
 
 Main Claude writes the following to `<lesson_root>/lesson_build.log.md` under `## Phase 0 — Scoping` (new mode) or `### Phase 0 — Scoping (update)` nested under `## Update YYYY-MM-DD (run-id: <short-hash>)` (update mode):
 
-- **Mode detection line**: `Detected mode: new` or `Detected mode: update (candidate: <path>)`.
+- **Mode detection line**: `Detected mode: new` or `Detected mode: update (candidate: <path>)`; for a restructure, `Detected mode: update (consolidate: <slug>, <slug>, ...)`.
 - **Mode confirmed**: `YES` / user-corrected mode if they overrode detection.
+- **Session mode**: `Session mode: interactive|channel|headless` — and, when not `interactive`, the form each gate will take.
+- **Course context** (when `<course>/COURSE.md` exists): `Course context: COURSE.md read — map row <row>, N pending chunks, conventions applied: <fields>`.
 - **Working tree state** (update mode only): `clean` / `stashed: <stash-ref>` / `discarded`.
 - **Scoping artifact**: the full YAML-ish block from the section above, indented under a "Scoping artifact:" label.
 - **Timestamps**: phase start and phase end in ISO 8601 local time.
-- **User answers (raw)**: the verbatim AskUserQuestion answers, in order, for traceability when things go sideways later.
+- **User answers (raw)**: the verbatim answers, in order, for traceability when things go sideways later — or, in a `headless` run, the assumed values with their source.
 
 For update mode, if `lesson_build.log.md` does not yet exist, create it with a header noting "first recorded update; lesson pre-existed". For new mode, create the log file fresh with the standard header (`# Lesson Build Log — <course> / <slug>`, `Started: <timestamp>`, `Skill: lesson-builder v<...>`).
 

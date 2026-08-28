@@ -15,7 +15,7 @@ Verify each against the running app (sandbox recipe: bootstrap fresh workspace �
 
 ## P1 — reliability foundation
 
-7. **Run manifest** — versioned `lesson-run.json` (or `.lesson-builder/runs/<id>/` records): scoping artifact, plan hash + approval, branch/base SHA, stash OID, media manifests, open findings. Render `lesson_build.log.md` from it; stop parsing markdown as state.
+7. **Run manifest** — versioned `lesson-run.json` (or `.lesson-builder/runs/<id>/` records): scoping artifact, plan hash + approval, branch/base SHA, stash OID, media manifests, open findings. Render `lesson_build.log.md` from it; stop parsing markdown as state. The headless approval gate (`SKILL.md` § Session modes and gates) is the sharpest case: it hashes the plan text out of markdown to decide whether an `APPROVED PLAN <hash>` still refers to the plan on disk. The manifest should own that hash — and, for `consolidate`, the per-lesson change-lists and the completed/remaining lists a partially-run restructure leaves behind.
 8. **Worktree-per-run** — updates (and replacements) build in a run-id git worktree from the recorded base SHA; no stash of the user's tree at all. Deletes the highest-risk recovery logic (stash/pop/branch contamination).
 9. **Stage-then-promote for every producer** — artifacts land in a run staging dir, checksum-validated, atomically promoted (manim-runner now does this; generalize).
 10. **Attestation-cached no-grandfathering** — cache QA verdicts by artifact hash + rubric version + reviewer model; re-review only changed/dependency-affected artifacts, full coverage preserved by proof reuse.

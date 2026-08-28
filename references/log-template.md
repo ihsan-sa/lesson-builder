@@ -41,6 +41,8 @@ Skill: lesson-builder v<...>
 
 ## Phase 0 — Scoping
 - Detected mode: new
+- Session mode: interactive | channel | headless
+- Course context: COURSE.md read — map row <row>, N pending chunks | N/A (no COURSE.md)
 - User answers: [...]
 - Derived scope: [...]
 
@@ -53,6 +55,9 @@ Skill: lesson-builder v<...>
 ## Phase 2 — Plan
 - Plan artifact: [...]
 - Approval: APPROVED by user at <timestamp>
+                 | PENDING (hash <hash>)                                   (headless, gate posted)
+                 | APPROVED via APPROVED PLAN <hash> at <timestamp>         (headless, resumed)
+                 | INHERITED from consolidation plan <hash> at <timestamp>  (consolidate)
 
 ## Phase 3 — Execution
 - Specialists spawned: [...]
@@ -83,8 +88,10 @@ Skill: lesson-builder v<...>
 ## Update YYYY-MM-DD (run-id: <short-hash>)
 
 ### Phase 0 — Scoping (update)
-Detected mode: update (candidate: <path>)
+Detected mode: update (candidate: <path>) | update (consolidate: <slug>, <slug>, ...)
 Mode confirmed: YES
+Session mode: interactive | channel | headless
+Course context: COURSE.md read — map row <row>, N pending chunks | N/A (no COURSE.md)
 Working tree state: clean | stashed: <stash-ref>
 Research depth: light | targeted | full
 Scope of change: ...
@@ -116,6 +123,7 @@ Regression watch: [...]
 Build verification: PASS | FAIL
 Merge commit SHA: <sha>
 Stash recovery: auto-popped | manual | none
+Course map: updated (<slug> -> live, N chunks marked built) | N/A (no COURSE.md)
 
 ### Final Report
 [items]

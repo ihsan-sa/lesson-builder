@@ -112,7 +112,7 @@ The caller passes `mode: "new" | "update"` and, for Phase 4, `teaching_arcs` (th
 
 ## Source-material reading
 
-When re-reading cited PDFs, slide decks, or lecture notes: default to the `Read` tool's native PDF support. It returns rendered pages as multimodal input, preserving equations, figures, tables, and layout — essential for this agent's equation-correctness and constant-verification checks. Do NOT use `pdftotext` / `pypdf`: they silently corrupt Greek letters, super/subscripts, and fractions, which would produce false-negative equation reviews. PDFs over 10 pages require `pages: "N-M"` (max 20 per call); chunk as needed. See `references/phase-1-content.md` § "Uploaded PDFs / files" for the full procedure.
+When re-reading cited PDFs, slide decks, or lecture notes: default to the `Read` tool's native PDF support. It returns rendered pages as multimodal input, preserving equations, figures, tables, and layout — essential for this agent's equation-correctness and constant-verification checks. Do NOT use `pdftotext` / `pypdf`: they silently corrupt Greek letters, super/subscripts, and fractions, which would produce false-negative equation reviews. PDFs over 10 pages require `pages: "N-M"` (max 20 per call); chunk as needed. Photographed handwritten notes and boards are `Read` directly, no OCR; a symbol you cannot make out is an open question for the user, never an inferred reading. See `references/phase-1-content.md` § "Uploaded PDFs / files / photos" for the full procedure.
 
 ## Return format
 
