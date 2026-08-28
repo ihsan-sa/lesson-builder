@@ -214,7 +214,7 @@ Everything else — outline, conventions, open questions, unconsumed chunks — 
 
 ## 10. Phase cross-reference
 
-- **Phase 0** (scoping): `references/phase-0-scoping.md` § Course context — reading `COURSE.md`, the inbox Glob, the `course_root` / `session_mode` scoping-artifact fields, and the consolidate scope questions.
+- **Phase 0** (scoping): `references/phase-0-scoping.md` § Course context — reading `COURSE.md`, the inbox Glob, the `course_root` / `course_context` / `session_mode` scoping-artifact fields, and the consolidate scope questions.
 - **Phase 1** (content analysis): `references/phase-1-content.md` — the course inbox in the workspace-materials-first ordering, pending chunks as inputs, and the course-scope inventory for `consolidate`.
 - **Phase 2** (plan): `references/phase-2-plan.md` — the approval gate this doc's plans pass through, including its non-interactive forms.
 - **Phase 3-5** (execution → deploy): unchanged per lesson; `consolidate` runs them once per affected lesson in the plan's execution order.
