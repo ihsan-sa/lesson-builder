@@ -1,6 +1,6 @@
 # Phase 2: Plan
 
-Contents: Purpose · Inputs · Objectives-first backward design · Teaching arc per topic · Procedure (6 steps) · medium-decider driving · Lesson Plan artifact formats · Human approval gate · Request-changes loop · Handoff to Phase 3.
+Contents: Purpose · Inputs · Objectives-first backward design · Teaching arc per topic · Procedure (6 steps) · medium-decider driving · Lesson Plan artifact formats · Human approval gate · Gate delivery by session mode · Request-changes loop · Handoff to Phase 3.
 
 ## Purpose
 
@@ -138,9 +138,9 @@ Main Claude writes the full Lesson Plan artifact to `<lesson_root>/lesson_build.
 
 The log is source of truth. Long change-lists go into the log first, then the approval gate points at the log. This avoids AskUserQuestion body truncation.
 
-### Step 6: Human approval gate via AskUserQuestion
+### Step 6: Human approval gate
 
-Main Claude presents the Lesson Plan with three options: approve, request changes, abort. See the "Human approval gate" section below for full details including phrasing examples and the request-changes loop.
+Main Claude presents the Lesson Plan with three options: approve, request changes, abort — as an `AskUserQuestion` dialog when the session is interactive, and in the channel or headless form otherwise. See the "Human approval gate" section below for full details including phrasing examples, the per-session-mode delivery, and the request-changes loop.
 
 ## medium-decider-agent driving
 
@@ -295,10 +295,48 @@ Single mandatory gate. No exceptions. Phase 3 does not start without explicit ap
 
 ### Mechanics
 
-Main Claude uses `AskUserQuestion` with three options: **approve**, **request changes**, **abort**.
+Main Claude offers three outcomes — **approve**, **request changes**, **abort** — through whichever channel `session_mode` calls for (§ Gate delivery by session mode). In an interactive session that is an `AskUserQuestion`.
 
 - **New mode**: inline the plan if it fits; otherwise write to the log and present a condensed summary pointing at the log.
 - **Update mode**: surface only the **change-list** (not the full plan). Long change-lists go to the log; present a condensed summary pointing at the log.
+- **`consolidate`**: one gate for the whole course plan (`references/course-curation.md` §6). The body carries the moves, the per-lesson change-lists, and the execution order in full — a per-lesson summary is not enough to approve, because the user is approving several lessons' worth of removals at once. No per-lesson gate follows.
+
+### Gate delivery by session mode
+
+The gate is mandatory in every session; only its delivery changes. The detection rule for `session_mode` and the rule that `AskUserQuestion` **must not** fire without a terminal are canonical in `SKILL.md` § Session modes and gates. Phase 2 mechanics per mode:
+
+**`interactive`** — the dialog examples below, unchanged.
+
+**`channel`** — post the gate as **one message**. Same body the dialog would have carried (inline plan, or condensed summary plus the log path), ending with the reply keywords:
+
+```
+Reply: `go` to approve · `changes: <what to change>` · `abort`
+```
+
+Accept `go` / `approve` / `approved` as approval, `changes: …` as the request-changes loop, `abort` as the abort path. **Silence is not approval** — no timeout default fires, and Phase 3 does not start. If the reply is ambiguous ("looks fine but shorten topic 3"), treat it as `changes:` and say so; approving on a guess spends the whole build.
+
+**`headless`** — write the artifact to the journal the harness names (a `cc`-style harness names `~/.cc/state/<repo>/<track>/progress.md`; if the brief names no journal, ask for one before starting, since a headless run with nowhere to post its plan cannot reach its gate). Format:
+
+```markdown
+## PLAN FOR APPROVAL 4f2a9c17
+
+ASSUMPTIONS                       <- headless only; the scoping answers nobody was there to give
+  mode: update · lesson: <course>/<slug> · research_depth: targeted
+  resource_mode: full · effort_mode: standard · deploy_action: push-to-github
+  source: task text + COURSE.md lesson map
+
+<the full plan or change-list — the same text the dialog would have carried,
+ not a summary: this is the only thing the approver will read>
+
+To approve: re-dispatch with `APPROVED PLAN 4f2a9c17` in the task text.
+To change: re-dispatch with the changes described; a revised plan gets a new hash.
+```
+
+Then stop, with `BLOCKED: plan awaiting approval` as the last line of the journal entry (harnesses that watch for a status line — `STATUS: BLOCKED: …` and the like — take that form; the phrase is what matters). Write the same plan to `lesson_build.log.md` as usual with `Approval: PENDING (hash <hash>)`.
+
+**Resuming a headless run**: if the task text contains `APPROVED PLAN <hash>` and `<hash>` matches the hash of the plan currently recorded in `lesson_build.log.md`, the gate is passed — log `Approval: APPROVED via APPROVED PLAN <hash> at <timestamp>` and go straight to Phase 3 without re-asking. If it does not match, the plan has changed since it was approved: do **not** proceed. Re-emit the current plan under its new hash and block again, saying which hash was offered and which is current.
+
+**The hash** is the first 8 hex characters of the SHA-256 of the plan text under the heading (`sha256sum` over the extracted block), computed after the final edit. Recompute it after every request-changes revision — a revised plan is a different plan, and the point of the hash is that approval cannot silently transfer to text the user never saw.
 
 ### AskUserQuestion phrasing examples
 
@@ -448,7 +486,9 @@ Routing:
 - **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
 - **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates the full deploy triple — `deploy_action` / `deploy_service_kind` / `deploy_service` — on the scoping artifact in place (dropping `deploy_service_kind` breaks Phase 5's push branching), rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
 
-In every case, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same AskUserQuestion pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
+Outside an interactive session the loop is the same, minus the menu: a `channel` reply of `changes: <text>` routes by what it names (content / arc / media / orphans / deploy) and the revised view is posted as the next message; a `headless` run re-emits the revised plan under a **new** hash, since the previous hash approved text that no longer exists.
+
+In every case, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
 
 ### Abort path
 

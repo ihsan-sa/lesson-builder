@@ -1,6 +1,6 @@
 # Phase 1: Content Analysis
 
-Contents: New-mode orchestration (inputs, procedure, PDF handling, practice-problem extraction, package schema) · Update-mode orchestration (inventory pre-scan, inputs, research-depth branches, drift classification, package schema) · Post-orchestrator review · Handoff to Phase 2.
+Contents: New-mode orchestration (inputs, procedure, PDF handling, practice-problem extraction, package schema) · Course context inputs · Update-mode orchestration (inventory pre-scan, inputs, research-depth branches, drift classification, package schema) · Consolidate: course-scope inventory · Post-orchestrator review · Handoff to Phase 2.
 
 ## Purpose
 
@@ -21,6 +21,7 @@ Main Claude passes the following from the scoping artifact:
 - `provided_materials`: list of file paths (PDFs, ZIPs, slides, problem sets, lecture notes) or `null`
 - `materials_scope: "course-only" | "fill-gaps" | "extensions" | null` — load-bearing when materials are provided; main Claude must forward it verbatim. `course-only` caps the orchestrator's research to prerequisite lookups the materials clearly assume; `fill-gaps` lets research fill background and missing derivations but not broaden the topic; `extensions` permits broadening to related topics, deeper treatment, and applications beyond the materials. Pure-research runs (no materials) ignore it.
 - `new_lesson_context`: any research scope directives the user gave (rough topic list, textbook to parallel, research depth, number of topics target)
+- `course_context`: the block Phase 0 built from `<course>/COURSE.md`, when one exists (`references/phase-0-scoping.md` § Course context). The `## Conventions` fields are constraints, not hints — notation, symbol choices, and depth stated there govern extraction and synthesis, and a source that contradicts them is reconciled toward the course's own usage with the discrepancy noted. The map row says which outline unit this lesson owns, which is the boundary research must not quietly cross.
 
 ### Procedure — main Claude owns every spawn
 
@@ -88,7 +89,7 @@ If the source material embeds solutions (e.g., a past-final PDF with a solutions
 **Research-fabricated practice problems are forbidden.** Research agents do not make up new exam questions. They may include *textbook* end-of-chapter problems if the user picked `materials_scope: "extensions"` AND the textbook is clearly cited — treat those as practice problems with source tag `"<Textbook> Ch<N> — P<M>"` and the textbook's published solution (if available) or an orchestrator-derived solution with the `"orchestrator-derived"` provenance tag. Under `course-only` and `fill-gaps`, practice problems come exclusively from the user's provided materials.
 
 **Topic-based research (no files)**:
-1. Workspace materials first — Glob/Grep sibling lessons, course notes, and any workspace-level references before reaching for the web; the course's own conventions and notation win.
+1. Workspace materials first — in order: `<course>/COURSE.md` (`## Conventions`, `## Materials index`), the course materials inbox at `<course>/materials/`, sibling lessons, course notes, and any workspace-level references — all before reaching for the web; the course's own conventions and notation win. Inbox files are read in place and cited by their course-relative path; they are ordinary source material bounded by `materials_scope` like any other (`references/course-curation.md` §3).
 2. Web search for standard equations, definitions, constants (`research-agent` topic-research mode).
 3. **Two-source cross-reference**: every non-trivial equation confirmed against ≥2 independent sources before inclusion.
 
@@ -269,8 +270,9 @@ Main Claude passes (after running whatever worker spawns the research depth call
 - `research_depth`: `"light"` | `"targeted"` | `"full"`
 - `scope_of_change`: `"any"` | `"specific"` | `"full-replace"`
 - `scope_topics`: the approved topic list from the scoping artifact (required when `scope_of_change == "specific"` — without it the orchestrator cannot know which topics to research)
-- `new_materials`: any new file paths the user provided with this update
+- `new_materials`: any new file paths the user provided with this update — including course-inbox paths (`<course>/materials/<file>`) carried over from the pending chunks this run consumes, each tagged with the chunk's one-line note so the orchestrator knows what the user said the material was for
 - `materials_scope`: forwarded verbatim whenever `new_materials` is non-empty (applies at every research depth, including `full`)
+- `course_context`: as in new mode. In update mode it also bounds the diff: a drift incident against a claim the course's own conventions state differently is a convention question for the user, not a correction to make silently.
 - `concerns`: free-text user concerns captured in scoping
 - `lesson_context`: existing `LESSON_CONTEXT` string
 - `topic_context`: existing `TOPIC_CONTEXT` map
@@ -290,7 +292,7 @@ After reading existing content and running whichever research branch applies, th
 - **Drift incidents**: equation mismatches, stale definitions, outdated constants. Each has `{ location, description, severity, source }`.
 - **Content gaps**: concepts the user wants added but that have no existing topic coverage.
 - **Redundancies**: content flagged for removal (either by user concern or because research revealed it is no longer pedagogically useful).
-- **Reorganization opportunities**: topics that should be split, merged, or reordered.
+- **Reorganization opportunities**: topics that should be split, merged, or reordered. A reorganization that cannot be expressed inside this lesson — a topic that belongs in a sibling lesson, a lesson that has outgrown its unit, a concept duplicated in two lessons — is out of update mode's reach: record it, do not attempt it, and surface it at the Phase 2 gate as a `consolidate` recommendation (`references/course-curation.md` §4, §6).
 
 ### Per-topic action verdicts
 
@@ -342,6 +344,20 @@ UNCHANGED_LESSON_CONTEXT / UPDATED_LESSON_CONTEXT
 - `media_preverdicts` are **advisory**. The authoritative decision is `medium-decider-agent`'s verdict in Phase 2.
 - `action: "remove"` on a topic **requires a rationale** or main Claude refuses to proceed.
 - `reorder:N` must be bounded: `N ≤ current TOPICS length plus added topics`.
+
+---
+
+## Consolidate — course-scope inventory (`update_kind: "consolidate"`)
+
+A restructure plans across lessons, so Phase 1 runs **once for the course** rather than once for a lesson. Procedure:
+
+1. For each slug in `course_scope`, run the existing-media inventory pre-scan above — unchanged, one lesson at a time — plus its `TOPICS` list, per-topic `TOPIC_CONTEXT`, `teaching_arc` (from the lesson log, where recorded), and `GRAPH_SCHEMA` presence.
+2. Compile them into one **topic × lesson × media** table: every topic in the affected set, the lesson that currently owns it, its media names and kinds, its schema keys, and the assets on disk backing it.
+3. Flag the two cross-lesson conditions no single-lesson pass can see: **duplicated topics** (the same concept taught in two lessons) and **shared assets** (one file referenced from two lessons, or one component duplicated by copy-paste). Both must appear in the consolidation plan with an owner.
+
+Research depth is `light` by default: a restructure relocates material that was already researched, and re-researching every affected lesson is the expensive way to move a topic. Promote to `targeted` only for topics the plan says need a rebuilt `teaching_arc` at their destination.
+
+The output feeds Phase 2's consolidation plan (`references/course-curation.md` §6), not a per-lesson change-list — the per-lesson change-lists are derived from it there, and each lesson's own Phase 3-5 run consumes only its own slice.
 
 ---
 

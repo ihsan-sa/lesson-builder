@@ -31,7 +31,7 @@ lesson_build.log.md
 
 Semantics:
 
-- `materials/`, `source/`, `notes/` — user-provided course materials and private notes. Gitignored because these often carry copyright or draft-state risk.
+- `materials/`, `source/`, `notes/` — user-provided course materials and private notes. Gitignored because these often carry copyright or draft-state risk. This covers the **lesson-level** `<lesson_root>/materials/` only. A course materials inbox at `<workspace_root>/<course>/materials/` is a different directory with a different posture — committed by convention, referenced in place, never copied down into the lesson (`references/course-curation.md` §3) — and this `.gitignore` neither covers nor should try to cover it.
 - `.env`, `.env.*`, `*.local` — credentials. Never deploy these.
 - `.build-scratch/`, `.scratch/` — specialist scratch output and ad-hoc work.
 - `lesson_build.log.md` — per the skill's existing convention (Phase 5 doc), the log stays untracked unless the user opts in.

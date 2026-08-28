@@ -1,10 +1,10 @@
 # Update-mode orientation
 
-Contents: §1 Purpose · §2 Quick mental model · §3 Mode-detection decision tree · §4 The 5 media actions · §5 Branch/stash/merge invariants · §6 No-grandfathering · §7 Regression-watch · §8 What update mode does not touch · §9 Common gotchas · §10 Phase cross-reference.
+Contents: §1 Purpose · §2 Quick mental model · §3 Mode-detection decision tree · §4 The 5 media actions · §5 Branch/stash/merge invariants · §6 No-grandfathering (and what a small update costs) · §7 Regression-watch · §8 `consolidate` · §9 What update mode does not touch · §10 Common gotchas · §11 Phase cross-reference.
 
 Single-file orientation for lesson-builder's update mode. Read this first whenever an update-mode verb or lesson reference shows up in the user's request. Do not re-stitch update-mode concepts from the six phase docs; come here, get oriented, then dive into the specific phase doc you need.
 
-Cross-reference: `SKILL.md` (the skill root) holds the skill-level mode-detection summary and phase-shell layout. This doc expands only the update-specific concepts.
+Cross-reference: `SKILL.md` (the skill root) holds the skill-level mode-detection summary, the session-mode rule that decides how gates are delivered, and the phase-shell layout. `references/course-curation.md` holds the course-level layer — where a new chunk of material belongs, when to build, and the `consolidate` restructure §8 summarises. This doc expands only the update-specific concepts.
 
 ## 1. Purpose
 
@@ -15,10 +15,11 @@ Update mode operates on an existing lesson rather than building from scratch. Sa
 - Update mode is a **branch** in the same pipeline, not a parallel pipeline.
 - **Phase 0** adds mode detection, mode confirmation, working-tree check, research-depth question, scope-of-change question, optional media hints.
 - **Phase 1** has content-orchestrator's update branch: read existing JSX end-to-end, build a media inventory, diff against user concerns / new materials, classify drift / gaps / redundancies / reorganization.
-- **Phase 2** uses `medium-decider-agent`'s 5-way taxonomy (`keep / refine / replace / remove / add`) and presents a **change-list** approval view rather than a full plan dump. `add` topics and content-rewrite `modify` topics also get a `teaching_arc` (`references/phase-2-plan.md` § Teaching arc); `keep` topics do not.
+- **Phase 2** uses `medium-decider-agent`'s 5-way taxonomy (`keep / refine / replace / remove / add`) and presents a **change-list** approval view rather than a full plan dump. The gate is mandatory in every session; how it is delivered — dialog, channel message, or journal block plus `BLOCKED` — follows `session_mode` (`SKILL.md` § Session modes and gates). `add` topics and content-rewrite `modify` topics also get a `teaching_arc` (`references/phase-2-plan.md` § Teaching arc); `keep` topics do not.
 - **Phase 3** does git branch setup, splice assembly against the existing JSX (not skeleton instantiation), post-splice sanity pass.
 - **Phase 4** is mode-agnostic in mechanism; two update-specific rules apply: no-grandfathering, regression-watch.
 - **Phase 5** commits to the update branch and merges `--no-ff` to main; handles stash recovery; leaves branch + stash intact on failure for manual recovery.
+- **`consolidate`** (§8) is the one variant that changes this shape: it plans across several lessons at once, takes a single course-level approval, then runs Phases 3-5 lesson by lesson exactly as above.
 
 ### Inventory pre-scan (Phase 1 prerequisite)
 
@@ -66,7 +67,9 @@ User message
         ambiguous                          --> mode=new, surface ambiguity in Phase 0
 ```
 
-**Confirmation is mandatory.** Phase 0's first AskUserQuestion always confirms mode. A user who says "rework" but means "start fresh" gets corrected at the gate.
+**Restructure verbs short-circuit the tree.** `restructure`, `re-split`, `consolidate`, `merge <a> and <b>`, `split <slug>`, `re-balance` with a course reference → `mode = update`, `update_kind = "consolidate"`, and the candidate is a **lesson set** rather than one root (§8).
+
+**Confirmation is mandatory.** Phase 0's first question always confirms mode — an `AskUserQuestion` in an interactive session, the same question posted as a message or resolved from the task text plus `COURSE.md` otherwise. A user who says "rework" but means "start fresh" gets corrected at the gate.
 
 **Log surface**: main Claude writes `Detected mode: update (candidate: <path>)` or `Detected mode: new` as the first line of `## Update YYYY-MM-DD > ### Phase 0 — Scoping (update)` (update mode) or `## Phase 0 — Scoping` (new mode) in `<lesson_root>/lesson_build.log.md`.
 
@@ -163,6 +166,18 @@ All media in the post-update lesson — `keep` + `refine` + `replace` + `add` �
 - **Cost implication**: expensive visual-QA on lessons with many kept media. Worth it because semantic drift in kept media is invisible to the user until it breaks later.
 - **Specialist brief note**: visual-QA specialists receive the **original stated intent** (as captured by content-orchestrator in Phase 1), not the user's most recent concerns, so a refined graph is evaluated against what it was always supposed to show.
 
+### What a small update actually costs
+
+State this plainly to any user who asks for a one-line change, because the bill does not scale with the size of the change:
+
+- **Phase 4 re-QAs everything, not just what changed.** No-grandfathering means every medium in the final lesson — every `keep` included — runs the full visual-QA pipeline. A lesson with twelve media pays twelve visual-QA spawns whether the run refined one graph or six.
+- **Phase 1 and Phase 2 are per-run, not per-change.** The research re-sweep (even at `light`), the whole-lesson `medium-decider-agent` spawn, and plan compilation happen once per run regardless of how small the change-list is.
+- **So the marginal cost of a run is nearly fixed.** Correcting one constant costs roughly what correcting eight costs. Ten small runs cost about ten times one run that carries all ten changes — plus ten branches, ten merges, and ten chances for the regression-watch rule (§7) to catch a newly-broken `keep`.
+
+**Therefore: batch small changes.** When material arrives in small chunks, file each one immediately and let the changes accumulate; start a run when the accumulated set changes a topic's substance (a claim is wrong, a derivation is new, an objective moved, real practice problems arrived) or when the user asks for the build. Cosmetic and corroborating material waits. The full batching rule, including where pending chunks are recorded, is in `references/course-curation.md` §5. Say what is pending rather than sitting on it silently — *"3 changes pending on `<slug>`; none changes a topic's substance yet — say build now to force it."*
+
+This is a scheduling rule, not a licence to skip QA: when the run does happen, no-grandfathering applies in full. Under `resource_mode: "limited"` the fix loop tightens, but coverage does not shrink.
+
 ## 7. Regression-watch stop rule
 
 If a `refine` or `replace` fix iteration in Phase 4 regresses a previously-clean `keep` medium — a visual-QA specialist that previously passed now fails — **halt that fix thread**, log as a regression-watch entry under `### Phase 4 — Review (update) > Regression watch`, surface to the user at Phase 5.
@@ -170,7 +185,20 @@ If a `refine` or `replace` fix iteration in Phase 4 regresses a previously-clean
 - The user decides whether to accept the regression (merge anyway) or abort.
 - **Tuning note**: may fire spuriously if visual-QA specialists have non-deterministic outputs. Start with "fire on two consecutive regressions on the same medium" and adjust based on real runs.
 
-## 8. What update mode does NOT touch
+## 8. `consolidate` — the course-level variant
+
+Trigger words: **restructure, re-split, consolidate**, plus `merge <a> and <b>`, `split <slug>`, `re-balance`. Also reached from chunk triage when new material's home cannot be settled inside one lesson (`references/course-curation.md` §4).
+
+`consolidate` is update mode with a **course-level plan**: topics move, merge, or split across several lessons, so the plan is compiled once for the whole course and the change-lists it yields are executed lesson by lesson through this same pipeline. Shape:
+
+1. **One plan, per-lesson change-lists.** Every move appears twice — a `remove` in the source lesson and an `add` in the destination — with shared media assigned an owner and relocated, and `GRAPH_SCHEMA` keys moved (or backfilled in a destination that lacks the export, per `references/graph-schema-guide.md`).
+2. **One approval gate for the whole course plan.** The per-lesson runs do not re-prompt; each lesson's log records `Approval: INHERITED from consolidation plan <hash> at <timestamp>`.
+3. **Then the ordinary pipeline, lesson by lesson**, in the plan's execution order — destinations before sources, one branch per lesson, each lesson's own Phase 4 and merge. Every invariant in this doc still holds per lesson: branch naming (§5), no-grandfathering (§6), regression-watch (§7), the untouched-files list (§9).
+4. **Partial completion is a valid stopping state.** If a lesson halts, lessons already merged stay merged and the rest stay unstarted; the completed and remaining lists are recorded and reported. Nothing is unwound automatically.
+
+`consolidate` is the most expensive run the skill has — every touched lesson pays a full Phase 4 — so it belongs at outline boundaries, not in place of a normal update. Plan format, move mechanics, retirement and split rules, and the failure protocol are canonical in `references/course-curation.md` §6.
+
+## 9. What update mode does NOT touch
 
 Unless explicitly broken or materially stale, update mode leaves these alone:
 
@@ -184,7 +212,7 @@ Unless explicitly broken or materially stale, update mode leaves these alone:
 
 The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, and possibly manim `.py` scripts at `<lesson_root>/*.py`. That is the entire blast radius.
 
-## 9. Common update-mode gotchas
+## 10. Common update-mode gotchas
 
 - **Non-`@core` (legacy) lessons**: some workspaces contain legacy lessons that predate the `@core` refactor and still inline chat code; these are update-mode no-gos by default. Detection: a single Grep of the lesson JSX for an import from `@core` — absent means legacy. Workspaces should list known legacy lessons in the workspace CLAUDE.md. On a legacy hit, surface "this lesson needs migration first; opt into update-without-migration, abort, or switch to new mode?" during mode confirmation. Narrow opt-in bypass exists only if the user explicitly picks it.
 - **Slug rename**: disallowed. A slug rename affects branch name, commit message, deploy path (`vite.config.js base=`), and asset URLs. Treat as "create new + delete old" flow; surface guidance during mode confirmation.
@@ -195,7 +223,7 @@ The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<
 - **Splice-heavy editing risk**: real lessons can run to thousands of lines. Babel parse catches syntax but not semantic drift. The post-splice sanity pass in Phase 3 step 4.6 is the backstop — do not skip it.
 - **Casual one-liner requests**: Phase 0 can balloon to ~5 update-specific questions. For a one-liner like "fix the tangent-slope graph in <slug>", prefer aggressive defaults (`light`, `specific: [<ComponentName>]`, no media hints) and present one condensed "here's what I'm assuming, change anything?" AskUserQuestion instead of 5 separate questions.
 
-## 10. Phase-by-phase cross-reference
+## 11. Phase-by-phase cross-reference
 
 Once oriented, dive into the specific phase doc for full procedures:
 
@@ -208,3 +236,5 @@ Once oriented, dive into the specific phase doc for full procedures:
 - **Checklists**: `references/checklists.md` — update-mode pre-flight checklist and update-mode splice checklist.
 - **Log format**: `references/log-template.md` — update-mode append format (`## Update YYYY-MM-DD (run-id: <hash>)` with `### Phase N` nested under it).
 - **Graph schema**: `references/graph-schema-guide.md` — used by the Phase 3 `GRAPH_SCHEMA` backfill step when the lesson predates the graph-schema feature.
+- **Course layer**: `references/course-curation.md` — `COURSE.md` and the committed course materials inbox, chunk triage, the batching rule behind §6's cost note, and the `consolidate` plan format.
+- **Gate delivery**: `SKILL.md` § Session modes and gates — what the Phase 2 gate looks like when the session has no terminal.
