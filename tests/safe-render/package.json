@@ -1,0 +1,10 @@
+{
+  "name": "safe-render-tests",
+  "private": true,
+  "description": "Headless XSS + benign-equivalence corpus for _lesson-core/chat/safeRender.js. Run: npm install && node run.cjs",
+  "scripts": { "test": "node run.cjs" },
+  "devDependencies": {
+    "katex": "^0.16.21",
+    "playwright": "^1.58.2"
+  }
+}

@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Defence in depth behind _lesson-core/chat/safeRender.js: no plugins, no
+       frames, no <base> or form hijack from anything a chat reply could inject.
+       Script/style/img sources stay open because Vite dev, KaTeX and Desmos
+       (CDN + inline) need them. -->
+  <meta http-equiv="Content-Security-Policy" content="object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'" />
   <title>__COURSE_CODE__ - __LESSON_TITLE__</title>
 </head>
 <body>
