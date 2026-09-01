@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } fr
 import { createPortal } from "react-dom";
 import { ShellContext } from "./shellContext.js";
 import { STYLES } from "../chat/chat.css.js";
+import { injectKatexStylesheet } from "../hooks/useKatex.js";
 
 // ───────────────────────────────────────────────────────────────
 // LessonShell — the frame every lesson renders inside.
@@ -219,10 +220,10 @@ export function LessonShell({
     popupRef.current = w;
     const d = w.document;
     try { d.title = `${lessonTitle || "Lesson"} — Tutor`; } catch (_) {}
-    const kl = d.createElement("link");
-    kl.rel = "stylesheet";
-    kl.href = "https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css";
-    d.head.appendChild(kl);
+    // Same pinned KaTeX stylesheet as the main document, with the same
+    // onerror escape hatch: a dead CDN costs the popout its math typography,
+    // never its interactivity (Eq falls back to LaTeX source).
+    injectKatexStylesheet(d);
     const st = d.createElement("style");
     st.textContent = STYLES + "\nhtml,body{margin:0;padding:0;height:100%;background:var(--surface);}";
     d.head.appendChild(st);
