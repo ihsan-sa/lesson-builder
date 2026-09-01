@@ -273,7 +273,7 @@ Update mode (Phase 3 of the update pipeline) leaves every file in this doc **unt
 
 Edit them only when:
 - `package.json` is missing a dep the updated lesson actually needs, or pin versions are materially broken;
-- `vite.config.js` has the wrong `@core` alias depth (only ever happens if the lesson was moved), is missing `server.fs.allow`, is missing `envDir` (symptom: Desmos key not found despite a populated workspace-root `.env.local`), or still routes chat through a `server.proxy` block / `getProxyPort()` reading `server/.proxy-port` (pre-plugin shape; symptom: the tutor answers from another lesson's backend — replace with `plugins: [react(), lessonChatProxy(__dirname)]`);
+- `vite.config.js` has the wrong `@core` alias depth (only ever happens if the lesson was moved), is missing `server.fs.allow`, is missing `envDir` (symptom: Desmos key not found despite a populated workspace-root `.env.local`), or still routes chat through a `server.proxy` block / `getProxyPort()` reading `server/.proxy-port` (pre-plugin shape; symptom: the tutor answers from another lesson's backend — replace with `plugins: [react(), lessonChatProxy(__dirname)]`). The plugin shape requires `<workspace_root>/_lesson-core/server/viteLessonProxy.js` to exist: run check 3 of the core-version gate (`references/bootstrap.md` § Core-version gate) and refresh the core first if it is missing — never rewrite a lesson's `vite.config.js` to the plugin shape against a core that lacks the plugin, or the lesson stops loading at `npm run dev`;
 - `server/proxy.js` has a stale shim path (wrong depth);
 - `index.html` is missing `#root` or the main.jsx script tag;
 - `src/main.jsx` references the wrong lesson file name;
