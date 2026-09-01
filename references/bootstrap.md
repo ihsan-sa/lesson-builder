@@ -8,11 +8,12 @@ A missing `_lesson-core/` is the main failure mode this bootstrap fixes. If the 
 
 ## Core-version gate (existing workspaces)
 
-Two independent checks, run both — a workspace can pass one and fail the other (e.g. a fresh clone has current core but an empty untracked `.claude/`). Check 1's refresh offer is a user gate: in a `channel` or `headless` session it takes the safe default — **decline the refresh**, apply the legacy fallback below, and report it — rather than firing a dialog nobody will see (`SKILL.md` § Session modes and gates). Check 2 is mechanical and needs no gate.
+Three independent checks, run all — a workspace can pass one and fail another (e.g. a fresh clone has current core but an empty untracked `.claude/`). Check 1's refresh offer is a user gate: in a `channel` or `headless` session it takes the safe default — **decline the refresh**, apply the legacy fallback below, and report it — rather than firing a dialog nobody will see (`SKILL.md` § Session modes and gates). Checks 2 and 3 are mechanical and need no gate — and check 3 is blocking: the one case where a stale core is fatal rather than degraded.
 
 1. **Core version**: Grep `<workspace_root>/_lesson-core/chat/buildSystemPrompt.js` for `PEDAGOGY_POLICY`. If absent, new-template lessons would ship with no tutoring policy (the new template doesn't paste it; the old core doesn't inject it). Offer a core refresh — replace `<workspace_root>/_lesson-core/` contents with the payload's (their workspace has no local core edits unless a sync log says otherwise; check it first) and re-run `npm install` there. If declined, embed the PEDAGOGY POLICY text (from the payload's `buildSystemPrompt.js` export) verbatim into each new lesson's `LESSON_CONTEXT` during Phase 3 — the legacy-compatible fallback — and note it in the log.
    Second marker, same file: `TEACHING_COMMUNICATION`. A core that has `PEDAGOGY_POLICY` but not this export predates the tutor's communication layer (response modes, scope defaults, anti-preamble/anti-sycophancy, exemplars) — the tutor still has a policy, so this is not blocking, but offer the same refresh; without it the tutor runs the older, verbosity-prone style.
 2. **Agent registry**: diff `<workspace_root>/.claude/agents/` against `$SKILL/agents/` + `workspace-root/.claude/agents/` (`.claude/` is gitignored, so clones start empty and stale registries survive core refreshes). Copy missing/changed agent files in, and DELETE registry files whose names no longer exist in the skill — a stale `geometry-agent.md` still in the registry means runtime delegation runs retired prompts.
+3. **Vite plugin present (blocking)**: Glob `<workspace_root>/_lesson-core/server/viteLessonProxy.js`. The lesson template's `vite.config.js` hard-imports it (`plugins: [react(), lessonChatProxy(__dirname)]`), and check 1 cannot see its absence — `PEDAGOGY_POLICY` and `TEACHING_COMMUNICATION` are both present in cores that predate the plugin. Without it the first new lesson dies at `npm run dev` with "Cannot find module …/viteLessonProxy.js" (Vite cannot even load the config), and a core that old also writes only `server/.proxy-port`, never the `server/.proxy.json` the plugin resolves through — a permanent 503. If the file is absent, refresh `<workspace_root>/_lesson-core/` from the payload before Phase 3 and re-run `npm install` there. This is not an offer and has no fallback: no session mode declines it. Run this check first: a refresh here also satisfies check 1 — skip its offer and its fallback, or the policy ends up both in the core and duplicated into every new lesson's `LESSON_CONTEXT`. If the sync log records local core edits, re-apply them on top of the refreshed core and report that. Existing lessons keep working — the refreshed `proxy.js` still writes `.proxy-port` for them.
 
 ## Detection (one Glob at session start)
 
@@ -61,7 +62,7 @@ references/bootstrap/
     CLAUDE.md                Per-lesson project doc. Placeholders: __SLUG__,
                              __SLUG_SNAKE__, __COURSE_CODE__, __LESSON_TITLE__
     .gitignore               Runtime carve-outs (server/.isolated/, .uploads/,
-                             .proxy-port, chat.log, node_modules/, dist/)
+                             .proxy.json, .proxy-port, chat.log, node_modules/, dist/)
   workspace-root/            Workspace-level templates
     gitignore.template       Copy to <workspace_root>/.gitignore, adapt carve-outs
     env.local.example        Copy to <workspace_root>/.env.local, fill
@@ -150,7 +151,7 @@ After bootstrap + new-mode Phases 0-4 on the supplied skeleton the fresh workspa
 
 - `cd <workspace_root>/<course>/claude_lessons/<slug> && npm install` succeeds.
 - `claude` CLI is on `PATH` (the proxy spawns it per chat session; without it the proxy boots but `/chat` errors on first use). The skill does not install it — confirm with `claude --version` before declaring bootstrap done.
-- `node server/proxy.js` starts, writes `server/.proxy-port`, and the proxy serves `/chat` without error.
+- `node server/proxy.js` starts, writes `server/.proxy.json` (identity: port, lessonDir, pid, startedAt — what the Vite plugin resolves through) and `server/.proxy-port` (bare port number, kept for older tooling), and the proxy serves `/chat` without error.
 - `npx vite` starts, the page renders with KaTeX-rendered math, the chatbot bubble appears (dev builds only), and the Ctrl+Click context gate works.
 - `node test_lesson.cjs src/<slug_snake>.jsx` → `Results: 17/17 passed, 0 failed`.
 - If the lesson embeds `<DesmosGraph/>` and `VITE_DESMOS_KEY` is populated, the graph renders; if the key is blank the red fallback appears (loud, expected).

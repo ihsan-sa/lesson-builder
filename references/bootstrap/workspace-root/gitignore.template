@@ -23,6 +23,7 @@ __pycache__/
 **/server/.isolated/
 **/server/.uploads/
 **/server/.proxy-port
+**/server/.proxy.json
 **/server/chat.log
 
 # Lesson-builder scratch (Phase 3 specialist outputs before splice assembly)
@@ -44,6 +45,18 @@ __pycache__/
 
 # Claude Code settings
 .claude/
+# ...except the workspace-root agent registry. The tutor proxy passes
+# `--add-dir <workspace root>`, so this is where the CLI discovers the
+# subagents the tutor delegates graphics and research to; ignoring it left
+# that instruction pointing at a directory that did not exist. Anchored with a
+# leading slash so per-lesson .claude/ settings stay ignored, and the directory
+# itself is re-included first — git does not look inside an excluded directory —
+# then its contents are excluded again, so settings.local.json, settings.json and
+# commands/ at the root stay out and only agents/ comes back.
+!/.claude/
+/.claude/*
+!/.claude/agents/
+!/.claude/agents/**
 
 # OS files
 .DS_Store

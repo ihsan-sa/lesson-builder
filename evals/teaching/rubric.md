@@ -15,7 +15,7 @@ Score the rendered topic against its `teaching_arc` and the stated `audience_lev
 | **cohesion** | Given-to-new inside paragraphs; transitions say why the next idea follows; one stable name per concept; paragraphs end on conclusions | Sentences start from unintroduced entities; subject changes without bridges |
 | **inference burden** | No step the intended learner cannot supply is left unstated; no obvious step is narrated for an audience that has it | A required inference is missing (0), or every trivial step is spelled out for experts (1) |
 | **terminology** | Every symbol and term defined at first use, used consistently, validity conditions beside the claim | Symbols carrying the point undefined; names drift |
-| **format fit** | Representation matches structure (prose for causal chains, table for repeated dimensions, numbered list for order, bullets only for parallel items with a stem); headings mark moves | Causal argument as bullets; decorative headings; nested lists |
+| **format fit** | Representation matches structure (prose for causal chains, table for repeated dimensions, numbered list for order, bullets only for parallel items with a stem, a figure for a shape, a structure or a change across stages); headings mark moves | Causal argument as bullets; decorative headings; nested lists |
 | **example design** | Each example performs its declared function and lands after the learner knows what to notice | Examples before their concept, or undeclared / non-discriminating |
 | **economy** | No redundant move; each proposition said once in the representation that carries it | Restatement across paragraph + callout + summary; seductive detail |
 | **adaptation** | Density calibrated to the stated audience (worked detail for novices, none for experts) | Explanations pitched at the wrong audience throughout |
@@ -38,7 +38,7 @@ Judges see two anonymized replies (A/B, order randomized) to the same case from 
 | directness | Does it answer the exact question first, without preamble or restating? |
 | information economy | Is anything there merely because it is relevant? |
 | coherence | Connected argument, or assembled facts? |
-| representation fit | Prose / equation / list / table chosen by structure, not variety? |
+| representation fit | Prose / equation / list / table / figure chosen by structure, not variety? |
 | terminology precision | Symbols and terms defined and stable; conditions stated? |
 | example quality | In-domain, discriminating, placed after the feature to notice is known? |
 | analogy discipline | None by default; if present, requested or justified, mapped, bounded, returned to formal terms? |

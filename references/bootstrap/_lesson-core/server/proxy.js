@@ -69,6 +69,16 @@ const LOG_FILE = path.join(process.cwd(), "server", "chat.log");
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = path.dirname(path.dirname(__dirname));
 
+// Identity of the lesson this proxy serves, as a resolved realpath. Vite
+// forwards chat traffic here only after matching this exact string, so the
+// same lesson reached through a symlink must compare equal to itself, and two
+// checkouts of the same lesson in different git worktrees must compare
+// unequal — they are different directories with different files.
+const realpathOf = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+const LESSON_DIR = realpathOf(process.cwd());
+const STARTED_AT = new Date().toISOString();
+let BOUND_PORT = null;
+
 const app = express();
 // Localhost-only CORS. `origin: true` would reflect ANY origin, letting an
 // arbitrary webpage the user visits drive /chat (token spend), /upload
@@ -83,6 +93,30 @@ app.use(cors({
 // 40mb: attachments are base64 JSON (5MB/file client cap -> ~6.8MB encoded,
 // several files per message). The old 2mb limit 413'd documented uploads.
 app.use(express.json({ limit: "40mb" }));
+
+// Cross-lesson guard. Every lesson runs its own copy of this proxy and they
+// all compete for port 3001, so "the port lesson X used last time" is not the
+// same question as "where lesson X's proxy is now" — another lesson's proxy
+// answers on that port just as readily, and would then list its own chat
+// sessions and run the CLI with its own directory as cwd. Vite stamps each
+// forwarded request with the lesson it believes it is talking to; anything
+// that names a different lesson is refused here, before a session is opened
+// or a CLI is spawned. Requests without the header (curl, health checks) are
+// unaffected.
+app.use((req, res, next) => {
+  const expected = req.get("x-expect-lesson-dir");
+  if (expected && expected !== LESSON_DIR) {
+    log("WRONG_LESSON", { url: req.originalUrl, expected, actual: LESSON_DIR });
+    return res.status(409).json({ error: { message: `This chat backend serves ${path.basename(LESSON_DIR)}, not ${path.basename(expected)}. The lesson's own proxy is not running on this port — restart it (\`npm run proxy\` from the lesson directory).` } });
+  }
+  next();
+});
+
+// Identity endpoint: lets a client confirm which lesson answered before it
+// trusts anything else the connection says.
+app.get("/whoami", (req, res) => {
+  res.json({ lessonDir: LESSON_DIR, port: BOUND_PORT, pid: process.pid, startedAt: STARTED_AT });
+});
 
 // Values spliced into CLI argv (spawned with shell:true for Windows .cmd
 // compatibility) must be allowlisted — model/effort/sessionId arrive from the
@@ -191,6 +225,30 @@ function runClaude(args, stdinContent, isolated = false) {
   });
 }
 
+// The CLI shares stdout with diagnostics from the MCP clients it connects on
+// startup — "Client.listTools() called but server does not advertise tools
+// capability - returning empty list" is one this box emits — and those lines
+// arrive asynchronously, so they can land before or after the result object.
+// JSON.parse() over the whole buffer therefore fails intermittently, and when
+// it does the student is told "Session failed to initialize. Is the proxy
+// server running?" while the proxy is perfectly healthy. Take the result
+// object out of the noise instead of assuming stdout holds nothing else.
+function parseCliJson(raw) {
+  const text = String(raw).trim();
+  try { return JSON.parse(text); } catch (_) {}
+  // Scan from the end: the result object is the last thing the CLI itself
+  // writes, and a late diagnostic is a bare line rather than an object.
+  for (const line of text.split("\n").reverse()) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(t);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch (_) {}
+  }
+  throw new Error(`no JSON object in CLI output: ${text.slice(0, 300)}`);
+}
+
 function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onError) {
   const cwd = isolated ? ISOLATED_CWD : PROJECT_DIR;
   if (isolated) {
@@ -267,7 +325,7 @@ app.post("/session/init", async (req, res) => {
 
   try {
     const raw = await runClaude(args, stdinContent, !!isolated);
-    const parsed = JSON.parse(raw);
+    const parsed = parseCliJson(raw);
     const sessionId = parsed.session_id;
     if (!sessionId) throw new Error("No session_id in response");
 
@@ -321,7 +379,7 @@ app.post("/session/transfer", async (req, res) => {
       runClaude(dumpArgs, dumpPrompt, oldSession.isolated),
       new Promise((_, reject) => setTimeout(() => reject(new Error("Dump timed out after 30s")), 30000)),
     ]);
-    const dumpParsed = JSON.parse(dumpRaw);
+    const dumpParsed = parseCliJson(dumpRaw);
     summary = dumpParsed.result || "";
     const tok = extractTokens(dumpParsed);
     accumulateTokens(tok);
@@ -338,7 +396,7 @@ app.post("/session/transfer", async (req, res) => {
 
   try {
     const raw = await runClaude(newArgs, initPrompt, newIsolated);
-    const parsed = JSON.parse(raw);
+    const parsed = parseCliJson(raw);
     const newSessionId = parsed.session_id;
     if (!newSessionId) throw new Error("No session_id in response");
     const tok = extractTokens(parsed);
@@ -408,7 +466,7 @@ app.post("/chat", async (req, res) => {
     const statelessStdin = withSystemPrompt(args, system, prompt);
     try {
       const raw = await runClaude(args, statelessStdin);
-      const parsed = JSON.parse(raw);
+      const parsed = parseCliJson(raw);
       const tok = extractTokens(parsed); accumulateTokens(tok);
       log("STATELESS", { model: cliModel, ...tok });
       res.json({ content: [{ type: "text", text: parsed.result || "No response." }], model: cliModel, stop_reason: "end_turn" });
@@ -590,14 +648,52 @@ app.post("/commit", async (req, res) => {
 const BASE_PORT = process.env.PROXY_PORT ? Number(process.env.PROXY_PORT) : 3001;
 const MAX_PORT_ATTEMPTS = 50;
 const PORT_FILE = path.join(process.cwd(), "server", ".proxy-port");
+// Identity file. `.proxy-port` holds a bare number, which cannot answer the
+// only question that matters to a client — "is the process on that port MY
+// lesson's proxy?" — so it is kept for the tooling that already reads it
+// (bin/lesson) and this file carries the identity Vite actually checks.
+const IDENT_FILE = path.join(process.cwd(), "server", ".proxy.json");
+
+function writeIdentity(port) {
+  // Identity first, port second: `lesson up` waits for .proxy-port and then
+  // starts Vite, and Vite resolves through .proxy.json — so .proxy.json has
+  // to be on disk before .proxy-port announces that the proxy is ready.
+  try {
+    fs.writeFileSync(IDENT_FILE, JSON.stringify({ port, lessonDir: LESSON_DIR, pid: process.pid, startedAt: STARTED_AT }, null, 2) + "\n");
+  } catch (_) {}
+  try { fs.writeFileSync(PORT_FILE, String(port)); } catch (_) {}
+}
+
+// Remove the identity on the way out so a client can tell "not running" from
+// "running somewhere else" — but only if the file is still ours. A successor
+// proxy for this lesson may already have overwritten it, and deleting its
+// record would strand it.
+let cleanedUp = false;
+function clearIdentity() {
+  if (cleanedUp) return;
+  cleanedUp = true;
+  try {
+    const rec = JSON.parse(fs.readFileSync(IDENT_FILE, "utf8"));
+    if (rec.pid !== process.pid) return;
+  } catch (_) { return; }
+  try { fs.unlinkSync(IDENT_FILE); } catch (_) {}
+  try {
+    if (fs.readFileSync(PORT_FILE, "utf8").trim() === String(BOUND_PORT)) fs.unlinkSync(PORT_FILE);
+  } catch (_) {}
+}
+process.on("exit", clearIdentity);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => { clearIdentity(); process.exit(0); });
+}
 
 function startServer(port, attempt) {
   // Loopback-only bind: this proxy can spend tokens, write files, and run
   // git — it must never be reachable from the LAN. CORS alone only protects
   // against browsers; the bind is the real boundary.
   const server = app.listen(port, "127.0.0.1", () => {
-    try { fs.writeFileSync(PORT_FILE, String(port)); } catch (_) {}
-    log("SERVER_START", { port, cwd: process.cwd(), claude: CLAUDE_CMD, shellFree: SHELL_FREE, tools: ALLOWED_TOOLS });
+    BOUND_PORT = port;
+    writeIdentity(port);
+    log("SERVER_START", { port, cwd: process.cwd(), lessonDir: LESSON_DIR, pid: process.pid, claude: CLAUDE_CMD, shellFree: SHELL_FREE, tools: ALLOWED_TOOLS });
     console.log(`[proxy] Claude CLI proxy on http://localhost:${port}`);
     if (!SHELL_FREE) {
       console.warn(`[proxy] NOTE: ${CLAUDE_BIN ? `\`${CLAUDE_BIN}\`` : "`claude`"} must be launched through a shell, and a shell mangles multi-line arguments. The system prompt is therefore sent as a [System Instructions] preamble on the first user turn instead of via --system-prompt. It arrives intact, just at lower priority. A native CLI binary (not a .cmd/.bat shim) restores full-fidelity system prompts.`);

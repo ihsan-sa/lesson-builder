@@ -1,42 +1,30 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { lessonChatProxy } from "../../../_lesson-core/server/viteLessonProxy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function getProxyPort() {
-  try {
-    const portFile = path.join("server", ".proxy-port");
-    return parseInt(fs.readFileSync(portFile, "utf8").trim(), 10) || 3001;
-  } catch (_) {
-    return 3001;
-  }
-}
-
 export default defineConfig({
-  plugins: [react()],
-  // Load .env.local from the WORKSPACE ROOT so one key file (VITE_DESMOS_KEY)
-  // serves every lesson. Vite does NOT walk upward on its own — without this,
-  // a root .env.local is silently ignored and Desmos reports a missing key.
-  envDir: path.resolve(__dirname, "../../.."),
+  // lessonChatProxy forwards /chat, /session, /sessions, /upload and /commit
+  // to THIS lesson's Express proxy, resolving it per request from
+  // server/.proxy.json. It replaces a `server.proxy` entry that pinned a port
+  // number read once at config load: every lesson's proxy starts its search at
+  // 3001, so a number that has gone stale still answers — from another
+  // lesson's backend, with another lesson's chat sessions and working
+  // directory. See _lesson-core/server/viteLessonProxy.js.
+  plugins: [react(), lessonChatProxy(__dirname)],
   resolve: {
     alias: {
       "@core": path.resolve(__dirname, "../../../_lesson-core"),
     },
   },
+  // Load .env.local from the WORKSPACE ROOT so one key file (VITE_DESMOS_KEY)
+  // serves every lesson. Vite does NOT walk upward on its own — without this,
+  // a root .env.local is silently ignored and Desmos reports a missing key.
+  envDir: path.resolve(__dirname, "../../.."),
   server: {
     fs: { allow: ["..", "../..", "../../..", "../../../.."] },
-    proxy: {
-      // Every Express route the chat client calls MUST be listed here — the
-      // client posts same-origin and Vite 404s anything unlisted. /commit was
-      // missing for months and silently broke the commit chip in dev.
-      "/chat": `http://localhost:${getProxyPort()}`,
-      "/upload": `http://localhost:${getProxyPort()}`,
-      "/session": `http://localhost:${getProxyPort()}`,
-      "/sessions": `http://localhost:${getProxyPort()}`,
-      "/commit": `http://localhost:${getProxyPort()}`,
-    },
   },
 });
