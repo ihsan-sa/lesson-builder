@@ -17,7 +17,8 @@ If the workspace is fresh (no `<workspace_root>/_lesson-core/`), run the bootstr
     <slug>.jsx              (lesson content; uses underscores, e.g. my_topic.jsx)
   server/
     proxy.js                (1-line shim -> _lesson-core/server/proxy.js)
-    .proxy-port             (auto-written at runtime: the port the proxy chose)
+    .proxy.json             (auto-written at runtime: the proxy's identity — port, lessonDir, pid, startedAt; what Vite resolves through)
+    .proxy-port             (auto-written at runtime: the bare port number, kept for `bin/lesson`)
     .isolated/              (auto-created at runtime: isolated-mode CWD)
     .uploads/               (auto-created at runtime: uploaded files)
     chat.log                (auto-written at runtime: request log)
@@ -82,53 +83,41 @@ Copy verbatim from `references/bootstrap/lesson-template/vite.config.js`. No per
 ```js
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { lessonChatProxy } from "../../../_lesson-core/server/viteLessonProxy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function getProxyPort() {
-  try {
-    const portFile = path.join("server", ".proxy-port");
-    return parseInt(fs.readFileSync(portFile, "utf8").trim(), 10) || 3001;
-  } catch (_) {
-    return 3001;
-  }
-}
-
 export default defineConfig({
-  plugins: [react()],
-  // Load .env.local from the WORKSPACE ROOT so one key file (VITE_DESMOS_KEY)
-  // serves every lesson. Vite does NOT walk upward on its own — without this,
-  // a root .env.local is silently ignored and Desmos reports a missing key.
-  envDir: path.resolve(__dirname, "../../.."),
+  // lessonChatProxy forwards /chat, /session, /sessions, /upload and /commit
+  // to THIS lesson's Express proxy, resolving it per request from
+  // server/.proxy.json. It replaces a `server.proxy` entry that pinned a port
+  // number read once at config load: every lesson's proxy starts its search at
+  // 3001, so a number that has gone stale still answers — from another
+  // lesson's backend, with another lesson's chat sessions and working
+  // directory. See _lesson-core/server/viteLessonProxy.js.
+  plugins: [react(), lessonChatProxy(__dirname)],
   resolve: {
     alias: {
       "@core": path.resolve(__dirname, "../../../_lesson-core"),
     },
   },
+  // Load .env.local from the WORKSPACE ROOT so one key file (VITE_DESMOS_KEY)
+  // serves every lesson. Vite does NOT walk upward on its own — without this,
+  // a root .env.local is silently ignored and Desmos reports a missing key.
+  envDir: path.resolve(__dirname, "../../.."),
   server: {
     fs: { allow: ["..", "../..", "../../..", "../../../.."] },
-    proxy: {
-      // Every Express route the chat client calls MUST be listed here — the
-      // client posts same-origin and Vite 404s anything unlisted. /commit was
-      // missing for months and silently broke the commit chip in dev.
-      "/chat": `http://localhost:${getProxyPort()}`,
-      "/upload": `http://localhost:${getProxyPort()}`,
-      "/session": `http://localhost:${getProxyPort()}`,
-      "/sessions": `http://localhost:${getProxyPort()}`,
-      "/commit": `http://localhost:${getProxyPort()}`,
-    },
   },
 });
 ```
 
 Key pieces:
+- **`lessonChatProxy(__dirname)`**: a Vite plugin from `_lesson-core/server/viteLessonProxy.js` (imported by relative path — the `@core` alias does not exist inside the config file itself; the `../../../` depth matches the alias) that forwards `/chat`, `/upload`, `/session`, `/sessions` and `/commit` to THIS lesson's Express proxy. It resolves the target on every request from `server/.proxy.json` and forwards only if the record names this lesson's realpath and its `pid` is alive; each forwarded request also carries `X-Expect-Lesson-Dir`, which the proxy answers with 409 unless it matches its own directory. When resolution fails the plugin answers 503 with `{error:{message}}` telling the student to start the proxy. This replaces the old `server.proxy` block fed by a `getProxyPort()` that read `server/.proxy-port` once at config load: every lesson's proxy starts its search at 3001, so a stale number almost always still answers — from another lesson's backend, with that lesson's sessions and working directory. Do NOT add a `server.proxy` entry for these routes, and do not read `.proxy-port` from the config.
 - **`envDir`**: points env-file resolution at the workspace root, so the single root `.env.local` (holding `VITE_DESMOS_KEY`) serves all lessons. Vite does not walk upward on its own; without `envDir` a root `.env.local` is silently ignored — the classic symptom is Desmos reporting a missing key even though the root file is populated. Do NOT copy `.env.local` into individual lessons.
 - **`@core` alias**: `path.resolve(__dirname, "../../../_lesson-core")` resolves from `<slug>/` up three levels (`../` -> `claude_lessons/`, `../../` -> `<course>/`, `../../../` -> `<workspace_root>/`) to `<workspace_root>/_lesson-core/`. All shared UI and chat primitives are imported via `@core`.
 - **`server.fs.allow`**: Vite's dev server refuses to serve files outside the project root by default. The four entries (`..`, `../..`, `../../..`, `../../../..`) grant access up the tree so `@core` imports actually load in dev. Without this, you get "file outside the allowed directories" errors on `npm run dev`.
-- **`getProxyPort()`**: reads `server/.proxy-port` (written by the Express proxy on startup) so Vite routes `/chat`, `/session`, `/sessions`, `/upload` to whichever port the proxy picked. Falls back to 3001 if the file is missing (proxy not yet started, or down).
 - **`base`**: intentionally NOT set in the config. Production builds pass `--base="/<course>/<slug>/"` as a CLI arg via `build-all.sh`, which generates correct asset URLs for a nested static deploy under `/<course>/<slug>/`.
 
 ## `server/proxy.js` (1-line shim)
@@ -150,11 +139,13 @@ import "../../../../_lesson-core/server/proxy.js";
 Why a shim:
 - The actual Express proxy code lives in `<workspace_root>/_lesson-core/server/proxy.js` (canonical, single source of truth).
 - The shim lets each lesson start its own proxy process (so two lessons can run simultaneously on different ports) while the implementation is shared. Fixing a bug in the canonical proxy instantly fixes every lesson that imports it.
-- The canonical proxy resolves log files (`chat.log`, `.proxy-port`) relative to `process.cwd()`, so running `node server/proxy.js` from the lesson root writes artifacts into that lesson's `server/` directory, not into `_lesson-core/`.
+- The canonical proxy resolves its runtime files (`chat.log`, `.proxy.json`, `.proxy-port`) relative to `process.cwd()` and takes its identity (`lessonDir`) from the realpath of `process.cwd()`, so running `node server/proxy.js` from the lesson root writes artifacts into that lesson's `server/` directory, not into `_lesson-core/` — and is what makes Vite's identity check pass.
 - Path depth: `../../../../` = `server/` -> `<slug>/` -> `claude_lessons/` -> `<course>/` -> `<workspace_root>/`. Adjust only if a lesson ever lives at a non-standard depth.
 
 Canonical proxy behavior worth knowing:
-- **Port selection**: base port comes from the `PROXY_PORT` env var when set, else 3001. On `EADDRINUSE` the proxy increments and retries (up to 50 attempts), then writes the chosen port to `server/.proxy-port` for Vite to read.
+- **Port selection**: base port comes from the `PROXY_PORT` env var when set, else 3001. On `EADDRINUSE` the proxy increments and retries (up to 50 attempts), then writes two files: `server/.proxy.json` first — the identity record `{port, lessonDir, pid, startedAt}` (`lessonDir` = realpath of the lesson) that Vite's `lessonChatProxy` resolves through on every request — and then `server/.proxy-port`, the bare number kept for tooling that waits on it (`bin/lesson`). On exit (`SIGINT`/`SIGTERM`/`SIGHUP`) both are removed, but only if the record still carries this process's pid, so a successor proxy is never stranded and a client can tell "not running" from "running somewhere else".
+- **Cross-lesson guard**: any request whose `X-Expect-Lesson-Dir` header names a different lesson is refused with 409 before a session is opened or a CLI is spawned (logged as `WRONG_LESSON`); requests without the header (curl, health checks) pass. `GET /whoami` returns `{lessonDir, port, pid, startedAt}`.
+- **CLI output parsing**: the spawned CLI shares stdout with MCP client diagnostics that can land before or after its result object, so the proxy takes the last JSON object out of stdout (`parseCliJson`) instead of parsing the whole buffer. Symptom of the old behaviour: intermittent "Session failed to initialize. Is the proxy server running?" on a healthy proxy.
 - **Model pass-through**: the proxy forwards the model name from the request to the CLI unchanged — it does NOT collapse full model names to `opus`/`sonnet`-style latest aliases. Selecting a specific version in the chat header runs exactly that version, not whatever the alias currently resolves to.
 
 ## `index.html`
@@ -226,6 +217,7 @@ Ships at `references/bootstrap/lesson-template/.gitignore`. Copy verbatim; no pl
 server/.isolated/
 server/.uploads/
 server/.proxy-port
+server/.proxy.json
 server/chat.log
 node_modules/
 dist/
@@ -273,7 +265,7 @@ node server/proxy.js
 npx vite
 ```
 
-Open the URL Vite prints (defaults to `http://localhost:5173`; increments to 5174, 5175, ... when earlier ports are in use). The proxy picks a free port starting at 3001 (or at `PROXY_PORT` if that env var is set) and writes it to `server/.proxy-port`; Vite reads that file on startup to route `/chat`, `/session`, `/sessions`, `/upload`.
+Open the URL Vite prints (defaults to `http://localhost:5173`; increments to 5174, 5175, ... when earlier ports are in use). The proxy picks a free port starting at 3001 (or at `PROXY_PORT` if that env var is set) and records it in `server/.proxy.json` (identity: port, lessonDir, pid, startedAt) plus the bare number in `server/.proxy-port`; Vite's `lessonChatProxy` plugin reads `.proxy.json` on every request to route `/chat`, `/session`, `/sessions`, `/upload`, `/commit`, so start order does not matter and a proxy restarted on a new port needs no Vite restart.
 
 ## Update-mode behavior
 
@@ -281,7 +273,7 @@ Update mode (Phase 3 of the update pipeline) leaves every file in this doc **unt
 
 Edit them only when:
 - `package.json` is missing a dep the updated lesson actually needs, or pin versions are materially broken;
-- `vite.config.js` has the wrong `@core` alias depth (only ever happens if the lesson was moved), is missing `server.fs.allow`, or is missing `envDir` (symptom: Desmos key not found despite a populated workspace-root `.env.local`);
+- `vite.config.js` has the wrong `@core` alias depth (only ever happens if the lesson was moved), is missing `server.fs.allow`, is missing `envDir` (symptom: Desmos key not found despite a populated workspace-root `.env.local`), or still routes chat through a `server.proxy` block / `getProxyPort()` reading `server/.proxy-port` (pre-plugin shape; symptom: the tutor answers from another lesson's backend — replace with `plugins: [react(), lessonChatProxy(__dirname)]`);
 - `server/proxy.js` has a stale shim path (wrong depth);
 - `index.html` is missing `#root` or the main.jsx script tag;
 - `src/main.jsx` references the wrong lesson file name;
