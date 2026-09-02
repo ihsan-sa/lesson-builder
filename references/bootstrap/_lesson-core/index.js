@@ -32,5 +32,8 @@ export {
 export { THEMES_G } from "./constants/themes.js";
 export { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "./constants/models.js";
 
-export { useKatex } from "./hooks/useKatex.js";
+// `useKatex()` returns true once KaTeX has settled (loaded OR definitively
+// failed) so a dead CDN can never freeze a lesson on its loading gate;
+// `useKatexStatus()` gives the tri-state for components that render math.
+export { useKatex, useKatexStatus, injectKatexStylesheet, KATEX_CSS_URL, KATEX_JS_URL } from "./hooks/useKatex.js";
 export { useDesmos } from "./hooks/useDesmos.js";

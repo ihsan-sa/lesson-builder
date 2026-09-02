@@ -1,0 +1,9 @@
+{
+  "name": "katex-fallback-tests",
+  "private": true,
+  "description": "Playwright evidence that a lesson stays usable when the KaTeX CDN is slow or unreachable. Run: ./run.sh",
+  "scripts": { "test": "./run.sh" },
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}
