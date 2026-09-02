@@ -7,7 +7,9 @@
 // LONG streams a chunk every 500ms for up to two minutes and forks bash+sleep
 // underneath (the `; true` keeps bash from exec-ing straight into sleep, so
 // the tree is three deep) so there is a real tree to kill; IGNORE_TERM makes every process
-// in that tree ignore SIGTERM, so only the proxy's SIGKILL pass can end it.
+// in that tree ignore SIGTERM, so only the proxy's SIGKILL pass can end it;
+// EXIT0_ON_TERM makes the CLI handle SIGTERM by reaping its child and exiting
+// 0 with no result — a graceful shutdown the proxy must still count as cancelled.
 const args = process.argv.slice(2);
 if (args.includes("--version")) { console.log("fake-claude 0.0.0"); process.exit(0); }
 let stdin = "";
@@ -20,7 +22,7 @@ function main() {
   const usage = { input_tokens: 1, output_tokens: 1 };
   const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
   if (fmt === "json") { emit({ type: "result", session_id: sid, result: "Session ready.", usage, total_cost_usd: 0 }); return; }
-  const long = /LONG/.test(stdin), ignoreTerm = /IGNORE_TERM/.test(stdin);
+  const long = /LONG/.test(stdin), ignoreTerm = /IGNORE_TERM/.test(stdin), exit0OnTerm = /EXIT0_ON_TERM/.test(stdin);
   if (ignoreTerm) process.on("SIGTERM", () => {});
   emit({ type: "system", subtype: "init", session_id: sid });
   if (!long) {
@@ -29,6 +31,7 @@ function main() {
     return;
   }
   const child = require("child_process").spawn("bash", ["-c", (ignoreTerm ? "trap '' TERM; " : "") + "sleep 600; true"], { stdio: "ignore" });
+  if (exit0OnTerm) process.on("SIGTERM", () => { child.kill("SIGKILL"); process.exit(0); });
   emit({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "sleep 600" } }] } });
   let n = 0;
   const t = setInterval(() => {

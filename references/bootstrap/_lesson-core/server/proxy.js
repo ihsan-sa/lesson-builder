@@ -18,8 +18,11 @@
 // /session/close without keepContext, which discards the session outright.
 // Cancel is idempotent for the turn it hit (a repeat answers 200 again) and
 // refuses ids that are not running a turn: 404 for an unknown id, 409 for a
-// session whose latest turn completed or errored. Going down (SIGINT/SIGTERM/
-// SIGHUP) SIGTERMs every running turn's tree rather than orphaning it.
+// session with nothing in flight (its latest turn completed or errored, or it
+// has not run one). A cancel accepted before the CLI exits wins over its exit
+// code: the turn ends as cancelled even if the CLI shut down cleanly or
+// printed its result as the kill landed. Going down (SIGINT/SIGTERM/SIGHUP)
+// SIGTERMs every running turn's tree rather than orphaning it.
 //
 // Resume candidacy. /sessions reports `resumable` per session: true unless
 // the session is open in a tab, has a turn in flight, or its latest turn was
@@ -615,14 +618,28 @@ app.post("/chat", async (req, res) => {
     // promotion happens only on completion") and releases the turn slot.
     let turn = null;
     let settled = false;
+    let streamedChars = 0;
     const settle = (outcome) => {
       if (settled) return;
       settled = true;
+      // A cancel accepted before the CLI exited wins over its exit code: a
+      // CLI that handles SIGTERM by exiting 0, or that printed its result as
+      // the kill landed, is still a turn the student stopped.
+      if (turn && turn.cancelled) outcome = "cancelled";
       if (session.turn === turn) session.turn = null;
       session.lastTurn = { msg: msgNum, outcome, at: Date.now() };
       resolve();
     };
     const sse = (event, data) => { try { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) {} };
+    // The CLI is gone after /chat/cancel (or a session delete) — killed, or
+    // exited on its own as the kill landed. Whatever its exit code, the log
+    // says cancelled, not error, and the stream ends with `cancelled`.
+    const cancelledExit = () => {
+      log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, streamed: streamedChars });
+      sse("cancelled", { msg: msgNum });
+      res.end();
+      settle("cancelled");
+    };
 
     const proc = runClaudeStreaming(args, message, session.isolated,
       (parsed) => {
@@ -641,31 +658,29 @@ app.post("/chat", async (req, res) => {
             const tok = extractTokens(parsed);
             accumulateTokens(tok);
             log("CHAT_OK", { chatNum: session.chatNum, msg: msgNum, ...tok, totalCost: totalTokens.cost.toFixed(4), response: parsed.result || "" });
-            res.write(`event: done\ndata: ${JSON.stringify({ text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd })}\n\n`);
             resultSent = true;
+            // The result raced the kill: tokens are accounted (CHAT_OK), but
+            // the student stopped this turn, so it ends as stopped.
+            if (turn && turn.cancelled) return cancelledExit();
+            res.write(`event: done\ndata: ${JSON.stringify({ text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd })}\n\n`);
             res.end();
             settle("completed");
           }
         } catch (_) {}
       },
-      () => { if (!resultSent) { sse("done", { text: "" }); res.end(); } settle("completed"); },
+      () => {
+        if (turn && turn.cancelled) return cancelledExit();
+        if (!resultSent) { sse("done", { text: "" }); res.end(); }
+        settle("completed");
+      },
       (err) => {
-        if (turn && turn.cancelled) {
-          // Killed by /chat/cancel (or a session delete): the non-zero exit is
-          // the kill, not a CLI failure, and the log says so.
-          log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, streamed: streamedChars });
-          sse("cancelled", { msg: msgNum });
-          res.end();
-          settle("cancelled");
-          return;
-        }
+        if (turn && turn.cancelled) return cancelledExit();
         log("CHAT_ERROR", { chatNum: session.chatNum, error: err.message });
         sse("error", { message: err.message });
         res.end();
         settle("error");
       }
     );
-    let streamedChars = 0;
     proc.stdout.on("data", (d) => { streamedChars += d.length; });
     turn = { msgNum, pid: proc.pid, proc, startedAt: Date.now(), cancelled: false, killed: null };
     session.turn = turn;

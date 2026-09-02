@@ -54,7 +54,10 @@ async function activeTurn(sessionId) { return (await sessionsList()).find((s) =>
 async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = true) {
   const before = await activeTurn(sessionId);
   ok(before && before.pid > 0, `${label}: /sessions shows the turn in flight (pid ${before && before.pid})`);
-  const pids = tree(before.pid);
+  // The tree forms after the status event: the real CLI forks the tool's
+  // shell only once the model has emitted the tool_use block. Wait for it.
+  let pids = tree(before.pid);
+  for (const t = Date.now(); pids.length < 3 && Date.now() - t < 10000;) { await sleep(250); pids = tree(before.pid); }
   ok(pids.length >= 3, `${label}: tree has claude + children before cancel (${pids.length} pids: ${pids.join(",")})`);
   const t0 = Date.now();
   const r = await post("/chat/cancel", { sessionId });
@@ -119,6 +122,15 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
     const t3 = await startTurn(sid, "LONG IGNORE_TERM", isRunning);
     await cancelAndVerify("turn3 (ignores SIGTERM)", sid, t3);
 
+    // 5. CLI exits 0 on SIGTERM (graceful shutdown, no result): the accepted
+    // cancel wins over the exit code — stream ends `cancelled`, never promoted.
+    const t5 = await startTurn(sid, "LONG EXIT0_ON_TERM", isRunning);
+    await cancelAndVerify("turn5 (exits 0 on SIGTERM)", sid, t5);
+    await post("/session/close", { sessionId: sid, keepContext: true });
+    const rec5 = (await sessionsList()).find((s) => s.id === sid);
+    ok(rec5 && rec5.lastTurn?.outcome === "cancelled" && rec5.resumable === false, `turn5: clean exit after cancel still -> resumable:false (lastTurn=${JSON.stringify(rec5?.lastTurn)})`);
+    await post("/session/open", { sessionId: sid });
+
     // 4. KILL session mid-turn (/session/close without keepContext) takes the tree down too.
     const t4 = await startTurn(sid, "LONG", isRunning);
     const before = await activeTurn(sid);
@@ -137,6 +149,7 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   if (LOG && fs.existsSync(LOG)) {
     const log = fs.readFileSync(LOG, "utf8");
     ok(/\[CHAT_CANCELLED\] chatNum=1 msg=1 /.test(log), "chat.log records CHAT_CANCELLED for turn 1");
+    if (!REAL) ok(/\[CHAT_CANCELLED\] chatNum=1 msg=4 /.test(log), "chat.log records CHAT_CANCELLED for the clean-exit turn 5 (msg 4)");
     ok(!/\[CHAT_ERROR\]/.test(log), "chat.log has no CHAT_ERROR for cancelled turns");
     ok(/\[CHAT_OK\] chatNum=1 msg=2 /.test(log), "chat.log records CHAT_OK for turn 2");
   }
