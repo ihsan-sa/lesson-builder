@@ -114,7 +114,8 @@ export function ThreadPanel({
                   )}
                 </div>
               )}
-              <ChatBubble text={m.content} role={m.role} onReplyBlock={addThreadCtx} streaming={!!m._streaming} />
+              {!(m.stopped && !m.content) && <ChatBubble text={m.content} role={m.role} onReplyBlock={addThreadCtx} streaming={!!m._streaming} />}
+              {m.stopped && <div className="chat-stopped">{m.content ? "Stopped" : "Stopped before replying"}</div>}
             </div>
           ))}
           {thread.loading && (

@@ -4,6 +4,27 @@
 // land in the lesson's own server/ directory when this module is imported
 // via a shim from `<lesson>/server/proxy.js` and launched with
 // `cd <lesson> && node server/proxy.js`.
+//
+// Routes: /whoami, /session/init, /session/open, /session/transfer,
+// /session/close, /upload, /chat, /chat/cancel, /sessions, /commit.
+//
+// Turn ownership. Every /chat turn spawns one `claude` CLI, which spawns its
+// own children (MCP servers, Bash tool commands, subagents). The proxy owns
+// that whole tree for the life of the turn: the CLI leads its own process
+// group, and POST /chat/cancel {sessionId} tears the group down — SIGTERM,
+// then SIGKILL for whatever is still alive after CANCEL_GRACE_MS — and
+// answers once the tree is gone. A client merely disconnecting does NOT
+// cancel (an HMR reload must not lose a turn); only the endpoint does, and
+// /session/close without keepContext, which discards the session outright.
+// Cancel is idempotent for the turn it hit (a repeat answers 200 again) and
+// refuses ids that are not running a turn: 404 for an unknown id, 409 for a
+// session whose latest turn completed or errored. Going down (SIGINT/SIGTERM/
+// SIGHUP) SIGTERMs every running turn's tree rather than orphaning it.
+//
+// Resume candidacy. /sessions reports `resumable` per session: true unless
+// the session is open in a tab, has a turn in flight, or its latest turn was
+// cancelled. A completed turn (or a fresh session) makes it a candidate; a
+// cancelled turn never does — the next completed turn is what re-promotes it.
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -199,6 +220,81 @@ function enqueueForSession(sessionId, fn) {
   return next;
 }
 
+// Process-tree ownership for a turn. The CLI is spawned as the leader of a
+// new process group (detached, POSIX), so `kill(-pid)` reaches every child it
+// forked with no race against children forked after enumeration. The ps walk
+// is the belt to that brace: it also finds a descendant that called setsid (a
+// Bash tool command can), and it is how the caller verifies the tree is really
+// gone. Zombies are not alive. Windows has no groups; taskkill /T walks the tree.
+const IS_WIN = process.platform === "win32";
+const CANCEL_GRACE_MS = 1500;
+
+function psTable() {
+  if (IS_WIN) return null;
+  try {
+    const out = spawnSync("ps", ["-eo", "pid=,ppid=,pgid=,stat="], { encoding: "utf8", timeout: 5000 }).stdout || "";
+    const rows = [];
+    for (const line of out.split("\n")) {
+      const m = line.trim().split(/\s+/);
+      if (m.length >= 4 && !m[3].startsWith("Z")) rows.push({ pid: Number(m[0]), ppid: Number(m[1]), pgid: Number(m[2]) });
+    }
+    return rows;
+  } catch (_) { return []; }
+}
+
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err.code === "EPERM"; } };
+
+// Live pids of the tree rooted at rootPid: the root, its descendants, and any
+// member of its process group that re-parented to init when its parent died.
+function listTree(rootPid) {
+  const rows = psTable();
+  if (!rows) return pidAlive(rootPid) ? [rootPid] : [];
+  const found = new Set();
+  const stack = [rootPid];
+  const alive = new Set(rows.map((r) => r.pid));
+  while (stack.length) {
+    const p = stack.pop();
+    if (found.has(p)) continue;
+    if (alive.has(p)) found.add(p);
+    for (const r of rows) if (r.ppid === p && !found.has(r.pid)) stack.push(r.pid);
+  }
+  for (const r of rows) if (r.pgid === rootPid) found.add(r.pid);
+  return [...found];
+}
+
+function signalTree(rootPid, pids, sig) {
+  if (IS_WIN) {
+    try { spawnSync("taskkill", ["/pid", String(rootPid), "/T", "/F"], { timeout: 5000 }); } catch (_) {}
+    return;
+  }
+  try { process.kill(-rootPid, sig); } catch (_) {}
+  for (const p of pids) { try { process.kill(p, sig); } catch (_) {} }
+}
+
+// "kill the whole process TREE, SIGTERM then SIGKILL after a short grace".
+// Resolves with the pids still alive at the end — empty when the tree is gone.
+function killTree(rootPid) {
+  signalTree(rootPid, listTree(rootPid), "SIGTERM");
+  return new Promise((resolve) => setTimeout(() => {
+    const left = listTree(rootPid);
+    if (left.length) signalTree(rootPid, left, "SIGKILL");
+    setTimeout(() => resolve(listTree(rootPid)), 150);
+  }, CANCEL_GRACE_MS));
+}
+
+// Called on the way out: the proxy owns every running turn's tree, so going
+// down takes them along instead of orphaning a CLI that keeps spending tokens
+// with nobody left to read the answer. Exit handlers cannot wait, so this is
+// SIGTERM only.
+function killActiveTurns() {
+  for (const s of Object.values(sessions)) {
+    if (s.turn && !s.turn.cancelled) {
+      s.turn.cancelled = true;
+      signalTree(s.turn.pid, listTree(s.turn.pid), "SIGTERM");
+    }
+  }
+}
+
 const PROJECT_DIR = process.cwd();
 const ISOLATED_CWD = path.join(PROJECT_DIR, "server", ".isolated");
 
@@ -256,7 +352,9 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
     args.push("--add-dir", PROJECT_DIR);
   }
   args.push("--add-dir", REPO_DIR);
-  const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, env: { ...process.env, MPLBACKEND: "agg" } });
+  // detached: the CLI leads its own process group so /chat/cancel can take
+  // the whole tree down with one signal (see killTree).
+  const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, detached: !IS_WIN, env: { ...process.env, MPLBACKEND: "agg" } });
   let buffer = "";
   let stderr = "";
   proc.stdout.on("data", (d) => {
@@ -335,6 +433,7 @@ app.post("/session/init", async (req, res) => {
     sessions[sessionId] = {
       chatNum, model: cliModel, effort: cliEffort, isolated: !!isolated,
       created: Date.now(), lastSeen: Date.now(), messageCount: 0, open: true,
+      turn: null, lastTurn: null,
     };
 
     log("INIT_OK", { chatNum, sessionId: sessionId.slice(0, 8), ...tok, totalCost: totalTokens.cost.toFixed(4) });
@@ -404,7 +503,7 @@ app.post("/session/transfer", async (req, res) => {
     // Delete the old record only after the new session exists — a failed
     // transfer must leave the original session usable, not orphaned.
     delete sessions[sessionId];
-    sessions[newSessionId] = { chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true };
+    sessions[newSessionId] = { chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true, turn: null, lastTurn: null };
     log("TRANSFER_OK", { chatNum, newSessionId: newSessionId.slice(0, 8), isolated: newIsolated, ...tok, totalCost: totalTokens.cost.toFixed(4) });
     res.json({ sessionId: newSessionId, chatNum, isolated: newIsolated, content: [{ type: "text", text: parsed.result || "Session transferred." }] });
   } catch (err) {
@@ -423,6 +522,16 @@ app.post("/session/close", (req, res) => {
     log("SESSION_RELEASE", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8) });
   } else {
     const chatNum = session.chatNum;
+    // Discarding the session discards its running turn too: the client's
+    // KILL sends this right after /chat/cancel, and if this landed first the
+    // cancel would 404 while the CLI ran on. Not awaited — the reply is not
+    // what the tree's fate depends on.
+    if (session.turn && !session.turn.cancelled) {
+      const turn = session.turn;
+      turn.cancelled = true;
+      log("SESSION_DELETE_KILL", { chatNum, msg: turn.msgNum, pid: turn.pid });
+      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum, msg: turn.msgNum, survivors: left }); return left; });
+    }
     delete sessions[sessionId];
     log("SESSION_DELETE", { chatNum, sessionId: sessionId.slice(0, 8) });
   }
@@ -501,6 +610,19 @@ app.post("/chat", async (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
 
     let resultSent = false;
+    // One settle per turn. Records the outcome the resume rule reads
+    // ("a cancelled turn never promotes its session to resume-candidate —
+    // promotion happens only on completion") and releases the turn slot.
+    let turn = null;
+    let settled = false;
+    const settle = (outcome) => {
+      if (settled) return;
+      settled = true;
+      if (session.turn === turn) session.turn = null;
+      session.lastTurn = { msg: msgNum, outcome, at: Date.now() };
+      resolve();
+    };
+    const sse = (event, data) => { try { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) {} };
 
     const proc = runClaudeStreaming(args, message, session.isolated,
       (parsed) => {
@@ -522,26 +644,81 @@ app.post("/chat", async (req, res) => {
             res.write(`event: done\ndata: ${JSON.stringify({ text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd })}\n\n`);
             resultSent = true;
             res.end();
-            resolve();
+            settle("completed");
           }
         } catch (_) {}
       },
-      () => { if (!resultSent) { res.write(`event: done\ndata: ${JSON.stringify({ text: "" })}\n\n`); res.end(); } resolve(); },
-      (err) => { log("CHAT_ERROR", { chatNum: session.chatNum, error: err.message }); res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`); res.end(); resolve(); }
+      () => { if (!resultSent) { sse("done", { text: "" }); res.end(); } settle("completed"); },
+      (err) => {
+        if (turn && turn.cancelled) {
+          // Killed by /chat/cancel (or a session delete): the non-zero exit is
+          // the kill, not a CLI failure, and the log says so.
+          log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, streamed: streamedChars });
+          sse("cancelled", { msg: msgNum });
+          res.end();
+          settle("cancelled");
+          return;
+        }
+        log("CHAT_ERROR", { chatNum: session.chatNum, error: err.message });
+        sse("error", { message: err.message });
+        res.end();
+        settle("error");
+      }
     );
+    let streamedChars = 0;
+    proc.stdout.on("data", (d) => { streamedChars += d.length; });
+    turn = { msgNum, pid: proc.pid, proc, startedAt: Date.now(), cancelled: false, killed: null };
+    session.turn = turn;
 
     res.on("close", () => {
       log("CHAT_DISCONNECT", { chatNum: session.chatNum, msg: msgNum, resultSent });
-      // Do not kill the process -- let it finish even if the client disconnected (e.g. HMR reload).
-      // The session context is preserved in Claude's session, so the next message will have the result.
+      // A disconnect is not a cancel: let the CLI finish (an HMR reload must
+      // not lose a turn — the session keeps the result for the next message).
+      // Stopping is explicit: the client's Stop calls POST /chat/cancel.
     });
   }));
+});
+
+// POST /chat/cancel {sessionId} — see "Turn ownership" at the top. Answers
+// after the tree is gone (or after the grace, naming the survivors).
+app.post("/chat/cancel", async (req, res) => {
+  const safeId = safeSession(req.body?.sessionId);
+  const session = safeId && sessions[safeId];
+  if (!session) {
+    log("CANCEL_404", { sessionId: String(req.body?.sessionId || "").slice(0, 8) });
+    return res.status(404).json({ error: { message: "Session not found" } });
+  }
+  const turn = session.turn;
+  if (!turn) {
+    // Idempotent for the turn it hit: a repeat that arrives after teardown
+    // answers as the first call did. Anything else has no turn to cancel.
+    if (session.lastTurn && session.lastTurn.outcome === "cancelled") {
+      return res.json({ ok: true, cancelled: true, repeat: true, msg: session.lastTurn.msg, survivors: [] });
+    }
+    log("CANCEL_409", { chatNum: session.chatNum, lastTurn: session.lastTurn ? session.lastTurn.outcome : "none" });
+    return res.status(409).json({ error: { message: "No turn in flight for this session" } });
+  }
+  session.lastSeen = Date.now();
+  if (!turn.cancelled) {
+    turn.cancelled = true;
+    log("CANCEL_START", { chatNum: session.chatNum, msg: turn.msgNum, pid: turn.pid, tree: listTree(turn.pid).length });
+    turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum: session.chatNum, msg: turn.msgNum, survivors: left }); return left; });
+    const survivors = await turn.killed;
+    return res.json({ ok: true, cancelled: true, msg: turn.msgNum, survivors });
+  }
+  // Already tearing down: join that teardown rather than start another.
+  const survivors = await turn.killed;
+  res.json({ ok: true, cancelled: true, repeat: true, msg: turn.msgNum, survivors });
 });
 
 app.get("/sessions", (req, res) => {
   const list = Object.entries(sessions).map(([id, s]) => ({
     id, chatNum: s.chatNum, model: s.model, effort: s.effort, isolated: !!s.isolated,
     created: s.created, messageCount: s.messageCount, open: s.open,
+    turn: s.turn ? { msg: s.turn.msgNum, pid: s.turn.pid, startedAt: s.turn.startedAt, cancelling: s.turn.cancelled } : null,
+    lastTurn: s.lastTurn,
+    // "Resume candidacy" at the top: open, running, or cancelled last -> not a candidate.
+    resumable: !s.open && !s.turn && !(s.lastTurn && s.lastTurn.outcome === "cancelled"),
   }));
   res.json({ sessions: list, totalTokens, nextChatNum });
 });
@@ -683,7 +860,7 @@ function clearIdentity() {
 }
 process.on("exit", clearIdentity);
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(sig, () => { clearIdentity(); process.exit(0); });
+  process.on(sig, () => { clearIdentity(); killActiveTurns(); process.exit(0); });
 }
 
 function startServer(port, attempt) {

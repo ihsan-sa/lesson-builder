@@ -279,6 +279,7 @@ export function Chatbot({
           ...(m.suggestion ? { suggestion: m.suggestion } : {}),
           ...(m.commitSuggest ? { commitSuggest: m.commitSuggest } : {}),
           ...(m.commitResult ? { commitResult: m.commitResult } : {}),
+          ...(m.stopped ? { stopped: true } : {}),
           ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false, messages: (t.messages || []).map(stripStreaming) })) } : {}),
         }));
         _ss.setItem("chatMsgs_" + tab.sessionId, JSON.stringify(saveable));
@@ -368,6 +369,11 @@ export function Chatbot({
     window.addEventListener("beforeunload", handleUnload);
     return () => window.removeEventListener("beforeunload", handleUnload);
   }, []);
+
+  // The proxy decides candidacy (/sessions `resumable`: not open, no turn in
+  // flight, latest turn not cancelled). A proxy that predates the flag is
+  // read the old way, so a lessons-side core that lags still resumes.
+  const isResumable = (s) => (s.resumable !== undefined ? s.resumable : !s.open);
 
   const makeSystemPrompt = useCallback((isolatedFlag) => buildSystemPrompt({
     courseCode, courseName, lessonContext, topicContext, graphParams, isolatedFlag, lessonFile, institution,
@@ -485,7 +491,7 @@ export function Chatbot({
         setServerSessions(list);
         let restoredFirst = false;
         for (const kc of kcList) {
-          const found = list.find(s => s.id === kc.sessionId && !s.open);
+          const found = list.find(s => s.id === kc.sessionId && isResumable(s));
           if (!found) continue;
           if (!restoredFirst) {
             await resumeSessionIntoTab(firstTab.id, kc.sessionId, kc.chatNum || found.chatNum);
@@ -501,7 +507,7 @@ export function Chatbot({
       }
 
       const list = await fetchSessions();
-      const available = list.filter(s => !s.open);
+      const available = list.filter(isResumable);
       setServerSessions(list);
       if (available.length > 0) {
         updateTab(firstTab.id, { sessionStatus: "picking" });
@@ -638,14 +644,34 @@ export function Chatbot({
     },
   });
 
+  // Stop = abort our reader AND have the proxy kill the turn's process tree
+  // (POST /chat/cancel). Aborting alone only closed the stream: the CLI ran
+  // to completion, spending tokens on a reply nobody would read, and that
+  // half-finished turn could still be resumed later. Fire-and-forget — the
+  // bubble reaches its stopped state on the abort, not on this reply, and a
+  // 409 just means the turn finished on its own first.
+  const cancelTurn = (sessionId) => {
+    if (!sessionId) return;
+    fetch("/chat/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => {});
+  };
+
   const cancelRequest = () => {
     const tab = tabsRef.current[activeTabIdxRef.current];
     if (!tab) return;
+    let inFlight = false;
     const ctrl = _cs.tabAborts[tab.id];
-    if (ctrl) { _cs.tabCancelled[tab.id] = true; ctrl.abort(); }
+    if (ctrl) { _cs.tabCancelled[tab.id] = true; ctrl.abort(); inFlight = true; }
     for (const key of Object.keys(_cs.threadAborts)) {
-      if (key.startsWith(tab.id + ':')) { try { _cs.threadAborts[key].abort(); } catch (_) {} delete _cs.threadAborts[key]; }
+      if (key.startsWith(tab.id + ':')) { try { _cs.threadAborts[key].abort(); } catch (_) {} delete _cs.threadAborts[key]; inFlight = true; }
     }
+    // Main and thread turns share the session, and the proxy runs one turn
+    // per session at a time — one cancel covers whichever is running.
+    if (inFlight) cancelTurn(tab.sessionId);
   };
 
   const killSession = useCallback(() => {
@@ -711,6 +737,21 @@ export function Chatbot({
     _cs.tabCancelled[tabId] = false;
     // Hoisted so the failure paths below can put the drained observations back.
     let observations = "";
+    // Stopped — by our own abort (Stop) or by the proxy's `cancelled` event
+    // (the turn was stopped from outside this reader). Either way the bubble
+    // keeps what streamed and is marked stopped; there is never a completion
+    // pass, so no tag in the partial text is applied and nothing is enqueued.
+    const markStopped = () => {
+      setTabs(prev => prev.map(t => {
+        if (t.id !== tabId) return t;
+        const msgs = t.messages;
+        const last = msgs[msgs.length - 1];
+        if (last && last.role === "assistant" && last._streaming) {
+          return { ...t, messages: [...msgs.slice(0, -1), { role: "assistant", content: last.content, stopped: true }] };
+        }
+        return { ...t, messages: [...msgs, { role: "assistant", content: "", stopped: true }] };
+      }));
+    };
     try {
       let attachmentNote = "";
       if (currentAtts.length > 0) {
@@ -770,6 +811,7 @@ export function Chatbot({
       let sseBuffer = "";
       let finalText = "";
       let doneReceived = false;
+      let stopped = false;
       const updateAssistantMsg = (content) => {
         setTabs(prev => prev.map(t => {
           if (t.id !== tabId) return t;
@@ -824,6 +866,10 @@ export function Chatbot({
                 finalText = data.message || "Error";
                 doneReceived = true;
                 updateTab(tabId, { statusText: "" });
+              } else if (eventType === "cancelled") {
+                stopped = true;
+                doneReceived = true;
+                updateTab(tabId, { statusText: "" });
               }
             } catch (_) {}
             eventType = null;
@@ -832,7 +878,10 @@ export function Chatbot({
           }
         }
       }
-      if (finalText) {
+      if (stopped) {
+        obsQueue.requeue(tab.sessionId, observations);
+        markStopped();
+      } else if (finalText) {
         const reply = processResponse(finalText);
         setTabs(prev => prev.map(t => {
           if (t.id !== tabId) return t;
@@ -851,18 +900,19 @@ export function Chatbot({
         }));
       }
     } catch (e) {
-      let errContent;
-      if (e.name === "AbortError") {
-        errContent = "[Response cancelled]";
-      } else {
-        errContent = `Connection error: ${e.message || "unknown"}. Is the proxy server running?`;
-      }
+      // Observations drained into this turn ride the next one instead: the
+      // model never finished acting on them, and re-sending is the safe side.
       obsQueue.requeue(tab.sessionId, observations);
-      setTabs(prev => prev.map(t => {
-        if (t.id !== tabId) return t;
-        const msgs = t.messages.map(m => m._streaming ? { role: m.role, content: m.content } : m);
-        return { ...t, messages: [...msgs, { role: "assistant", content: errContent }] };
-      }));
+      if (e.name === "AbortError") {
+        markStopped();
+      } else {
+        const errContent = `Connection error: ${e.message || "unknown"}. Is the proxy server running?`;
+        setTabs(prev => prev.map(t => {
+          if (t.id !== tabId) return t;
+          const msgs = t.messages.map(m => m._streaming ? { role: m.role, content: m.content } : m);
+          return { ...t, messages: [...msgs, { role: "assistant", content: errContent }] };
+        }));
+      }
     } finally {
       delete _cs.tabAborts[tabId];
       delete _cs.tabCancelled[tabId];
@@ -1126,6 +1176,8 @@ export function Chatbot({
     const key = tabId + ":" + threadId;
     const ctrl = _cs.threadAborts[key];
     if (ctrl) { try { ctrl.abort(); } catch (_) {} delete _cs.threadAborts[key]; }
+    const tab = tabsRef.current.find(t => t.id === tabId);
+    if (ctrl && tab) cancelTurn(tab.sessionId);
   }, []);
 
   const sendThreadMessage = async (tabId, msgIdx, threadId, snippet, text, context, atts) => {
@@ -1183,6 +1235,33 @@ export function Chatbot({
 
     const controller = new AbortController();
     _cs.threadAborts[tabId + ':' + threadId] = controller;
+
+    // Stopped (by our abort or the proxy's `cancelled` event): keep what
+    // streamed, mark it stopped, no completion pass.
+    let threadStopped = false;
+    const markThreadStopped = () => {
+      setTabs(prev => prev.map(t => {
+        if (t.id !== tabId) return t;
+        return {
+          ...t,
+          messages: t.messages.map((m, i) => {
+            if (i !== msgIdx || !m.threads) return m;
+            return {
+              ...m,
+              threads: m.threads.map(th => {
+                if (th.id !== threadId) return th;
+                const tmsgs = th.messages;
+                const last = tmsgs[tmsgs.length - 1];
+                const finalized = last && last.role === "assistant" && last._streaming
+                  ? [...tmsgs.slice(0, -1), { role: "assistant", content: last.content, stopped: true }]
+                  : [...tmsgs, { role: "assistant", content: "", stopped: true }];
+                return { ...th, messages: finalized };
+              }),
+            };
+          }),
+        };
+      }));
+    };
 
     try {
       const res = await fetch("/chat", {
@@ -1249,13 +1328,18 @@ export function Chatbot({
                 updateThreadAssistant(display);
               } else if (eventType === "done") {
                 finalText = data.text || finalText;
+              } else if (eventType === "cancelled") {
+                threadStopped = true;
               }
             } catch (_) {}
             eventType = null;
           }
         }
       }
-      if (finalText) {
+      if (threadStopped) {
+        obsQueue.requeue(tab.sessionId, observations);
+        markThreadStopped();
+      } else if (finalText) {
         // Thread scope: display-only tags (<<DEMO>>, <<DESMOS>>, <<SOURCES>>)
         // render here and <<REINFORCE>> still counts, but the three
         // state-mutating tags are stripped and reported back as observations —
@@ -1299,10 +1383,11 @@ export function Chatbot({
         }));
       }
     } catch (e) {
-      const errMsg = e.name === "AbortError" ? "[Cancelled]" : `Error: ${e.message}`;
       obsQueue.requeue(tab.sessionId, observations);
+      if (e.name === "AbortError") { markThreadStopped(); return; }
+      const errMsg = `Error: ${e.message}`;
       // Drop the half-streamed placeholder before appending the outcome, or a
-      // cancelled thread keeps a permanently "streaming" bubble.
+      // failed thread keeps a permanently "streaming" bubble.
       setTabs(prev => prev.map(t => {
         if (t.id !== tabId) return t;
         return {
@@ -1574,7 +1659,7 @@ export function Chatbot({
               <div className="chat-empty">
                 <div style={{ marginBottom: 8 }}>Available sessions. Pick one or create new:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                  {serverSessions.filter(s => !s.open && !tabs.some(t => t.sessionId === s.id)).map(s => (
+                  {serverSessions.filter(s => isResumable(s) && !tabs.some(t => t.sessionId === s.id)).map(s => (
                     <button key={s.id} onClick={() => { if (activeTab) resumeSessionIntoTab(activeTab.id, s.id, s.chatNum); }} style={{ background: "var(--bg-eq)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", color: "var(--accent)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
                       {"Chat #"}{s.chatNum} ({s.messageCount} msgs) {s.isolated ? "ISO" : "MEM"}
                     </button>
@@ -1621,7 +1706,8 @@ export function Chatbot({
                     )}
                   </div>
                 )}
-                <ChatBubble text={m.content} role={m.role} onReplyBlock={addSnippet} streaming={!!m._streaming} />
+                {!(m.stopped && !m.content) && <ChatBubble text={m.content} role={m.role} onReplyBlock={addSnippet} streaming={!!m._streaming} />}
+                {m.stopped && <div className="chat-stopped">{m.content ? "Stopped" : "Stopped before replying"}</div>}
                 {m.suggestion && !m.suggestion.dismissed && (
                   <div className="suggestion-bar">
                     <span className="suggestion-label">Add this to the lesson?</span>
