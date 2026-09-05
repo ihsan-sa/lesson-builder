@@ -956,9 +956,18 @@ export function Chatbot({
       return { ...t, messages: msgs };
     }));
     const s = msg.suggestion;
-    const followUp = placement === "faq"
+    // The approval carries the parsed suggestion itself, not just its title:
+    // the model's own <<SUGGEST>> block is stripped from the visible reply and
+    // may be gone from the CLI's context after a resume or a compaction, and
+    // "the suggested content" then names nothing. Verbatim JSX is what gets
+    // added, so the edit no longer depends on the model remembering it.
+    const payload = s.content
+      ? `\n\nContent to add, verbatim from the approved suggestion:\n\`\`\`jsx\n${s.content}\n\`\`\``
+      : "";
+    const followUp = (placement === "faq"
       ? `User approved: please add the suggested content to the lesson FAQ. Place it in the FAQ section/tab as a collapsible block with title "${s.title}". Make the edit to ${lessonFile} now.`
-      : `User approved: please add the suggested content inline to the lesson. Target section: "${s.section || "relevant section"}". Mode: ${s.mode || "collapsible"}. Title: "${s.title}". Make the edit to ${lessonFile} now.`;
+      : `User approved: please add the suggested content inline to the lesson. Target section: "${s.section || "relevant section"}". Mode: ${s.mode || "collapsible"}. Title: "${s.title}". Make the edit to ${lessonFile} now.`)
+      + payload;
     _cs.pendingSend[tab.id] = followUp;
     triggerSend();
   }, [triggerSend, lessonFile]);

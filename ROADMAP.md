@@ -6,12 +6,12 @@ Items from `codex-ultra-deep-review.md` (and the two audit rounds) that are agre
 
 Verify each against the running app (sandbox recipe: bootstrap fresh workspace → 17/17 → Playwright) before and after changing `Chatbot.jsx`:
 
-1. **Safe rendering for model output** — ChatBubble preserves raw `svg`/`img`/`video` then assigns `innerHTML`; a prompt-injected `onerror`/foreignObject can script in the lesson origin and hit local endpoints. Fix: markdown→AST→React rendering, strict SVG allowlist, no handlers/scriptable elements/external refs, CSP.
-2. **Real cancellation** — Stop aborts the HTTP reader but the proxy deliberately leaves the `claude` process running (HMR rationale). Add a cancellation endpoint owning the process tree; turn-as-candidate-session promoted on completion.
-3. **Suggestion approval stale closure** — approval captures the first send function; approve-after-context-change edits against stale context. Also: send the parsed SUGGEST payload structurally, and emit the promised rejection observation.
+1. ~~**Safe rendering for model output**~~ — landed 2026-09-05 (PR #5): DOMParser → allowlist → DOM nodes in `chat/safeRender.js`, no `innerHTML` on model output, CSP meta in the lesson template, 41-vector corpus under `tests/safe-render/`. (Chosen shape was markdown→string→allowlist-DOM rather than →React; same guarantees.)
+2. ~~**Real cancellation**~~ — landed 2026-09-05 (PR #7): `POST /chat/cancel` owns the turn's process group, cancel wins over a clean exit, promotion only on completion, `tests/cancellation/`.
+3. ~~**Suggestion approval stale closure**~~ — landed: the send path is routed through a ref (lessons #9 → PR #4), the rejection observation is emitted (`suggest-rejected`), and the approval carries the parsed JSX verbatim so the edit survives a resume or compaction.
 4. **Thread actors** — threads share the main CLI session (misconceptions leak back; reinforcement missing inside threads). Fork thread sessions from the anchor turn; merge back only via explicit summary.
 5. **Client resume metadata** — resume ignores stored model/effort.
-6. **KaTeX CDN resilience** — app currently blocks entirely on the CDN load; add timeout fallback (bundle KaTeX in core longer-term).
+6. ~~**KaTeX CDN resilience**~~ — landed 2026-09-05 (PR #6, and #8/#9 for Desmos): tri-state readiness with an 8 s bound, literal-source fallback, late loads recover; `tests/katex-fallback/`. Bundling KaTeX in core stays longer-term.
 
 ## P1 — reliability foundation
 
