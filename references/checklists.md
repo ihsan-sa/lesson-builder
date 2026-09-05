@@ -432,7 +432,7 @@ Course-level restructures only. Run once, before the consolidation plan is compi
 - [ ] Every shared asset has exactly one owner lesson named in the plan.
 - [ ] Each source lesson's remaining topic list is stated with a yes/no on whether its arc still holds; a lesson left below 2 topics is merged, not shipped as a stub.
 - [ ] `COURSE.md` map rows for every affected slug (including any new or retired one) are drafted in the plan, so the write-back is mechanical.
-- [ ] The plan carries one approval gate for the whole course; per-lesson runs record `Approval: INHERITED from consolidation plan <hash>` and prompt for nothing.
+- [ ] The plan carries one approval gate for the whole course; each per-lesson run writes its own `plan.approval` — `run-manifest.cjs set --lesson <lesson_root> plan.approval '{"state":"inherited","at":"<timestamp>","via":"<consolidation plan hash>"}' --json`, then `render` — and prompts for nothing. The `INHERITED` line is rendered from that field, never typed into the log.
 
 ---
 

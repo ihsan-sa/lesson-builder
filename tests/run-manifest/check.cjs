@@ -224,6 +224,25 @@ cases['approve does not un-abort a run a person aborted'] = () => {
   eq(record(root, 'ggg777').plan.approval.state, 'aborted', 'the abort stands');
 };
 
+// ---- 7b. a consolidate run inherits the course plan's approval and renders its hash ----
+cases['an inherited approval renders the consolidation hash, not this run\'s null plan hash'] = () => {
+  const root = lessonRoot('inherited');
+  init(root, ['--run', 'ggg778', '--at', '2026-04-15T14:00:00Z']);
+  // A per-lesson consolidate run hashes no artifact of its own: `plan.hash` stays null and the
+  // consolidation plan's hash lives in `via`.
+  run(['set', '--lesson', root, 'plan.approval',
+    '{"state":"inherited","at":"2026-04-15T14:02:08Z","via":"4f2a9c17"}', '--json']);
+  const rec = record(root, 'ggg778');
+  eq(rec.plan.approval.state, 'inherited', 'the record carries the inherited state the schema defines');
+  eq(rec.plan.hash, null, 'a per-lesson consolidate run recorded no plan of its own');
+
+  eq(run(['render', '--lesson', root]).code, 0, 'render exits 0');
+  const log = fs.readFileSync(path.join(root, 'lesson_build.log.md'), 'utf8');
+  ok(log.includes('Approval: INHERITED from consolidation plan 4f2a9c17 at 2026-04-15T14:02:08Z'),
+    'the rendered line names the consolidation hash from `via`');
+  ok(!log.includes('consolidation plan null'), 'and never the run\'s own null plan hash');
+};
+
 // ---- 8. render ----
 cases['render writes the log from the record, headings and all'] = () => {
   const root = lessonRoot('render');

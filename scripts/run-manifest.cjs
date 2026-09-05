@@ -345,7 +345,9 @@ function renderApproval(rec) {
   const h = rec.plan.hash ? ` (hash ${rec.plan.hash})` : '';
   if (a.state === 'approved') return `Approval: APPROVED${a.via ? ` via ${a.via}` : ' by user'} at ${a.at}`;
   if (a.state === 'aborted') return `Approval: ABORTED by user at ${a.at}`;
-  if (a.state === 'inherited') return `Approval: INHERITED from consolidation plan ${rec.plan.hash} at ${a.at}`;
+  // `via` carries the CONSOLIDATION plan's hash. `plan.hash` is this lesson's own plan and is null
+  // for a per-lesson consolidate run that never hashed an artifact of its own.
+  if (a.state === 'inherited') return `Approval: INHERITED from consolidation plan ${a.via} at ${a.at}`;
   if (a.state === 'pending') return `Approval: PENDING${h}`;
   return `Approval: none recorded${h}`;
 }

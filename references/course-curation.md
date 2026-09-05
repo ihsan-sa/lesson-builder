@@ -135,7 +135,15 @@ Announce the pending set rather than sitting on it silently: when a run is skipp
 - **Phase 0 (course scope, once)** — read `COURSE.md`; resolve the affected lesson set from the map; working-tree check across *all* affected lesson roots (one dirty tree blocks the whole run); confirm the restructure's reason. No per-lesson interview.
 - **Phase 1 (course scope, once)** — run the existing inventory pre-scan (`references/update-mode.md` § Inventory pre-scan) once per affected lesson, plus each lesson's topic list and `GRAPH_SCHEMA` state. The output is a course-wide topic × lesson × media table. Research is `light` by default: a restructure moves existing material, it does not re-teach it.
 - **Phase 2 (course scope, once)** — compile the **consolidation plan** below and take **one** approval gate for it.
-- **Phases 3–5 (per lesson, in dependency order)** — each affected lesson runs the ordinary update pipeline against its own change-list: its own branch (`lesson-update/<slug>-YYYYMMDD`), its own splice, its own Phase 4, its own merge. No further approval gate fires; each lesson's log records `Approval: INHERITED from consolidation plan <hash> at <timestamp>`.
+- **Phases 3–5 (per lesson, in dependency order)** — each affected lesson runs the ordinary update pipeline against its own change-list: its own branch (`lesson-update/<slug>-YYYYMMDD`), its own splice, its own Phase 4, its own merge. No further approval gate fires; each lesson writes the inheritance into its own run record before Phase 3 starts:
+
+  ```bash
+  run-manifest.cjs set --lesson <lesson_root> plan.approval \
+    '{"state":"inherited","at":"<timestamp>","via":"<consolidation plan hash>"}' --json
+  run-manifest.cjs render --lesson <lesson_root>
+  ```
+
+  The render then writes `Approval: INHERITED from consolidation plan <hash> at <timestamp>` under that run's Phase 2 heading. Writing that line into `lesson_build.log.md` by hand instead leaves `plan.approval` at `none` and the next `render` deletes it, so a resumed headless run finds no approval and re-plans a lesson the course plan already covered.
 
 ### Consolidation plan format
 

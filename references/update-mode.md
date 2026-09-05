@@ -192,7 +192,7 @@ Trigger words: **restructure, re-split, consolidate**, plus `merge <a> and <b>`,
 `consolidate` is update mode with a **course-level plan**: topics move, merge, or split across several lessons, so the plan is compiled once for the whole course and the change-lists it yields are executed lesson by lesson through this same pipeline. Shape:
 
 1. **One plan, per-lesson change-lists.** Every move appears twice — a `remove` in the source lesson and an `add` in the destination — with shared media assigned an owner and relocated, and `GRAPH_SCHEMA` keys moved (or backfilled in a destination that lacks the export, per `references/graph-schema-guide.md`).
-2. **One approval gate for the whole course plan.** The per-lesson runs do not re-prompt; each lesson's log records `Approval: INHERITED from consolidation plan <hash> at <timestamp>`.
+2. **One approval gate for the whole course plan.** The per-lesson runs do not re-prompt; each writes the inheritance into its own record — `run-manifest.cjs set --lesson <lesson_root> plan.approval '{"state":"inherited","at":"<timestamp>","via":"<consolidation plan hash>"}' --json`, then `render` — never by hand into the log, which the next `render` would overwrite.
 3. **Then the ordinary pipeline, lesson by lesson**, in the plan's execution order — destinations before sources, one branch per lesson, each lesson's own Phase 4 and merge. Every invariant in this doc still holds per lesson: branch naming (§5), no-grandfathering (§6), regression-watch (§7), the untouched-files list (§9).
 4. **Partial completion is a valid stopping state.** If a lesson halts, lessons already merged stay merged and the rest stay unstarted; the completed and remaining lists are recorded and reported. Nothing is unwound automatically.
 
