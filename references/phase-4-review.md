@@ -268,6 +268,8 @@ After the build completes, run a **headless Playwright check** of the built arti
 
 If either `build-all.sh` or the headless Playwright check fails, halt before the Phase 5 commit/merge and do not patch blind. The build error is new deterministic information: **one formal loop re-entry is permitted** — feed the build error into the compile-findings step as a blocker and re-enter the fix loop under the same absolute iteration cap (iterations already spent count). If the re-entry doesn't clear it, or the error suggests the Phase 2 plan is structurally wrong, surface the failure to the user with the failing command, the relevant log excerpt, and the current branch state, for a return-to-Phase-2 or abort decision.
 
+In update mode this runs in the build worktree, which has no `node_modules/` — use the warmed scoped build in `references/phase-5-deploy.md` § Update mode note rather than a bare `build-all.sh`, or the review gate becomes a cold install of the whole workspace.
+
 Note that the full `build-all.sh` builds every lesson in the workspace, not just the one under review. This is deliberate: a change in `_lesson-core/` can break any lesson importing from `@core`, so the full build is the only way to catch cross-lesson regressions introduced by a change to the shared core. If Phase 3 only touched per-lesson files (no `_lesson-core/` edits), a scoped build targeting only `<lesson_root>` is acceptable as an optimization, but the full build remains the default.
 
 ---

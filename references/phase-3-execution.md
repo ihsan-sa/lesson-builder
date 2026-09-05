@@ -208,7 +208,7 @@ Matplotlib outputs arrive pre-verified by the specialist's own PNG self-view; fu
 After the assembled `src/<slug>.jsx` is written:
 
 1. Delete `<lesson_root>/.build-scratch/` recursively.
-2. Delete `<lesson_root>/.lesson-builder/staging/<run_id>/` recursively — every artifact that was going to be promoted has been. Leave it in place if Phase 3 failed, so a refused artifact can be inspected; the record names each one and why.
+2. Delete the run staging area recursively — `<record root>/.lesson-builder/staging/<run_id>/`, the exact path `run-manifest.cjs stage` printed. In update mode that is under the **user's** lesson root, not `<lesson_root>`: `<lesson_root>` is the worktree, `.lesson-builder/` is gitignored, and the worktree never had a copy of it. Every artifact that was going to be promoted has been. Leave it in place if Phase 3 failed, so a refused artifact can be inspected; the record names each one and why.
 3. Log specialists spawned, files written, and the lesson file line count.
 4. Hand off to Phase 4.
 
@@ -244,8 +244,9 @@ Runs **before any specialist spawns**, and runs **inside the build worktree** Ph
 
 ```bash
 WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)   # exit 3 → Phase 0 never opened
-                                                                 # one; `worktree add` it before
-                                                                 # anything is built
+                                                                 # one; run `worktree add` against
+                                                                 # the user's lesson root — the one
+                                                                 # Phase 0 had — before building
 cd "$(git -C "$WT" rev-parse --show-toplevel)"   # the worktree's own workspace root
 git status --short                 # a fresh checkout of the base SHA: expect it clean
 git checkout -b lesson-update/<slug>-YYYYMMDD   # collision → append -a/-b per the pre-flight checklist
@@ -488,7 +489,7 @@ Log `.gitignore updated: <N entries appended>` or `.gitignore already covers all
 
 #### 4.12 Clean up .build-scratch/ and the run staging area
 
-Delete `<lesson_root>/.build-scratch/` and `<lesson_root>/.lesson-builder/staging/<run_id>/` recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing). A staged file that was never promoted is the same warning in the other direction: the record's media row says why it was refused. Both directories stay in place if Phase 3 failed.
+Delete `<lesson_root>/.build-scratch/` — under the worktree, where the splice ran — and the run staging area, `<record root>/.lesson-builder/staging/<run_id>/`, which lives under the **user's** lesson root because that is where the records live and is the path `run-manifest.cjs stage` printed. Both recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing). A staged file that was never promoted is the same warning in the other direction: the record's media row says why it was refused. Both directories stay in place if Phase 3 failed.
 
 ### What NOT to touch in update mode
 

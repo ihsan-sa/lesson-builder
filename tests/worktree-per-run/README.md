@@ -27,11 +27,14 @@ repos and prints the path.
 | 6 | recovery step 3, **rolling it back** instead: no merge, apply the stash on the branch it was taken from | the user's tree is byte-identical to what it was before the old run stashed it, the stash entry is gone, `main` never moved, the update branch is left in place, and the log renders the stash marked legacy plus the recovery outcome |
 | 7 | `worktree remove` against an uncommitted build (`deploy_action: skip`), then against a merge on a detached HEAD, then once a ref keeps it | the first two exit 7 and remove nothing, each saying what it is holding, and the record still calls the worktree live; the third prunes, the merge commit survives, and a second removal is a no-op |
 | 8 | the same merge with the user's checkout on a branch of their own, so nothing holds `main` | the compare-and-swap moves `refs/heads/main` to the merge, the user's checkout is still byte-identical, and the same swap with a stale expected value is refused rather than applied blind |
+| 9 | a `consolidate` sequence: lesson 1 merged and pushed, then lesson 2 based on lesson 1's merge (`refs/lesson-builder/<prev run_id>/merge`) | lesson 2's worktree opens from that SHA, its merge contains `origin/main` so the pre-push check passes, both merges land, lesson 1's change survives in what lesson 2 published, and the push leaves a ref that lets the worktree prune |
+| 10 | the same sequence with lesson 2 left on the frozen Phase 0 tip — the mistake the local base branch invites, since the run never moves it | its merge has the pre-restructure commit as its parent, the pre-push check fails, the push it would have run is refused non-fast-forward, and `origin/main` still holds lesson 1 rather than being overwritten |
 
 Case 1 is the one the brief names: an update run with a dirty tree, byte-identical from Phase 0 to
 the end of Phase 5. Cases 4-6 are the other: a lesson left mid-update by the old stash flow is still
 finished or rolled back by hand, by the path `references/update-mode.md` § Recovering a run from the
-old stash flow documents.
+old stash flow documents. Cases 9-10 are `consolidate`, where one lesson merges after another and
+the local base branch — which no run moves — is the wrong thing for lesson 2 to build on.
 
 `.lesson-builder/` is left out of the byte comparison in every case — records, staging and the
 worktree are the run's own, in the directory the lesson's `.gitignore` covers. That the user never

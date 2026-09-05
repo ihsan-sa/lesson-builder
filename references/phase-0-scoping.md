@@ -190,6 +190,24 @@ No branch is created here. The worktree sits detached on the base SHA until Phas
 branch, so a run the user aborts at the Phase 2 gate leaves nothing behind but a directory the
 lesson's `.gitignore` already covers.
 
+**One record per lesson, and `consolidate` re-bases as it goes.** Both fields go on the affected
+lesson's **own** record: `worktree add` reads `git.base_sha` off the record it is given, and a
+`consolidate` run does Phase 0 once for the course but opens one record per lesson. For the first
+lesson in the execution order the base SHA is the tip above. For lesson 2..n it is the **previous
+lesson's merge commit**, not that tip:
+
+```bash
+PREV=$(git -C <workspace_root> rev-parse refs/lesson-builder/<previous run_id>/merge)
+run-manifest.cjs set --lesson <this lesson_root> git.base_branch <base>
+run-manifest.cjs set --lesson <this lesson_root> git.base_sha "$PREV"
+```
+
+That commit is what the previous lesson pushed to `origin/<base>`. The local `refs/heads/<base>` is
+not it — the run leaves that ref alone whenever a working tree holds it — so basing on the Phase 0
+tip gives lesson 2 a merge the remote refuses non-fast-forward, half-way through a restructure.
+`references/course-curation.md` § Phase shape owns the sequence; Phase 5's pre-push check
+(`references/phase-5-deploy.md` § Step 2b.6) is what catches it if this is skipped.
+
 ### Still asked in update mode (not auto-populated)
 
 - Audience level (may have shifted from original build)

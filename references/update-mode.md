@@ -158,7 +158,8 @@ on the built output) succeeds, the merge happens in the worktree too — on a de
 branch anyone has checked out moves:
 
 ```
-git -C <git.worktree> checkout --detach <git.base_branch>
+git -C <git.worktree> checkout --detach <git.base_sha>   # what this run built from, not the local
+                                                         # <git.base_branch>, which the run never moves
 git -C <git.worktree> merge --no-ff <git.branch from the run record>   # incl. any collision suffix
 git -C <git.worktree> update-ref refs/lesson-builder/<run_id>/merge <merge sha>
 ```

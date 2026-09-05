@@ -61,14 +61,29 @@ Any failure (`build-all.sh` non-zero, missing `index.html`, smoke-check fail) ha
 
 ### Update mode note
 
-`build-all.sh` runs inside the build worktree, against the update branch (`lesson-update/<slug>-YYYYMMDD`), not `main`, and not in the user's checkout:
+The gate runs inside the build worktree, against the update branch (`lesson-update/<slug>-YYYYMMDD`), not `main`, and not in the user's checkout. Do not switch any branch to build.
+
+**The worktree has no `node_modules/`.** It is a checkout of the base SHA and `node_modules/` is gitignored, so a plain `bash build-all.sh` in there is a cold `npm install` of *every* lesson in the workspace — minutes off the network, and a hard failure with no network at all. So the update-mode gate is the **scoped build** `references/phase-4-review.md` already permits, warmed from the user's checkout:
 
 ```bash
-WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)
-cd "$(git -C "$WT" rev-parse --show-toplevel)" && bash build-all.sh
+LR=<the user's lesson root>                      # the checkout the user works in
+WT=$(run-manifest.cjs get --lesson "$LR" git.worktree)
+WS=$(git -C "$WT" rev-parse --show-toplevel)     # the worktree's own workspace root
+
+# Copy, never symlink: a symlink would let `npm install` write into the user's checkout, which is
+# the one thing this run must not do. With the copy in place the install is a no-op and the gate
+# runs offline; without one it falls back to installing, which needs the network.
+[ -d "$LR/node_modules" ] && [ ! -e "$WT/node_modules" ] && cp -r "$LR/node_modules" "$WT/node_modules"
+
+cd "$WT" && npm install && npx vite build --base="/<deploy_code>/<slug>/"
+mkdir -p "$WS/dist/<deploy_code>/<slug>" && cp -r "$WT/dist/." "$WS/dist/<deploy_code>/<slug>/"
 ```
 
-Do not switch any branch to build. `<workspace_root>` throughout the update-mode steps below means that worktree root, and `<lesson_root>` means `$WT`.
+That reproduces exactly what `build-all.sh` would have written for this lesson, so the target path and the smoke check below are unchanged — served from `$WS/dist/`, the worktree's `dist/`, not the user's.
+
+**When the full build is still required**: if this run edited `_lesson-core/`, `build-all.sh` or a deploy config, a scoped build cannot catch what that breaks in other lessons. Run `cd "$WS" && bash build-all.sh` instead, accept the cold install, and log `Build verification: PASS (build-all.sh, full — core touched)` so the report says why it took minutes.
+
+**Naming, for every update-mode step below.** In a **git** or **build** command, `<workspace_root>` means `$WS` and `<lesson_root>` means `$WT`. `run-manifest.cjs` is not addressed that way: it follows the `record-root` pointer, so `get`, `set`, `append`, `stage` and `render` accept either root — but `worktree add` and `worktree remove` act *on* the worktree and take **only** the user's lesson root, `$LR`. Given `$WT` they refuse (exit 1): a worktree does not remove itself.
 
 ## Step 1.5 — Gitignore-override question (conditional)
 
@@ -255,17 +270,20 @@ See "Final report format" below.
 Before anything else, read the run's own paths and names out of the record and confirm the worktree is on the branch it should be. Never reconstruct the branch name from slug + date, and never read it out of the log:
 
 ```bash
-WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)      # exit 3 → no worktree: this is
+LR=<the user's lesson root>                                         # the root Phase 0 was given —
+                                                                    # the record, the staging area
+                                                                    # and the log all live under it
+WT=$(run-manifest.cjs get --lesson "$LR" git.worktree)              # exit 3 → no worktree: this is
                                                                     # a record from the old stash
                                                                     # flow, see the recovery path
-BR=$(run-manifest.cjs get --lesson <lesson_root> git.branch)        # incl. any collision suffix
-BASE=$(run-manifest.cjs get --lesson <lesson_root> git.base_branch)
+BR=$(run-manifest.cjs get --lesson "$LR" git.branch)                # incl. any collision suffix
+BASE=$(run-manifest.cjs get --lesson "$LR" git.base_branch)
 git -C "$WT" rev-parse --abbrev-ref HEAD                            # must equal "$BR"
 ```
 
 If the branch differs from the recorded value, halt the phase immediately — Phase 3 did not create it, or something switched it. Surface the actual branch name and the recorded one. If `git.worktree` is unset, this run predates the worktree flow: recover it by the path in `references/update-mode.md` § Recovering a run from the old stash flow rather than improvising here. All later merge and render steps consume the same recorded values.
 
-Every git command in this step runs with `-C "$WT"` (or from the worktree root). The user's checkout is not read from, not switched, and not written to.
+Every git command in this step runs with `-C "$WT"` (or from the worktree root), and every `run-manifest.cjs` call with `--lesson "$LR"`. The user's checkout is read for its path and its `node_modules`, and is not switched and not written to.
 
 ### 2. Draft commit message
 
@@ -342,10 +360,13 @@ This commit lands on `lesson-update/<slug>-YYYYMMDD` in the worktree, not `main`
 
 - `push-to-github` or `push-to-custom`: merge in the worktree, on a detached HEAD, so no branch anyone has checked out moves.
   ```bash
-  git -C "$WT" checkout --detach "$BASE"
+  SHA=$(run-manifest.cjs get --lesson "$LR" git.base_sha)
+  git -C "$WT" checkout --detach "$SHA"   # the commit this run built from — NOT "$BASE", whose
+                                          # local ref the run never moves and which is stale by
+                                          # lesson 2 of a `consolidate`
   git -C "$WT" merge --no-ff "$BR"
   MERGE=$(git -C "$WT" rev-parse HEAD)
-  RUN=$(run-manifest.cjs current --lesson <lesson_root>)
+  RUN=$(run-manifest.cjs current --lesson "$LR")
   git -C "$WT" update-ref "refs/lesson-builder/$RUN/merge" "$MERGE"
   ```
   `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history. The `refs/lesson-builder/<run_id>/merge` ref is what keeps that commit reachable once the worktree is pruned at step 3 — a detached HEAD is not a ref, and an unreferenced merge commit is a commit git is free to collect.
@@ -357,7 +378,7 @@ This commit lands on `lesson-update/<slug>-YYYYMMDD` in the worktree, not `main`
     || git -C "$WT" update-ref "refs/heads/$BASE" "$MERGE" "$(git -C "$WT" rev-parse "$MERGE^1")"
   ```
 
-  The compare-and-swap old value is the merge's own first parent — the base branch's tip at merge time — so the update is refused rather than applied blind if the branch moved meanwhile.
+  The compare-and-swap old value is the merge's own first parent — the base SHA this run built from — so the update is refused rather than applied blind if the local branch is somewhere else. A refusal is an outcome, not an error: the push below publishes the merge either way, and the report gives the user the fast-forward.
 
   When a working tree does hold it, which is the normal case because that working tree is the user's, leave the ref exactly where it is. Git refuses to push or fetch into a branch a working tree has checked out for the reason that applies here: moving the ref under a checkout leaves its index and its files describing a commit its `HEAD` no longer names, which reads as a staged revert of the entire update. The push below still publishes the merge, and step 5 of the report gives the user the one command that fast-forwards their own checkout when they are ready:
 
@@ -368,7 +389,7 @@ This commit lands on `lesson-update/<slug>-YYYYMMDD` in the worktree, not `main`
   Record which of the two happened as a note, so the log says whether the local branch moved:
 
   ```bash
-  run-manifest.cjs append --lesson <lesson_root> phases.5.notes \
+  run-manifest.cjs append --lesson "$LR" phases.5.notes \
     '"Base branch main: not moved (the user'"'"'s checkout holds it) — fast-forward with git merge --ff-only <MERGE>"'
   ```
 - `commit-only`: skip the merge. The commit stays on the update branch; the base branch is not touched. Log `Merge: skipped (deploy_action=commit-only) — branch: lesson-update/<slug>-YYYYMMDD` so the user can merge manually later.
@@ -376,6 +397,22 @@ This commit lands on `lesson-update/<slug>-YYYYMMDD` in the worktree, not `main`
 On conflict (should not happen from a clean branch): halt, surface conflict files, do not auto-resolve. The user resolves manually. Branch and worktree stay intact, and the user's checkout — which the merge never went near — is untouched.
 
 ### 6. Push (conditional on `deploy_action`)
+
+**Before any push, check the merge contains what the remote already has.** This run's base SHA was
+read at Phase 0 and the run never moves the local `refs/heads/<base>`, so a remote that moved since
+— most often the previous lesson of a `consolidate` run, which just pushed its own merge — would
+refuse this one non-fast-forward, mid-sequence:
+
+```bash
+git -C "$WT" fetch -q origin "$BASE" || true          # no origin: nothing to be behind, skip
+git -C "$WT" merge-base --is-ancestor "origin/$BASE" "$MERGE" \
+  || halt   # origin/$BASE has commits this merge does not contain
+```
+
+On the halt: nothing is pushed, the branch and the worktree stay as they are, and the report says
+the base moved under the run. A `consolidate` run reaching this halt means lesson 2..n was based on
+the Phase 0 tip instead of the previous lesson's merge — `references/course-curation.md` § Phase
+shape has the rebase point.
 
 - `push-to-github`:
   ```bash
@@ -390,7 +427,8 @@ On conflict (should not happen from a clean branch): halt, surface conflict file
 The build worktree has done its job once the merge is made and pushed. Prune it:
 
 ```bash
-run-manifest.cjs worktree remove --lesson <lesson_root>
+run-manifest.cjs worktree remove --lesson "$LR"   # the user's lesson root, never $WT: a worktree
+                                                  # does not remove itself, and the command refuses
 ```
 
 There is no user gate here and nothing to prompt for — nothing of the user's is in that directory,
@@ -412,7 +450,7 @@ Record the outcome as a note when the removal was refused, with the path, so the
 the log both name it:
 
 ```bash
-run-manifest.cjs append --lesson <lesson_root> phases.5.notes \
+run-manifest.cjs append --lesson "$LR" phases.5.notes \
   '"Build worktree kept at <path> — it holds work no commit does"'
 ```
 

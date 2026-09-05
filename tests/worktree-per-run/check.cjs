@@ -387,6 +387,103 @@ cases['the base branch moves only when no working tree holds it'] = () => {
     'a stale expected value is refused, not applied blind');
 };
 
+// ---- 9-10. `consolidate`: one workspace, one lesson merged after another ----
+
+/**
+ * A `consolidate` run's first lesson, finished: its own record, its own worktree, merged on the
+ * base SHA it built from and pushed. Returns what lesson 2 has to base on.
+ * `references/course-curation.md` § Phase shape.
+ */
+function consolidateFirstLesson(name) {
+  const ws = workspace(name);
+  const secondRoot = path.join(path.dirname(ws.root), 'second-lesson');
+  fs.mkdirSync(path.join(secondRoot, 'src'), { recursive: true });
+  fs.copyFileSync(path.join(ws.root, '.gitignore'), path.join(secondRoot, '.gitignore'));
+  fs.writeFileSync(path.join(secondRoot, 'src', 'second-lesson.jsx'), 'export const TOPICS = ["b1"];\n');
+  git(ws.repo, ['add', '-A']);
+  git(ws.repo, ['commit', '-qm', 'lesson: second']);
+  git(ws.repo, ['push', '-q', 'origin', 'main']);
+  const tip = git(ws.repo, ['rev-parse', 'refs/heads/main']).out;
+
+  // Lesson B, first in the execution order, bases on that tip.
+  const wt = phase0({ repo: ws.repo, root: secondRoot }, 'ggg777', false);
+  const wtRepo = git(wt, ['rev-parse', '--show-toplevel']).out;
+  git(wtRepo, ['config', 'user.email', 'fixture@example.invalid']);
+  git(wtRepo, ['config', 'user.name', 'fixture']);
+  git(wtRepo, ['checkout', '-q', '-b', 'lesson-update/second-lesson-20260905']);
+  fs.writeFileSync(path.join(wt, 'src', 'second-lesson.jsx'), 'export const TOPICS = ["b1", "moved"];\n');
+  git(wtRepo, ['add', '-A']);
+  git(wtRepo, ['commit', '-qm', 'second-lesson: destination of the move']);
+  git(wtRepo, ['checkout', '-q', '--detach', tip]);
+  git(wtRepo, ['merge', '-q', '--no-ff', '-m', 'merge second-lesson', 'lesson-update/second-lesson-20260905']);
+  const merge1 = git(wtRepo, ['rev-parse', 'HEAD']).out;
+  git(wtRepo, ['update-ref', 'refs/lesson-builder/ggg777/merge', merge1]);
+  git(wtRepo, ['push', '-q', 'origin', `${merge1}:main`]);
+  eq(git(ws.origin, ['rev-parse', 'refs/heads/main']).out, merge1, 'the first lesson of the sequence is published');
+  eq(git(ws.repo, ['rev-parse', 'refs/heads/main']).out, tip,
+    'and the local base branch is still where it was — the run never moves it');
+  return { ws, tip, merge1, wtRepo };
+}
+
+/** Phase 5 Step 2b.6, before any push: does this merge contain what the remote already has? */
+function prePushOk(wtRepo, base, merge) {
+  git(wtRepo, ['fetch', '-q', 'origin', base], true);
+  return git(wtRepo, ['merge-base', '--is-ancestor', `origin/${base}`, merge], true).code === 0;
+}
+
+/** Lesson 2 of the sequence, based on `baseSha`, merged and checked. Returns its merge commit. */
+function consolidateSecondLesson(ws, runId, baseSha) {
+  run(['init', '--lesson', ws.root, '--mode', 'update', '--session-mode', 'headless', '--run', runId]);
+  run(['set', '--lesson', ws.root, 'git.base_branch', 'main']);
+  run(['set', '--lesson', ws.root, 'git.base_sha', baseSha]);
+  const wt = run(['worktree', 'add', '--lesson', ws.root]);
+  eq(wt.code, 0, 'the second lesson opens its own worktree from the base SHA on its own record');
+  const wtRepo = git(wt.out, ['rev-parse', '--show-toplevel']).out;
+  git(wtRepo, ['config', 'user.email', 'fixture@example.invalid']);
+  git(wtRepo, ['config', 'user.name', 'fixture']);
+  git(wtRepo, ['checkout', '-q', '-b', `lesson-update/sample-lesson-${runId}`]);
+  fs.writeFileSync(path.join(wt.out, 'src', 'sample-lesson.jsx'), 'export const TOPICS = [];\n');
+  git(wtRepo, ['add', '-A']);
+  git(wtRepo, ['commit', '-qm', 'sample-lesson: source of the move']);
+  // Step 5 detaches at the recorded base SHA, not at the local base branch.
+  git(wtRepo, ['checkout', '-q', '--detach', baseSha]);
+  git(wtRepo, ['merge', '-q', '--no-ff', '-m', 'merge sample-lesson', `lesson-update/sample-lesson-${runId}`]);
+  return { wtRepo, merge: git(wtRepo, ['rev-parse', 'HEAD']).out, lessonRoot: wt.out };
+}
+
+cases['a consolidate sequence bases lesson 2 on lesson 1’s merge, and both land'] = () => {
+  const { ws, merge1 } = consolidateFirstLesson('consolidate-ok');
+  // The documented base for lesson 2..n: the previous lesson's merge, kept by its own ref.
+  const prev = git(ws.repo, ['rev-parse', 'refs/lesson-builder/ggg777/merge']).out;
+  eq(prev, merge1, 'the previous lesson’s merge is what its ref names');
+
+  const b = consolidateSecondLesson(ws, 'hhh888', prev);
+  ok(prePushOk(b.wtRepo, 'main', b.merge), 'the pre-push check passes: the merge contains origin/main');
+  git(b.wtRepo, ['push', '-q', 'origin', `${b.merge}:main`]);
+  eq(git(ws.origin, ['rev-parse', 'refs/heads/main']).out, b.merge, 'the second lesson lands too');
+  ok(git(ws.repo, ['merge-base', '--is-ancestor', merge1, b.merge], true).code === 0,
+    'and the restructure is whole: the destination merge is an ancestor of the source merge');
+  const published = git(ws.repo, ['show', `${b.merge}:MATH101/claude_lessons/second-lesson/src/second-lesson.jsx`]).out;
+  ok(published.includes('moved'), 'lesson 1’s change is still in what lesson 2 published');
+  // The push itself is what makes the merge keepable: it moved refs/remotes/origin/main onto it.
+  eq(run(['worktree', 'remove', '--lesson', ws.root]).code, 0,
+    'and lesson 2’s worktree prunes, because the push left a ref holding its merge');
+  eq(git(ws.repo, ['rev-parse', 'refs/remotes/origin/main']).out, b.merge, 'that ref being origin/main');
+};
+
+cases['a consolidate lesson 2 based on the frozen Phase 0 tip is caught before it pushes'] = () => {
+  const { ws, tip, merge1 } = consolidateFirstLesson('consolidate-stale');
+  // The mistake: lesson 2 keeps the tip Phase 0 read instead of re-basing on lesson 1's merge.
+  const b = consolidateSecondLesson(ws, 'iii999', tip);
+  eq(git(b.wtRepo, ['rev-parse', `${b.merge}^1`]).out, tip, 'its merge has the pre-restructure tip as its parent');
+  eq(prePushOk(b.wtRepo, 'main', b.merge), false,
+    'the pre-push check fails: the merge does not contain origin/main');
+  eq(git(b.wtRepo, ['push', '-q', 'origin', `${b.merge}:main`], true).code === 0, false,
+    'and the push it would have run is refused non-fast-forward, which is what the check spares');
+  eq(git(ws.origin, ['rev-parse', 'refs/heads/main']).out, merge1,
+    'so the restructure stops with lesson 1 published and nothing overwritten');
+};
+
 process.stdout.write(`worktree-per-run fixture (${SCRIPT})\n`);
 for (const [name, fn] of Object.entries(cases)) {
   process.stdout.write(`- ${name}\n`);

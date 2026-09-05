@@ -135,7 +135,19 @@ Announce the pending set rather than sitting on it silently: when a run is skipp
 - **Phase 0 (course scope, once)** — read `COURSE.md`; resolve the affected lesson set from the map; working-tree check across *all* affected lesson roots (one dirty tree blocks the whole run); confirm the restructure's reason. No per-lesson interview.
 - **Phase 1 (course scope, once)** — run the existing inventory pre-scan (`references/update-mode.md` § Inventory pre-scan) once per affected lesson, plus each lesson's topic list and `GRAPH_SCHEMA` state. The output is a course-wide topic × lesson × media table. Research is `light` by default: a restructure moves existing material, it does not re-teach it.
 - **Phase 2 (course scope, once)** — compile the **consolidation plan** below and take **one** approval gate for it.
-- **Phases 3–5 (per lesson, in dependency order)** — each affected lesson runs the ordinary update pipeline against its own change-list: its own branch (`lesson-update/<slug>-YYYYMMDD`), its own splice, its own Phase 4, its own merge. No further approval gate fires; each lesson writes the inheritance into its own run record before Phase 3 starts:
+- **Phases 3–5 (per lesson, in dependency order)** — each affected lesson runs the ordinary update pipeline against its own change-list: its own record, its own build worktree, its own branch (`lesson-update/<slug>-YYYYMMDD`), its own splice, its own Phase 4, its own merge.
+
+  **Each lesson bases on the previous lesson's merge.** `git.base_branch` and `git.base_sha` are recorded on each affected lesson's own record before its Phase 3 — `worktree add` builds from the SHA on the record it is given, and a record with no base SHA refuses to open a worktree at all. The first lesson in the execution order bases on the branch tip Phase 0 read. Lesson 2..n bases on the commit the previous lesson just merged and pushed:
+
+  ```bash
+  PREV=$(git -C <workspace_root> rev-parse refs/lesson-builder/<previous run_id>/merge)
+  run-manifest.cjs set --lesson <this lesson_root> git.base_branch <base>
+  run-manifest.cjs set --lesson <this lesson_root> git.base_sha "$PREV"
+  ```
+
+  The run never moves the local `refs/heads/<base>` — the user's checkout may hold it — so that ref is stale by lesson 2 and cannot be the base. Base every lesson on the frozen Phase 0 tip instead and lesson 2's merge has the pre-restructure commit as its parent: `origin` refuses the push non-fast-forward and the restructure stops half-published, destination merged and source stranded. Phase 5's pre-push check (`references/phase-5-deploy.md` § Step 2b.6) halts on exactly that rather than pushing.
+
+  No further approval gate fires; each lesson writes the inheritance into its own run record before Phase 3 starts:
 
   ```bash
   run-manifest.cjs set --lesson <lesson_root> plan.approval \

@@ -120,8 +120,8 @@ newest record in that lesson, so a resumed session does not have to carry the id
 | `stage --media-id <id> --name <file>` | Creates this run's staging directory for that media id and prints the path the producer writes to. |
 | `promote --media-id <id> --from <staged> --to <lesson-relative> [--min-bytes <n>]` | Validates the staged bytes and moves them into the lesson tree. Prints a JSON receipt; exits 6 on refusal. See below. |
 | `fail --media-id <id> --reason <text>` | Records a production that produced nothing. Touches no file. |
-| `worktree add` | Creates this run's build worktree from `git.base_sha`, records `git.worktree` + `git.worktree_state`, prints the lesson root inside it. Idempotent — a resumed run calls it again and gets its worktree back. |
-| `worktree remove` | Prunes it. Exits 7 and removes nothing while it holds uncommitted work or a commit no ref keeps. |
+| `worktree add` | Creates this run's build worktree from `git.base_sha`, records `git.worktree` + `git.worktree_state`, and prints the lesson root inside it. Takes the **user's** lesson root, never the worktree's — given one carrying the pointer it refuses (exit 1). Idempotent: a resumed run calls it again and gets its worktree back. |
+| `worktree remove` | Prunes it. Same root as `add`: a worktree does not remove itself. Exits 7 and removes nothing while it holds uncommitted work or a commit no ref keeps; exits 3 when the record names no worktree. |
 | `render` | Rewrites `lesson_build.log.md` from every record in the lesson. |
 
 ## The build worktree
