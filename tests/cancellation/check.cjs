@@ -80,7 +80,7 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
 }
 
 (async () => {
-  const { isRestorable, isPickable, isSoleInFlight } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
+  const { isRestorable, isPickable } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
   const model = REAL ? "haiku" : "sonnet";
   const system = "You are a test fixture. Follow the user's instruction literally and say nothing else.";
   const init = await post("/session/init", { model, effort: "low", isolated: true, system });

@@ -51,6 +51,8 @@ const HELP_GROUPS = [
       ["Ctrl + Shift + J", "open a thread on the selection (chat reply or lesson)"],
       ["Ctrl + Shift + F", "add the selection to the surrounding thread"],
       ["focus a thread box", "captured context goes to that thread, not the main composer"],
+      ["⤴ in a thread header", "fold the thread back: one summary you read first, then it rides your next main message"],
+      ["a thread is its own session", "the main tutor never sees what you explore in one until you fold it"],
     ],
   },
 ];

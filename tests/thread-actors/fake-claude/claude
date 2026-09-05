@@ -1,0 +1,87 @@
+#!/usr/bin/env node
+// Fake `claude` for tests/thread-actors — first on PATH when the proxy under
+// test starts. Speaks enough of the CLI's -p protocol to make session identity
+// observable, which is the whole point of this suite:
+//
+//   * every invocation appends {argv, stdin} to $FAKE_STATE/argv.jsonl, so a
+//     check can assert WHICH session a turn resumed and whether it forked;
+//   * each session id owns a transcript file $FAKE_STATE/hist-<sid>.txt, and
+//     `--fork-session` copies the resumed session's transcript into a NEW id
+//     and answers as that id — a real fork: the child starts with the parent's
+//     history and writes nowhere near it afterwards;
+//   * a message containing RECALL is answered with that session's transcript
+//     ("KNOWN: ..."), so "does the main session know what the thread said?" is
+//     a string check rather than a guess.
+//
+// Message switches (all matched against stdin):
+//   RECALL       reply with this session's whole transcript
+//   LONG         stream for two minutes over a real bash+sleep tree, so a
+//                cancel has something to kill (same shape as tests/cancellation)
+//   NOFORK       ignore --fork-session and answer as the RESUMED id — the CLI
+//                failing to fork, which the proxy must refuse to record
+const fs = require("fs");
+const path = require("path");
+const args = process.argv.slice(2);
+if (args.includes("--version")) { console.log("fake-claude 0.0.0"); process.exit(0); }
+
+const STATE = process.env.FAKE_STATE || path.join(require("os").tmpdir(), "thread-actors-state");
+fs.mkdirSync(STATE, { recursive: true });
+const histFile = (sid) => path.join(STATE, "hist-" + sid + ".txt");
+const readHist = (sid) => { try { return fs.readFileSync(histFile(sid), "utf8").split("\n").filter(Boolean); } catch (_) { return []; } };
+
+let stdin = "";
+process.stdin.on("data", (d) => (stdin += d));
+process.stdin.on("end", main);
+
+function main() {
+  try { fs.appendFileSync(path.join(STATE, "argv.jsonl"), JSON.stringify({ argv: args, stdin, at: Date.now() }) + "\n"); } catch (_) {}
+
+  const fmt = args[args.indexOf("--output-format") + 1];
+  const r = args.indexOf("--resume");
+  const resumed = r >= 0 ? args[r + 1] : null;
+  const forking = args.includes("--fork-session") && !/NOFORK/.test(stdin);
+  // The fork is where a thread's identity is born: a new id, seeded with the
+  // parent's transcript. Without --resume there is nothing to fork from, so
+  // this is a fresh session (what /session/init does).
+  let sid = resumed;
+  if (forking || !sid) {
+    sid = require("crypto").randomUUID();
+    if (resumed) { try { fs.writeFileSync(histFile(sid), readHist(resumed).join("\n") + (readHist(resumed).length ? "\n" : "")); } catch (_) {} }
+  }
+
+  const usage = { input_tokens: 1, output_tokens: 1 };
+  const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+  const append = (line) => { try { fs.appendFileSync(histFile(sid), line.replace(/\n/g, " ").trim() + "\n"); } catch (_) {} };
+
+  // --output-format json is the non-streaming shape: /session/init (no
+  // --resume) and /thread/fold (--resume <thread>, --model haiku). A fold is
+  // read-only — it summarizes the transcript and writes nothing to it.
+  if (fmt === "json") {
+    if (/SYSTEM TASK: This side thread is being folded/.test(stdin)) {
+      emit({ type: "result", session_id: sid, result: "SUMMARY: " + readHist(sid).join(" | "), usage, total_cost_usd: 0 });
+    } else {
+      emit({ type: "result", session_id: sid, result: "Session ready.", usage, total_cost_usd: 0 });
+    }
+    return;
+  }
+
+  emit({ type: "system", subtype: "init", session_id: sid });
+  append(stdin);
+
+  if (/LONG/.test(stdin)) {
+    // A three-deep tree (`; true` keeps bash from exec-ing into sleep) so a
+    // cancel has a real process group to take down.
+    const child = require("child_process").spawn("bash", ["-c", "sleep 600; true"], { stdio: "ignore" });
+    emit({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "sleep 600" } }] } });
+    let n = 0;
+    const t = setInterval(() => {
+      emit({ type: "assistant", message: { content: [{ type: "text", text: `chunk ${++n} ` }] } });
+      if (n >= 240) { clearInterval(t); child.kill("SIGKILL"); emit({ type: "result", session_id: sid, result: "Long reply finished.", usage, total_cost_usd: 0 }); }
+    }, 500);
+    return;
+  }
+
+  const text = /RECALL/.test(stdin) ? "KNOWN: " + readHist(sid).join(" | ") : "ack";
+  emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  emit({ type: "result", session_id: sid, result: text, usage, total_cost_usd: 0 });
+}

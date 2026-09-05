@@ -168,7 +168,7 @@ const SAFE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // Thread ids are client-assigned ("t17"). They never reach argv — they key a
 // session record and appear in logs — but an id has to look like an id.
 const SAFE_THREAD_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-const safeModel =(m, fallback) => (typeof m === "string" && SAFE_MODEL_RE.test(m) ? m : fallback);
+const safeModel = (m, fallback) => (typeof m === "string" && SAFE_MODEL_RE.test(m) ? m : fallback);
 const safeEffort = (e, fallback) => (SAFE_EFFORTS.has(e) ? e : fallback);
 const safeSession = (s) => (typeof s === "string" && SAFE_SESSION_RE.test(s) ? s : null);
 
@@ -500,7 +500,9 @@ app.post("/session/open", (req, res) => {
   // id before it is used as a map key.
   const sessionId = safeSession(req.body?.sessionId);
   const session = sessionId && sessions[sessionId];
-  if (!session) return res.status(404).json({ error: { message: "Session not found" } });
+  // A thread handle is not a chat to walk into, so it cannot be opened as one
+  // — same rule /sessions applies by never listing it.
+  if (!session || isThreadSession(session)) return res.status(404).json({ error: { message: "Session not found" } });
   if (session.open) return res.status(409).json({ error: { message: `Chat #${session.chatNum} is already open in another tab` } });
   session.open = true;
   session.lastSeen = Date.now();
