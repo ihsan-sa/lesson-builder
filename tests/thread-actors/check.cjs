@@ -141,7 +141,9 @@ const newChat = async () => {
     // claim and may decline to repeat it even when asked to recall, so "does
     // the thread remember its own turns" is asked with something it has no
     // reason to argue with — while the leak probe below still hunts for both.
-    await turn(handle, threadMsg("t1", "THREAD-NOTE-A: park this thread on the derivative question."));
+    // Phrased as a stated FACT, which is what SYSTEM tells RECALL to list (an
+    // instruction to the tutor is not one, and a live run proved it).
+    await turn(handle, threadMsg("t1", "THREAD-NOTE-A: the thread settled on 7 minutes."));
     const threadRecall = await turn(handle, threadMsg("t1", "RECALL"));
     ok(/THREAD-NOTE-A/.test(threadRecall.text), `1: the thread remembers what was said IN the thread ("${threadRecall.text.slice(0, 120)}")`);
     ok(/FACT-MAIN|sky is green/i.test(threadRecall.text), "1: the thread inherited the main conversation up to the fork");
