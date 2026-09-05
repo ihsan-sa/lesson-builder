@@ -1299,6 +1299,34 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 }
 .chat-anchor-body { padding: 0 !important; font-size: 14px; color: var(--ink-3); font-style: italic; max-height: 8.4em; overflow-y: auto; }
 
+/* ── Folded thread ──
+   The one message a side thread ever puts into the main conversation. Styled
+   as a card, not a tutor bubble: the student is reading what the thread is
+   handing over, and they see it before the main tutor does. */
+.chat-msg-fold { align-items: stretch; }
+.chat-msg-fold::before { content: none; }
+.chat-fold-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  background: var(--canvas);
+  padding: 10px 13px;
+}
+.chat-fold-label {
+  display: block;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-4);
+  margin-bottom: 4px;
+}
+.chat-fold-body { padding: 0 !important; font-size: 14px; color: var(--ink-2); white-space: pre-wrap; }
+.thread-fold-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-4); font-size: 12px; padding: 0 4px;
+}
+.thread-fold-btn:hover { color: var(--accent); }
+.thread-fold-btn[disabled] { opacity: .45; cursor: default; }
+
 /* ── Dead-session recovery bar ── */
 .chat-dead-session {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

@@ -6,7 +6,23 @@
 // `cd <lesson> && node server/proxy.js`.
 //
 // Routes: /whoami, /session/init, /session/open, /session/transfer,
-// /session/close, /upload, /chat, /chat/cancel, /sessions, /commit.
+// /session/close, /upload, /chat, /chat/cancel, /sessions, /thread/open,
+// /thread/fold, /commit.
+//
+// Thread sessions. A side thread does NOT share the main conversation's CLI
+// session: POST /thread/open returns a handle, and that handle's first /chat
+// turn runs `--resume <main session> --fork-session`, which forks a new CLI
+// session off the main one and takes the turn in the same spawn (so a thread
+// turn costs no more than a main turn). The fork is taken from the main
+// session as it stands when that first thread turn runs — the CLI can fork a
+// session's tip, not an arbitrary earlier turn — and the anchor snippet rides
+// in the message. Later turns resume the forked session. Nothing said in a
+// thread ever enters the main session's history; what a thread concluded
+// reaches the main conversation only through POST /thread/fold, whose summary
+// the client shows the student and carries into its next main turn.
+// A thread handle is a session for every purpose except resumption: /chat and
+// /chat/cancel take it (so a thread's Stop kills only that thread's process
+// tree), and /sessions never lists it — a thread is not a chat to walk into.
 //
 // Turn ownership. Every /chat turn spawns one `claude` CLI, which spawns its
 // own children (MCP servers, Bash tool commands, subagents). The proxy owns
@@ -33,6 +49,7 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { spawn, spawnSync } from "child_process";
+import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 
 // Can we spawn the CLI WITHOUT a shell?
@@ -148,7 +165,10 @@ app.get("/whoami", (req, res) => {
 const SAFE_MODEL_RE = /^[a-zA-Z0-9._-]{1,64}$/;
 const SAFE_SESSION_RE = /^[a-zA-Z0-9-]{8,64}$/;
 const SAFE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
-const safeModel = (m, fallback) => (typeof m === "string" && SAFE_MODEL_RE.test(m) ? m : fallback);
+// Thread ids are client-assigned ("t17"). They never reach argv — they key a
+// session record and appear in logs — but an id has to look like an id.
+const SAFE_THREAD_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const safeModel =(m, fallback) => (typeof m === "string" && SAFE_MODEL_RE.test(m) ? m : fallback);
 const safeEffort = (e, fallback) => (SAFE_EFFORTS.has(e) ? e : fallback);
 const safeSession = (s) => (typeof s === "string" && SAFE_SESSION_RE.test(s) ? s : null);
 
@@ -157,6 +177,16 @@ const safeSession = (s) => (typeof s === "string" && SAFE_SESSION_RE.test(s) ? s
 // Object.prototype (every later lookup then finds a phantom session).
 const sessions = Object.create(null);
 const _sessionQueues = Object.create(null); // sessionId -> Promise chain
+
+// A thread handle is a key in `sessions` like any other, so /chat,
+// /chat/cancel, the per-session queue and the shutdown sweep all work on it
+// unchanged. What differs: `kind` is "thread", `parentId` names the main
+// session it forks from, and `cliSessionId` is null until its first turn has
+// forked one. For a main session the key IS its CLI session id.
+const isThreadSession = (s) => !!s && s.kind === "thread";
+const findThreadHandle = (parentId, threadId) =>
+  Object.keys(sessions).find((k) => isThreadSession(sessions[k]) && sessions[k].parentId === parentId && sessions[k].threadId === threadId) || null;
+
 let nextChatNum = 1;
 let totalTokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cost: 0 };
 
@@ -298,6 +328,23 @@ function killActiveTurns() {
   }
 }
 
+// Discarding a main session discards the threads forked off it: their forked
+// CLI sessions have no conversation left to belong to, and a thread handle
+// whose parent is gone can no longer take its first turn. Kills whatever a
+// thread had in flight, the same way a session delete does.
+function closeThreadsOf(parentId, reason) {
+  for (const [id, s] of Object.entries(sessions)) {
+    if (!isThreadSession(s) || s.parentId !== parentId) continue;
+    if (s.turn && !s.turn.cancelled) {
+      const turn = s.turn;
+      turn.cancelled = true;
+      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum: s.chatNum, msg: turn.msgNum, survivors: left }); return left; });
+    }
+    delete sessions[id];
+    log("THREAD_DELETE", { chatNum: s.chatNum, threadId: s.threadId, reason });
+  }
+}
+
 const PROJECT_DIR = process.cwd();
 const ISOLATED_CWD = path.join(PROJECT_DIR, "server", ".isolated");
 
@@ -434,6 +481,7 @@ app.post("/session/init", async (req, res) => {
     accumulateTokens(tok);
 
     sessions[sessionId] = {
+      kind: "main", cliSessionId: sessionId,
       chatNum, model: cliModel, effort: cliEffort, isolated: !!isolated,
       created: Date.now(), lastSeen: Date.now(), messageCount: 0, open: true,
       turn: null, lastTurn: null,
@@ -504,9 +552,13 @@ app.post("/session/transfer", async (req, res) => {
     const tok = extractTokens(parsed);
     accumulateTokens(tok);
     // Delete the old record only after the new session exists — a failed
-    // transfer must leave the original session usable, not orphaned.
+    // transfer must leave the original session usable, not orphaned. Its
+    // threads go with it: they were forked off a session that no longer
+    // exists, and the client re-opens the ones it still shows against the new
+    // one on their next turn.
     delete sessions[sessionId];
-    sessions[newSessionId] = { chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true, turn: null, lastTurn: null };
+    closeThreadsOf(sessionId, "session-transfer");
+    sessions[newSessionId] = { kind: "main", cliSessionId: newSessionId, chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true, turn: null, lastTurn: null };
     log("TRANSFER_OK", { chatNum, newSessionId: newSessionId.slice(0, 8), isolated: newIsolated, ...tok, totalCost: totalTokens.cost.toFixed(4) });
     res.json({ sessionId: newSessionId, chatNum, isolated: newIsolated, content: [{ type: "text", text: parsed.result || "Session transferred." }] });
   } catch (err) {
@@ -536,9 +588,71 @@ app.post("/session/close", (req, res) => {
       turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum, msg: turn.msgNum, survivors: left }); return left; });
     }
     delete sessions[sessionId];
+    closeThreadsOf(sessionId, "session-delete");
     log("SESSION_DELETE", { chatNum, sessionId: sessionId.slice(0, 8) });
   }
   res.json({ ok: true });
+});
+
+// POST /thread/open {sessionId, threadId} — see "Thread sessions" at the top.
+// Hands back the handle the client sends every turn of that thread to. No CLI
+// runs here: the fork happens on the thread's first /chat turn, in the same
+// spawn as the turn, so a thread the student opens and never uses costs
+// nothing. Idempotent per (main session, threadId) — a thread re-opened after
+// a reload gets the handle it already had, and with it the session it has
+// been talking to.
+app.post("/thread/open", (req, res) => {
+  const parentId = safeSession(req.body?.sessionId);
+  const threadId = typeof req.body?.threadId === "string" && SAFE_THREAD_RE.test(req.body.threadId) ? req.body.threadId : null;
+  if (!threadId) return res.status(400).json({ error: { message: "threadId required" } });
+  const parent = parentId && sessions[parentId];
+  if (!parent || isThreadSession(parent)) return res.status(404).json({ error: { message: "Session not found" } });
+
+  const existing = findThreadHandle(parentId, threadId);
+  if (existing) {
+    sessions[existing].lastSeen = Date.now();
+    return res.json({ threadSessionId: existing, reused: true });
+  }
+  const handle = randomUUID();
+  sessions[handle] = {
+    kind: "thread", parentId, threadId, cliSessionId: null,
+    chatNum: parent.chatNum, model: parent.model, effort: parent.effort, isolated: !!parent.isolated,
+    created: Date.now(), lastSeen: Date.now(), messageCount: 0,
+    // Never listed, never swept: `open` is what the stale-release sweep and
+    // the resume rule read, and a thread is neither reclaimed nor resumed.
+    open: false, turn: null, lastTurn: null,
+  };
+  parent.lastSeen = Date.now();
+  log("THREAD_OPEN", { chatNum: parent.chatNum, threadId, handle: handle.slice(0, 8), parent: parentId.slice(0, 8) });
+  res.json({ threadSessionId: handle, reused: false });
+});
+
+// POST /thread/fold {sessionId} — sessionId is the thread's handle. The one
+// way anything a thread concluded reaches the main conversation: a summary the
+// client shows the student and carries into its next main turn. Read-only
+// here — folding does not close the thread, and the main session is not
+// touched by this route at all.
+app.post("/thread/fold", async (req, res) => {
+  const handle = safeSession(req.body?.sessionId);
+  const session = handle && sessions[handle];
+  if (!session || !isThreadSession(session)) return res.status(404).json({ error: { message: "Thread session not found" } });
+  if (!session.cliSessionId) return res.status(409).json({ error: { message: "This thread has not been asked anything yet." } });
+  session.lastSeen = Date.now();
+
+  const args = ["--resume", session.cliSessionId, "-p", "--print", "--output-format", "json", "--model", "haiku", "--effort", "low"];
+  const prompt = "SYSTEM TASK: This side thread is being folded back into the main conversation. In at most 5 sentences of plain prose, state what this thread actually settled: the question it started from and the conclusion reached. Correct anything in it that was wrong rather than repeating it. No preamble, no [THREAD:...] prefix, no control tags.";
+  try {
+    const parsed = parseCliJson(await runClaude(args, prompt, session.isolated));
+    const tok = extractTokens(parsed);
+    accumulateTokens(tok);
+    const summary = (parsed.result || "").trim();
+    if (!summary) throw new Error("empty summary");
+    log("THREAD_FOLD", { chatNum: session.chatNum, threadId: session.threadId, summaryLen: summary.length, ...tok });
+    res.json({ summary, threadId: session.threadId });
+  } catch (err) {
+    log("THREAD_FOLD_ERROR", { chatNum: session.chatNum, threadId: session.threadId, error: err.message });
+    res.status(500).json({ error: { message: err.message } });
+  }
 });
 
 const UPLOAD_DIR = path.join(PROJECT_DIR, "server", ".uploads");
@@ -602,11 +716,31 @@ app.post("/chat", async (req, res) => {
   const cliEffort = safeEffort(effort, session.effort);
   const msgNum = session.messageCount;
 
-  log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, model: cliModel, effort: cliEffort, message: message || "" });
+  log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, model: cliModel, effort: cliEffort, ...(isThreadSession(session) ? { threadId: session.threadId } : {}), message: message || "" });
 
   enqueueForSession(safeId, () => new Promise((resolve) => {
+    // A thread's FIRST turn forks: it resumes the MAIN session and asks the
+    // CLI for a new session id, so the main session's history is where this
+    // thread starts and nothing said from here on is written back to it.
+    // Later turns resume the fork. Decided here, inside the queue, not at
+    // request time: two thread turns sent back to back must not both see
+    // "no fork yet" and fork the parent twice.
+    const forkFrom = isThreadSession(session) && !session.cliSessionId
+      ? (sessions[session.parentId] || {}).cliSessionId || null
+      : null;
+    if (isThreadSession(session) && !session.cliSessionId && !forkFrom) {
+      // The conversation this thread hangs off is gone (killed or
+      // transferred): there is nothing to fork, and answering from a blank
+      // session would be a different tutor pretending to be this one.
+      log("CHAT_409_THREAD", { chatNum: session.chatNum, threadId: session.threadId });
+      session.lastTurn = { msg: msgNum, outcome: "error", at: Date.now() };
+      res.status(409).json({ error: { message: "The conversation this thread hangs off is gone. Open the thread again." } });
+      return resolve();
+    }
     const args = [
-      "--resume", safeId, "-p", "--print", "--output-format", "stream-json", "--verbose",
+      "--resume", forkFrom || session.cliSessionId || safeId,
+      ...(forkFrom ? ["--fork-session"] : []),
+      "-p", "--print", "--output-format", "stream-json", "--verbose",
       "--model", cliModel, "--effort", cliEffort, "--allowedTools", ALLOWED_TOOLS,
     ];
 
@@ -644,6 +778,20 @@ app.post("/chat", async (req, res) => {
     const proc = runClaudeStreaming(args, message, session.isolated,
       (parsed) => {
         try {
+          // The forked id, taken from the first event that carries one. It
+          // must differ from the session we forked FROM: an id equal to the
+          // parent's means the CLI did not fork, and recording it would make
+          // every later turn of this thread write into the main conversation —
+          // exactly the leak this route exists to prevent. Left unset, so the
+          // next turn forks again rather than resuming the main session.
+          if (forkFrom && !session.cliSessionId && typeof parsed.session_id === "string") {
+            if (parsed.session_id !== forkFrom) {
+              session.cliSessionId = parsed.session_id;
+              log("THREAD_FORK", { chatNum: session.chatNum, threadId: session.threadId, from: forkFrom.slice(0, 8), to: parsed.session_id.slice(0, 8) });
+            } else {
+              log("THREAD_FORK_MISSING", { chatNum: session.chatNum, threadId: session.threadId, sessionId: forkFrom.slice(0, 8) });
+            }
+          }
           if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
             for (const block of parsed.message.content) {
               if (block.type === "tool_use") {
@@ -727,7 +875,10 @@ app.post("/chat/cancel", async (req, res) => {
 });
 
 app.get("/sessions", (req, res) => {
-  const list = Object.entries(sessions).map(([id, s]) => ({
+  // Chats only. A thread handle is a session everywhere else in this file,
+  // but it is not a conversation the student can open or resume — listing one
+  // would offer them a side thread as a chat to walk into.
+  const list = Object.entries(sessions).filter(([, s]) => !isThreadSession(s)).map(([id, s]) => ({
     id, chatNum: s.chatNum, model: s.model, effort: s.effort, isolated: !!s.isolated,
     created: s.created, messageCount: s.messageCount, open: s.open,
     turn: s.turn ? { msg: s.turn.msgNum, pid: s.turn.pid, startedAt: s.turn.startedAt, cancelling: s.turn.cancelled } : null,

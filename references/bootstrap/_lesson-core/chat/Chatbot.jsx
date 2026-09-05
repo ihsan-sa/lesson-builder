@@ -8,7 +8,7 @@ import { buildSystemPrompt } from "./buildSystemPrompt.js";
 import { processResponse as parseChatResponse, stripUnclosedTags } from "./processResponse.js";
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
-import { isRestorable, isPickable, isSoleInFlight } from "./turnState.js";
+import { isRestorable, isPickable } from "./turnState.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/LessonShell.jsx";
 
@@ -666,16 +666,14 @@ export function Chatbot({
   const cancelRequest = () => {
     const tab = tabsRef.current[activeTabIdxRef.current];
     if (!tab) return;
-    let inFlight = false;
+    // The main turn only. Each thread runs in its own session and has its own
+    // Stop; a student stopping the main reply is not stopping the thread they
+    // left running beside it.
     const ctrl = _cs.tabAborts[tab.id];
-    if (ctrl) { _cs.tabCancelled[tab.id] = true; ctrl.abort(); inFlight = true; }
-    for (const key of Object.keys(_cs.threadAborts)) {
-      if (key.startsWith(tab.id + ':')) { try { _cs.threadAborts[key].abort(); } catch (_) {} delete _cs.threadAborts[key]; inFlight = true; }
-    }
-    // Main Stop aborts this tab's main reader and every thread reader above,
-    // so whichever turn the session is running is one the student stopped —
-    // one cancel covers it. (A thread's own Stop is narrower: see cancelThread.)
-    if (inFlight) cancelTurn(tab.sessionId);
+    if (!ctrl) return;
+    _cs.tabCancelled[tab.id] = true;
+    ctrl.abort();
+    cancelTurn(tab.sessionId);
   };
 
   const killSession = useCallback(() => {
@@ -1071,7 +1069,7 @@ export function Chatbot({
         if (i !== msgIdx) return m;
         if (m.threads?.some(th => th.blockIdx === blockIdx && th.snippet === snippet)) return m;
         const threads = m.threads ? [...m.threads] : [];
-        threads.push({ id: `t${++_cs.threadCounter}`, snippet, blockIdx: blockIdx ?? null, messages: [], collapsed: false, loading: false });
+        threads.push({ id: `t${++_cs.threadCounter}`, snippet, blockIdx: blockIdx ?? null, messages: [], collapsed: false, loading: false, sessionId: null, folded: false });
         return { ...m, threads };
       });
       return { ...t, messages: msgs };
@@ -1105,7 +1103,7 @@ export function Chatbot({
         role: "anchor",
         content: clean,
         source: source || "lesson",
-        threads: [{ id: `t${++_cs.threadCounter}`, snippet: clean, blockIdx: null, messages: [], collapsed: false, loading: false }],
+        threads: [{ id: `t${++_cs.threadCounter}`, snippet: clean, blockIdx: null, messages: [], collapsed: false, loading: false, sessionId: null, folded: false }],
       };
       return { ...t, messages: [...t.messages, anchor] };
     }));
@@ -1133,7 +1131,23 @@ export function Chatbot({
     }));
   }, []);
 
+  // Find a thread's live record (its `sessionId` is the handle every request
+  // about that thread carries).
+  const findThread = (tabId, msgIdx, threadId) =>
+    (tabsRef.current.find(t => t.id === tabId)?.messages[msgIdx]?.threads || []).find(th => th.id === threadId) || null;
+
   const deleteThread = useCallback((tabId, msgIdx, threadId) => {
+    // The thread's own CLI session goes with it — a fork nobody can reach
+    // again is a session the proxy would hold open for nothing.
+    const th = findThread(tabId, msgIdx, threadId);
+    if (th?.sessionId) {
+      obsQueue.cleanup(th.sessionId);
+      fetch("/session/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: th.sessionId, keepContext: false }),
+      }).catch(() => {});
+    }
     setTabs(prev => prev.map(t => {
       if (t.id !== tabId) return t;
       const msgs = [...t.messages];
@@ -1185,18 +1199,34 @@ export function Chatbot({
       ? threadCtxInternal
       : threadCtxTrigger;
 
-  const cancelThread = useCallback((tabId, threadId) => {
+  // A thread's Stop. The thread runs in its own session, so cancelling it
+  // names that session and reaches only the CLI process this thread started:
+  // a main turn streaming alongside it is a different session and a different
+  // process tree, and is left alone.
+  const cancelThread = useCallback((tabId, msgIdx, threadId) => {
     const key = tabId + ":" + threadId;
     const ctrl = _cs.threadAborts[key];
     if (ctrl) { try { ctrl.abort(); } catch (_) {} delete _cs.threadAborts[key]; }
-    const tab = tabsRef.current.find(t => t.id === tabId);
-    // The proxy cancels the session's active turn, which is not necessarily
-    // this thread's: with a main turn streaming and this thread queued behind
-    // it, cancelling would truncate the turn the student never stopped. Stop
-    // this thread's reader either way; cancel only when nothing else of the
-    // tab is in flight (isSoleInFlight, checked after our own delete above).
-    if (ctrl && tab && isSoleInFlight(tabId, _cs.tabAborts, _cs.threadAborts)) cancelTurn(tab.sessionId);
+    const th = findThread(tabId, msgIdx, threadId);
+    if (ctrl && th?.sessionId) cancelTurn(th.sessionId);
   }, []);
+
+  // The thread's own CLI session, forked off the main conversation by its
+  // first turn (proxy.js, "Thread sessions"). Opened lazily on the first send
+  // rather than when the panel opens, so a thread the student never uses
+  // costs nothing; the proxy hands back the same handle for a thread it
+  // already knows, so a thread re-opened after a reload keeps its session.
+  const openThreadSession = async (mainSessionId, threadId) => {
+    try {
+      const res = await fetch("/thread/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: mainSessionId, threadId }),
+      });
+      if (!res.ok) return null;
+      return (await res.json()).threadSessionId || null;
+    } catch (_) { return null; }
+  };
 
   const sendThreadMessage = async (tabId, msgIdx, threadId, snippet, text, context, atts) => {
     const tab = tabsRef.current.find(t => t.id === tabId);
@@ -1242,12 +1272,29 @@ export function Chatbot({
       graphParams,
       graphSchema,
       isolated: tab.isolated,
-      // Threads run in the same session as the main transcript, so the
-      // student's accumulated preferences must govern thread replies too.
+      // A thread is forked from the main conversation, not walled off from
+      // the student: the preferences they have reinforced govern thread
+      // replies too.
       reinforced: tab.reinforced || [],
       answerStyle: answersRef.current,
     });
-    let observations = obsQueue.drain(tab.sessionId);
+
+    let threadSessionId = findThread(tabId, msgIdx, threadId)?.sessionId || null;
+    if (!threadSessionId) {
+      threadSessionId = await openThreadSession(tab.sessionId, threadId);
+      if (!threadSessionId) {
+        addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: "Could not start this thread's own session. Is the proxy running?" });
+        updateThread(tabId, msgIdx, threadId, { loading: false });
+        return;
+      }
+      updateThread(tabId, msgIdx, threadId, { sessionId: threadSessionId });
+    }
+
+    // Observations queue against the THREAD's session, not the tab's: a note
+    // about a tag this thread emitted belongs to this thread's next turn, and
+    // pushing it onto the main session's queue would carry the thread into the
+    // main conversation behind the student's back.
+    let observations = obsQueue.drain(threadSessionId);
     const tagged = `[THREAD:${threadId} | "${snippet.slice(0, 60)}"]\n\n${observations}${activeCtx}\n${apiText}`;
     _cs.activeThread[tabId] = { msgIdx, threadId };
 
@@ -1282,15 +1329,28 @@ export function Chatbot({
     };
 
     try {
-      const res = await fetch("/chat", {
+      const post = (sid) => fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
-        body: JSON.stringify({ sessionId: tab.sessionId, message: tagged, model, effort }),
+        body: JSON.stringify({ sessionId: sid, message: tagged, model, effort }),
       });
+      let res = await post(threadSessionId);
+      // 404 = the proxy does not know this handle: the thread's session went
+      // with a transfer or a restart. Ask for one against the tab's session as
+      // it is now and send once more, rather than losing the message.
+      if (res.status === 404) {
+        const fresh = await openThreadSession(tab.sessionId, threadId);
+        if (fresh) {
+          threadSessionId = fresh;
+          updateThread(tabId, msgIdx, threadId, { sessionId: fresh });
+          res = await post(fresh);
+        }
+      }
       if (!res.ok) {
-        obsQueue.requeue(tab.sessionId, observations);
-        addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: `Error ${res.status}` });
+        obsQueue.requeue(threadSessionId, observations);
+        const detail = await res.json().catch(() => ({}));
+        addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: detail.error?.message || `Error ${res.status}` });
         return;
       }
       const reader = res.body.getReader();
@@ -1355,20 +1415,20 @@ export function Chatbot({
         }
       }
       if (threadStopped) {
-        obsQueue.requeue(tab.sessionId, observations);
+        obsQueue.requeue(threadSessionId, observations);
         markThreadStopped();
       } else if (finalText) {
         // Thread scope: display-only tags (<<DEMO>>, <<DESMOS>>, <<SOURCES>>)
-        // render here and <<REINFORCE>> still counts, but the three
-        // state-mutating tags are stripped and reported back as observations —
-        // their approval UI only exists on main-transcript messages.
+        // render here and <<REINFORCE>> still counts — it is merged into the
+        // tab's reinforced list below, the same list a main turn feeds — but
+        // the three state-mutating tags are stripped and reported back as
+        // observations to THIS thread; their approval UI only exists on
+        // main-transcript messages.
         const reply = parseChatResponse(
           finalText.replace(/^\[THREAD:[^\]]+\]\s*/i, ""),
           {
             scope: "thread",
-            onError: (type, details) => {
-              if (tab.sessionId) obsQueue.enqueue(tab.sessionId, type, details);
-            },
+            onError: (type, details) => obsQueue.enqueue(threadSessionId, type, details),
           },
         );
         const display = reply.display;
@@ -1401,7 +1461,7 @@ export function Chatbot({
         }));
       }
     } catch (e) {
-      obsQueue.requeue(tab.sessionId, observations);
+      obsQueue.requeue(threadSessionId, observations);
       if (e.name === "AbortError") { markThreadStopped(); return; }
       const errMsg = `Error: ${e.message}`;
       // Drop the half-streamed placeholder before appending the outcome, or a
@@ -1428,6 +1488,40 @@ export function Chatbot({
       updateThread(tabId, msgIdx, threadId, { loading: false });
     }
   };
+
+  // Fold a thread back into the main conversation. This is the ONLY way
+  // anything a thread said reaches the main session: the thread's own session
+  // writes the summary, the student sees it as one message in the transcript,
+  // and the same text is queued onto the main session's next turn. Nothing is
+  // sent to the main session here — the main tutor learns it when the student
+  // next speaks, and never learns anything the student did not read first.
+  const foldThread = useCallback(async (tabId, msgIdx, threadId) => {
+    const tab = tabsRef.current.find(t => t.id === tabId);
+    const th = findThread(tabId, msgIdx, threadId);
+    if (!tab || !tab.sessionId || !th || !th.sessionId || th.folded || th.loading || th.folding) return;
+    updateThread(tabId, msgIdx, threadId, { folding: true });
+    try {
+      const res = await fetch("/thread/fold", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: th.sessionId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.summary) {
+        addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: data.error?.message || `Could not fold this thread (HTTP ${res.status}).` });
+        return;
+      }
+      setTabs(prev => prev.map(t => t.id === tabId
+        ? { ...t, messages: [...t.messages, { role: "fold", source: th.snippet, content: data.summary }] }
+        : t));
+      obsQueue.enqueue(tab.sessionId, "thread-folded", `A side thread on "${th.snippet.slice(0, 120)}" was folded back into this conversation. You did not see that thread; this summary is all of it, and the student has read it too:\n\n${data.summary}\n\nTreat it as settled context, not as a new question.`);
+      updateThread(tabId, msgIdx, threadId, { folded: true, collapsed: true });
+    } catch (e) {
+      addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: `Could not fold this thread: ${e.message}` });
+    } finally {
+      updateThread(tabId, msgIdx, threadId, { folding: false });
+    }
+  }, [updateThread, addThreadMsg]);
 
   // threadTrigger with a msgIdx anchors to that chat reply; without one it
   // came from the lesson body, so it opens a lesson-anchored thread instead.
@@ -1696,7 +1790,18 @@ export function Chatbot({
                 {sessionStatus === "idle" && "Starting session..."}
               </div>
             )}
-            {messages.map((m, i) => m.role === "anchor" ? (
+            {messages.map((m, i) => m.role === "fold" ? (
+              // A folded side thread: the ONE message a thread ever puts into
+              // the main conversation. The student reads it here, and the same
+              // text rides the next main turn — so nothing reaches the main
+              // tutor that they have not already seen.
+              <div key={i} className="chat-msg chat-msg-fold" data-msg-idx={i}>
+                <div className="chat-fold-card">
+                  <span className="chat-fold-label">{`folded in from the thread on "${m.source || ""}"`}</span>
+                  <div className="chat-msg-rendered chat-fold-body">{m.content}</div>
+                </div>
+              </div>
+            ) : m.role === "anchor" ? (
               // Lesson anchor: the quoted lesson snippet a thread hangs off.
               // Not a turn in the conversation — nothing is sent for it — it
               // just records what the student was looking at and gives the
@@ -1791,8 +1896,9 @@ export function Chatbot({
                 thread={thread}
                 onToggleCollapse={() => updateThread(activeTab.id, msgIdx, threadId, { collapsed: !thread.collapsed })}
                 onSend={(text, ctx, atts) => sendThreadMessage(activeTab.id, msgIdx, threadId, thread.snippet, text, ctx, atts)}
-                onCancel={() => cancelThread(activeTab.id, threadId)}
+                onCancel={() => cancelThread(activeTab.id, msgIdx, threadId)}
                 onDelete={() => deleteThread(activeTab.id, msgIdx, threadId)}
+                onFold={() => foldThread(activeTab.id, msgIdx, threadId)}
                 onFocusChange={(focused) => setThreadFocus(activeTab.id, msgIdx, threadId, focused)}
                 onReadFiles={readFiles}
                 contextTrigger={effectiveThreadCtxTrigger}

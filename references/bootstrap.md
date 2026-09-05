@@ -45,7 +45,7 @@ references/bootstrap/
                              + DEFAULT_EFFORT (chat opens on the default-flagged model)
     hooks/                   useKatex, useDesmos
     helpers/                 manim-runner + empty manim_scratch/ (.gitkeep)
-    prompts/                 graph-editing / lesson-augmentation / thread-system
+    prompts/                 graph-editing / lesson-augmentation
     server/proxy.js          Canonical Express proxy (imported via shim from
                              every lesson's server/proxy.js). Passes the selected
                              model name through unchanged; honors PROXY_PORT.

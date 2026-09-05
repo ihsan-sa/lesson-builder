@@ -21,13 +21,7 @@ export const isRestorable = (s) => !s.open;
 // so a lessons-side core that lags still resumes.
 export const isPickable = (s) => (s.resumable !== undefined ? s.resumable : !s.open);
 
-// May a thread's Stop cancel the session's turn? POST /chat/cancel kills
-// whichever turn the session is running, and a tab's main transcript and its
-// threads share one session: with a main turn streaming and this thread's
-// message queued behind it, cancelling would kill the main turn the student
-// never stopped. So only when nothing else of this tab is in flight — call it
-// after deleting this thread's own abort controller.
-export function isSoleInFlight(tabId, tabAborts, threadAborts) {
-  if (tabAborts[tabId]) return false;
-  return !Object.keys(threadAborts).some((k) => k.startsWith(tabId + ":"));
-}
+// A thread's Stop needs no rule of its own any more: a thread runs in its own
+// forked session (proxy.js, "Thread sessions"), so cancelling it names that
+// session and can only reach that thread's process tree. The main turn's Stop
+// is just as narrow.
