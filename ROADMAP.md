@@ -10,7 +10,7 @@ Verify each against the running app (sandbox recipe: bootstrap fresh workspace �
 2. ~~**Real cancellation**~~ — landed 2026-09-05 (PR #7): `POST /chat/cancel` owns the turn's process group, cancel wins over a clean exit, promotion only on completion, `tests/cancellation/`.
 3. ~~**Suggestion approval stale closure**~~ — landed: the send path is routed through a ref (lessons #9 → PR #4), the rejection observation is emitted (`suggest-rejected`), and the approval carries the parsed JSX verbatim so the edit survives a resume or compaction.
 4. **Thread actors** — threads share the main CLI session (misconceptions leak back; reinforcement missing inside threads). Fork thread sessions from the anchor turn; merge back only via explicit summary.
-5. **Client resume metadata** — resume ignores stored model/effort.
+5. ~~**Client resume metadata**~~ — landed 2026-09-05: `/session/open` echoes the session's stored `model`/`effort`, and `resumeSessionIntoTab` applies them (guarded against a model no longer in `MODELS`) so a resumed chat carries the settings it was created with instead of the client's current picks; `tests/resume-metadata/`.
 6. ~~**KaTeX CDN resilience**~~ — landed 2026-09-05 (PR #6, and #8/#9 for Desmos): tri-state readiness with an 8 s bound, literal-source fallback, late loads recover; `tests/katex-fallback/`. Bundling KaTeX in core stays longer-term.
 
 ## P1 — reliability foundation
