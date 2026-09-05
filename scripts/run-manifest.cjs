@@ -57,7 +57,8 @@
  *   0  ok
  *   1  usage or I/O error
  *   2  init: a record with that run_id already exists (never clobbered)
- *   3  get: the field is unset (absent or null)  |  approve: hash does not match the recorded plan
+ *   3  get: the field is unset (absent or null)  |  approve: hash does not match the recorded
+ *      plan  |  worktree remove: no worktree is recorded for this run
  *   4  approve: no plan is recorded for this run — approval refers to nothing, so it is not approval
  *   5  approve: the run was aborted by a person; a machine does not un-abort it
  *   6  promote: refused — not staged by this run, not a complete file, or the write failed; the
@@ -862,9 +863,10 @@ function renderRun(rec) {
     ...line('Session mode', rec.session_mode),
     ...line('Effort mode', rec.effort_mode),
     ...line('Lesson file', rec.lesson.lesson_file),
-    // A stash has a ref to report; a tree the user discarded has none, so Phase 0 records the word
-    // it chose in `scoping.working_tree` and that word is what renders. "clean" is only the answer
-    // when neither is set — never a stand-in for a state a person actually decided.
+    // Phase 0 looks at the user's tree and records what it saw in `scoping.working_tree` — one word
+    // plus a count — without touching it, and that word is what renders. "clean" is only the answer
+    // when nothing was recorded, never a stand-in for a state a person actually decided. A record
+    // from the old flow, which stashed that tree, renders the stash it took instead.
     ...line(
       'Working tree state',
       rec.git.stash_oid

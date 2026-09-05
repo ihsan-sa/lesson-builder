@@ -175,7 +175,9 @@ run-manifest.cjs worktree add --lesson <lesson_root>   # prints the lesson root 
 ```
 
 The base SHA is the tip of the default branch, not `HEAD` — what the user's checkout happens to be
-on, and whether it is dirty, changes nothing about what the run builds from.
+on, and whether it is dirty, changes nothing about what the run builds from. A workspace with no
+`origin` remote skips the behind-upstream check; there is nothing to be behind, and nothing will be
+pushed.
 
 `worktree add` records `git.worktree` (the lesson root inside the worktree) and `git.worktree_state`,
 and leaves the pointer that lets `run-manifest.cjs` find this record from in there. Read the path

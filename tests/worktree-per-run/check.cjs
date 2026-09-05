@@ -150,7 +150,6 @@ cases['an update run leaves the user’s working tree byte-identical, dirty file
   git(wtRepo, ['update-ref', 'refs/lesson-builder/aaa111/merge', merge]);
   const held = git(wtRepo, ['worktree', 'list', '--porcelain']).out.split('\n').includes('branch refs/heads/main');
   ok(held, 'the user’s checkout holds main, so the run must not move that ref');
-  if (!held) git(wtRepo, ['update-ref', 'refs/heads/main', merge, git(wtRepo, ['rev-parse', `${merge}^1`]).out]);
   git(wtRepo, ['push', '-q', 'origin', `${merge}:main`]);
   run(['set', '--lesson', wt, 'git.commit_sha', merge]);
   eq(run(['worktree', 'remove', '--lesson', ws.root]).code, 0, 'the worktree prunes once its work is committed and kept by a ref');
@@ -238,45 +237,85 @@ cases['a crash between phases leaves the tree untouched and the run resumable'] 
 };
 
 // ---- 4. a record from the old stash flow ----
-cases['a record from the old stash flow is finished or rolled back by the documented path'] = () => {
-  const ws = workspace('legacy');
-  run(['init', '--lesson', ws.root, '--mode', 'update', '--session-mode', 'headless', '--run', 'ddd444']);
-  // The old flow: stash the user's tree, build in their checkout on a new branch.
+
+/**
+ * A lesson left mid-update by the flow this change replaces: the user's work stashed by the run,
+ * the run's own build committed on its branch, in the user's checkout. `build` names the file that
+ * run wrote, which is what decides whether the stash applies cleanly afterwards.
+ */
+function legacyRun(name, runId, build) {
+  const ws = workspace(name);
+  run(['init', '--lesson', ws.root, '--mode', 'update', '--session-mode', 'headless', '--run', runId]);
   fs.appendFileSync(path.join(ws.root, 'src', 'sample-lesson.jsx'), '// the user was mid-edit\n');
   fs.writeFileSync(path.join(ws.root, 'scratch-note.txt'), 'untracked, and theirs\n');
   const dirty = snapshot(ws.repo);
   git(ws.repo, ['stash', 'push', '-q', '--include-untracked', '-m', 'lesson-update-stash', '--', ws.root]);
   const oid = git(ws.repo, ['rev-parse', 'stash@{0}']).out;
-  git(ws.repo, ['checkout', '-q', '-b', 'lesson-update/sample-lesson-20260901']);
-  // Only a record written before this change has the stash fields; `set` refuses to write them now.
-  for (const f of ['git.stash_oid', 'git.stash_ref', 'git.stash_branch']) {
-    const refused = run(['set', '--lesson', ws.root, f, 'x']);
-    eq(refused.code, 1, `set ${f} is refused — no new run writes one`);
-  }
-  const recPath = path.join(ws.root, '.lesson-builder', 'runs', 'ddd444.json');
+  const branch = 'lesson-update/sample-lesson-20260901';
+  git(ws.repo, ['checkout', '-q', '-b', branch]);
+  fs.writeFileSync(path.join(ws.root, 'src', build), 'export const EXTRA = ["two"];\n');
+  git(ws.repo, ['add', '-A']);
+  git(ws.repo, ['commit', '-qm', 'sample-lesson: update']);
+  // Only a record written before this change carries the stash fields; `set` refuses them now.
+  const recPath = path.join(ws.root, '.lesson-builder', 'runs', `${runId}.json`);
   const rec = JSON.parse(fs.readFileSync(recPath, 'utf8'));
-  Object.assign(rec.git, { stash_oid: oid, stash_ref: 'stash@{0}', stash_branch: 'main',
-    branch: 'lesson-update/sample-lesson-20260901' });
+  Object.assign(rec.git, { stash_oid: oid, stash_ref: 'stash@{0}', stash_branch: 'main', branch });
   fs.writeFileSync(recPath, `${JSON.stringify(rec, null, 2)}\n`);
+  return { ws, oid, dirty, branch };
+}
 
+/** `git stash drop` takes a stash-log entry, so the OID is resolved back to whichever it is now. */
+function dropByOid(repo, oid) {
+  const entry = git(repo, ['stash', 'list', '--format=%H %gd']).out
+    .split('\n').filter(Boolean).map((l) => l.split(' ')).find(([h]) => h === oid);
+  ok(entry, 'the entry is re-found by its OID, not assumed to still be stash@{0}');
+  if (entry) git(repo, ['stash', 'drop', '-q', entry[1]]);
+}
+
+cases['an old-flow record with no worktree is refused by the worktree commands'] = () => {
+  const { ws, oid } = legacyRun('legacy-detect', 'ddd444', 'extra.jsx');
+  for (const f of ['git.stash_oid', 'git.stash_ref', 'git.stash_branch']) {
+    eq(run(['set', '--lesson', ws.root, f, 'x']).code, 1, `set ${f} is refused — no new run writes one`);
+  }
   eq(run(['get', '--lesson', ws.root, 'git.stash_oid']).out, oid, 'recovery still reads the OID off the old record');
   eq(run(['get', '--lesson', ws.root, 'git.worktree']).code, 3,
     'and no worktree, which is how recovery tells an old record from a new one');
   eq(run(['worktree', 'remove', '--lesson', ws.root]).code, 3, 'there is no worktree to remove');
+};
 
-  // The documented recovery: back to the branch the stash was taken on, apply by OID, drop.
-  git(ws.repo, ['checkout', '-q', rec.git.stash_branch]);
+// Recovery step 2: finish the old run where it built — in the user's checkout — then restore.
+cases['an old-flow record is finished: the merge lands and the stash comes back'] = () => {
+  const { ws, oid, dirty, branch } = legacyRun('legacy-finish', 'ddd555', 'extra.jsx');
+  const base = git(ws.repo, ['rev-parse', 'refs/heads/main']).out;
+  git(ws.repo, ['checkout', '-q', 'main']);
+  git(ws.repo, ['merge', '-q', '--no-ff', '-m', 'merge update', branch]);
+  const merge = git(ws.repo, ['rev-parse', 'HEAD']).out;
+  git(ws.repo, ['push', '-q', 'origin', 'main']);
+  eq(git(ws.origin, ['rev-parse', 'refs/heads/main']).out, merge, 'the old run is finished and published');
+
   eq(git(ws.repo, ['stash', 'apply', oid], true).code, 0, 'the stash applies by its OID, not by stash@{0}');
-  // `drop` takes a stash-log entry, so the OID is resolved back to whichever `stash@{n}` it is now.
-  const entry = git(ws.repo, ['stash', 'list', '--format=%H %gd']).out
-    .split('\n').filter(Boolean).map((l) => l.split(' ')).find(([h]) => h === oid);
-  ok(entry, 'the entry is re-found by its OID, not assumed to still be stash@{0}');
-  git(ws.repo, ['stash', 'drop', '-q', entry[1]]);
+  dropByOid(ws.repo, oid);
+  run(['set', '--lesson', ws.root, 'git.stash_recovery', `applied + dropped (${oid})`]);
+  const after = snapshot(ws.repo);
+  eq(after.files['scratch-note.txt'], dirty.files['scratch-note.txt'], 'the untracked file is back byte-identical');
+  eq(fs.readFileSync(path.join(ws.root, 'src', 'sample-lesson.jsx'), 'utf8').includes('// the user was mid-edit'),
+    true, 'and the uncommitted edit is back on top of the merge');
+  eq(git(ws.repo, ['stash', 'list']).out, '', 'the stash entry is gone once it applied cleanly');
+  ok(git(ws.repo, ['merge-base', '--is-ancestor', base, merge], true).code === 0, 'main advanced to the merge');
+};
+
+// Recovery step 3: roll back instead — no merge, the user's work returned, nothing force-deleted.
+cases['an old-flow record is rolled back: the work returns and the branch is left alone'] = () => {
+  const { ws, oid, dirty, branch } = legacyRun('legacy-rollback', 'ddd666', 'sample-lesson.jsx');
+  git(ws.repo, ['checkout', '-q', 'main']);
+  eq(git(ws.repo, ['stash', 'apply', oid], true).code, 0, 'the stash applies by its OID on the branch it was taken from');
+  dropByOid(ws.repo, oid);
   run(['set', '--lesson', ws.root, 'git.stash_recovery', `applied + dropped (${oid})`]);
   eq(snapshot(ws.repo), dirty, 'the user’s work is back exactly as it was before the old run stashed it');
   eq(git(ws.repo, ['stash', 'list']).out, '', 'and the stash entry is gone');
-  eq(git(ws.repo, ['branch', '--list', 'lesson-update/sample-lesson-20260901']).out.trim(),
-    'lesson-update/sample-lesson-20260901', 'the update branch is left in place, never force-deleted');
+  eq(git(ws.repo, ['branch', '--list', branch]).out.trim(), branch,
+    'the update branch is left in place, never force-deleted');
+  eq(git(ws.repo, ['rev-parse', 'refs/heads/main']).out, dirty.head, 'and main never moved');
 
   run(['render', '--lesson', ws.root]);
   const log = fs.readFileSync(path.join(ws.root, 'lesson_build.log.md'), 'utf8');

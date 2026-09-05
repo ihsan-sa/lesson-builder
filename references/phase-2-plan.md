@@ -263,9 +263,9 @@ STRUCTURAL DRIFT REPAIRS:
   - Chatbot props reconcile: <delta or "none">
 
 ROLLBACK:
-  - Branch: lesson-update/<slug>-YYYYMMDD
-  - Stash: <ref> | none
-  - Merge to main only on success
+  - Branch: lesson-update/<slug>-YYYYMMDD, in the run's build worktree
+  - Worktree: <lesson_root>/.lesson-builder/worktrees/<run_id>/
+  - Merge to the base branch only on success; either way your working tree is untouched
 
 DEPLOY:
   Action:  push-to-github | push-to-custom | commit-only | skip
@@ -434,9 +434,9 @@ STRUCTURAL DRIFT REPAIRS:
   - Chatbot props reconcile: none
 
 ROLLBACK:
-  - Branch: lesson-update/<slug>-YYYYMMDD
-  - Stash: none (working tree clean)
-  - Merge to main only on success
+  - Branch: lesson-update/<slug>-YYYYMMDD, in the run's build worktree
+  - Worktree: <lesson_root>/.lesson-builder/worktrees/<run_id>/
+  - Merge to the base branch only on success; either way your working tree is untouched
 
 DEPLOY:
   Action:  push-to-github
@@ -467,7 +467,7 @@ Condensed summary:
   Orphans: 3 files (2 keep pre-verdict, 1 remove pre-verdict) — see log for paths
 
   Structural drift repairs: GRAPH_SCHEMA backfill NEEDED (lesson predates the graph-schema feature)
-  Rollback: branch + stash (stash-ref: stash@{0})
+  Rollback: branch + build worktree, both kept on failure — your working tree is untouched
 
   Review the full change-list in the log before approving.
 
@@ -521,7 +521,7 @@ On approval, main Claude has:
 1. An **approved Lesson Plan artifact** recorded in the run record — `plan.artifact`, `plan.hash`, and `plan.approval.state: approved` with its timestamp (rendered into the log as the `Approval:` line) — including every topic's `objectives` and `teaching_arc`, which Phase 3 authors prose against and Phase 4 reviews against.
 2. The **medium-decider verdict list** (all topics, from the single Step 2 spawn). Each verdict carries its `specialist` routing field and its execution brief — the brief plus the topic's content package is the Phase 3 spawn prompt, refined by anything the approval loop changed.
 3. **Web-image pre-flight results** (when applicable): license-verified candidate URLs and target paths that the Phase 3 `web-image-agent` spawns consume.
-4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create and what stash ref (if any) to honor. Phase 3 Step 1 runs `git checkout -b <branch>` before any specialist spawns.
+4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create, and in which build worktree. Phase 3 Step 1 runs `git checkout -b <branch>` inside `git.worktree` — never in the user's checkout — before any specialist spawns.
 5. **(Update mode only) An orphan asset verdict list**: the approved `ORPHAN ASSETS` block (if non-empty) hands Phase 3 a concrete `keep | remove` decision per file. Phase 3's orphan-asset-cleanup drift repair (`phase-3-execution.md` drift repair category 3) reads this list — files marked `remove` get deleted, files marked `keep` are left alone and logged as "kept orphans". No orphans list means nothing to do; an all-`keep` list means the cleanup step is a no-op and still logs the skipped category for trace.
 6. **Approved deploy intent**: the `DEPLOY:` block's `Action` and `Service` fields are binding for Phase 5. Phase 5 reads them from the plan (not by re-asking) and branches its commit/push logic accordingly. If the user wants to change deploy intent after approval, they interrupt during Phase 3 or 4 and main Claude reopens Phase 2 rather than mutating the contract silently.
 

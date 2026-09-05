@@ -18,7 +18,7 @@ path.
 | | Case | Must hold |
 | --- | --- | --- |
 | 1 | `init`, then `init` again on the same run id | the record carries `schema: lesson-run/1`, mode, session mode, slug, empty git/media/findings; the second `init` exits 2 and the first record's `started` is untouched |
-| 2 | `set` / `get` / `append` over base SHA, branch (with a collision suffix), stash OID, media rows, findings, phase notes | every field reads back as written; a field never set, and one `init` seeded as `null`, both exit 3 rather than printing the string `null`; `append` onto a non-array is an error |
+| 2 | `set` / `get` / `append` over base SHA, branch (with a collision suffix), media rows, findings, phase notes, and the three legacy stash fields | every field reads back as written, while each stash field is refused with a reason and left as `init` seeded it; a field never set, and one `init` seeded as `null`, both exit 3 rather than printing the string `null`; `append` onto a non-array is an error |
 | 3 | `plan-hash` over a plan artifact, then over a revised one | the hash equals `sha256sum \| cut -c1-8` computed independently; the hash and the artifact path are recorded; an unapproved plan becomes `pending`; a revision hashes differently |
 | 3b | a plan approved, then revised; the same plan re-hashed unchanged; a plan revised after a person aborted | the revision goes back to `pending` and the old hash stops approving while the new one works; an unchanged re-hash keeps the approval; a revision does not un-abort the run |
 | 4 | `approve` at the recorded hash, twice, the second time upper-cased and with a later `--at` | exit 0; the record says `approved` and names what approved it; the second call still matches but does not move the timestamp the person's approval got |

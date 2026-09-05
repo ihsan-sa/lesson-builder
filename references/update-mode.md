@@ -200,8 +200,11 @@ Finish or roll back such a run by hand, in this order:
 
 1. `run-manifest.cjs get --lesson <lesson_root> git.stash_oid` — exit 3 means there is no stash and
    the run is an ordinary resume. An OID means the user's work is sitting in that stash entry.
-2. **Finish**: check out `git.branch`, complete Phase 5 from its Step 2b as that run left it, then
-   restore the stash on the branch `git.stash_branch` names —
+2. **Finish**: that flow built in the user's own checkout, so the run's commits are already on
+   `git.branch` there. Finish it there, the way that flow did — check the base branch out, then
+   `git merge --no-ff <git.branch>` and push per the run's `deploy_action`. Not through
+   `references/phase-5-deploy.md` § Step 2b, which runs every command in a worktree this run never
+   had. Then restore the stash on the branch `git.stash_branch` names —
    `git stash apply <oid>` by the recorded OID, never a bare `git stash pop`, which grabs whatever
    is `stash@{0}` and may be a newer, unrelated stash. On a clean apply, drop it — and because
    `git stash drop` takes a stash-log entry rather than an OID, re-find the entry by that OID first:

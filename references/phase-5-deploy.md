@@ -175,7 +175,7 @@ git add <workspace_root>/<deploy-config-file>
 Always stage the lesson's `.gitignore` alongside the code so the privacy baseline persists in the repo:
 
 ```bash
-git -C "$WT" add .gitignore
+git add <lesson_root>/.gitignore
 ```
 
 **Gitignore override staging** (conditional on Step 1.5's `gitignore_override`):
@@ -309,10 +309,10 @@ Do not stage `lesson_build.log.md` or `.lesson-builder/` unless the user explici
 
 Stage everything the update wrote. Whatever is left uncommitted keeps the worktree from being pruned at step 3 — by design, so no build is deleted — and the phase will report the path instead.
 
-Always stage `<lesson_root>/.gitignore` so any newly appended entries (e.g., for freshly attached materials) persist in the repo:
+Always stage the lesson's `.gitignore` so any newly appended entries (e.g., for freshly attached materials) persist in the repo:
 
 ```bash
-git add <lesson_root>/.gitignore
+git -C "$WT" add .gitignore
 ```
 
 **Gitignore override staging** (same semantics as new mode Step 2a.3):
