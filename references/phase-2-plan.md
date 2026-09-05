@@ -237,7 +237,7 @@ Branch: lesson-update/<slug>-YYYYMMDD
 
 TOPICS CHANGING:
   [ADD]     topic-N "Title" — why / media items count
-            arc: <kind> — "<central_question>" — moves: … — exit evidence: …   (full teaching_arc in the log)
+            arc: <kind> — "<central_question>" — moves: … — exit evidence: …   (full teaching_arc in the plan artifact)
   [MODIFY]  topic-1 "Title" — equations changed N, concepts added N,
             content removed N, media actions (keep/refine/replace/remove/add counts)
             arc: <kind> — "<central_question>" — moves: … — exit evidence: … | none (media/equation-only change)
@@ -301,8 +301,8 @@ Single mandatory gate. No exceptions. Phase 3 does not start without explicit ap
 
 Main Claude offers three outcomes — **approve**, **request changes**, **abort** — through whichever channel `session_mode` calls for (§ Gate delivery by session mode). In an interactive session that is an `AskUserQuestion`.
 
-- **New mode**: inline the plan if it fits; otherwise write to the log and present a condensed summary pointing at the log.
-- **Update mode**: surface only the **change-list** (not the full plan). Long change-lists go to the log; present a condensed summary pointing at the log.
+- **New mode**: inline the plan if it fits; otherwise present a condensed summary pointing at the rendered log's Phase 2 section, which names the plan artifact.
+- **Update mode**: surface only the **change-list** (not the full plan). A long change-list stays in the plan artifact; present a condensed summary pointing at it.
 - **`consolidate`**: one gate for the whole course plan (`references/course-curation.md` §6). The body carries the moves, the per-lesson change-lists, and the execution order in full — a per-lesson summary is not enough to approve, because the user is approving several lessons' worth of removals at once. No per-lesson gate follows.
 
 ### Gate delivery by session mode
@@ -496,7 +496,7 @@ Options:
 
 Routing:
 - **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, rewrite that topic's `teaching_arc` if its explanatory line changed, then re-run `medium-decider-agent` with the revised topic flagged (the spawn still sees all topics so diversity and dedup stay coherent; it revises only what changed).
-- **Arc changes** (the user wants a topic explained in a different order, from a different central question, or toward a different exit model): no agent spawn required. Main Claude rewrites that topic's `teaching_arc` in the log per `references/teaching-communication.md`, re-applies the reorder test, and re-presents the gate.
+- **Arc changes** (the user wants a topic explained in a different order, from a different central question, or toward a different exit model): no agent spawn required. Main Claude rewrites that topic's `teaching_arc` **in the plan artifact** per `references/teaching-communication.md`, re-applies the reorder test, re-runs `run-manifest.cjs plan-hash` (the edit changes the bytes, so the plan gets a new hash and goes back to `pending`) and re-presents the gate. Editing the rendered log instead would leave the hashed artifact unchanged — the old hash would still pass the gate, and the next `render` would delete the edit.
 - **Media-only changes** (medium type wrong, specialist brief wrong): re-run `medium-decider-agent` with the user's revision noted. Cheaper than re-running content orchestration.
 - **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in the plan artifact and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` (interactive sessions; elsewhere the same list, in the gate's delivery form) lists each orphan with its current pre-verdict and collects the user's overrides; the edited list, re-hashed into the record, is what Phase 3 reads for orphan-asset cleanup.
 - **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates the full deploy triple — `deploy_action` / `deploy_service_kind` / `deploy_service` — on the scoping artifact in place (dropping `deploy_service_kind` breaks Phase 5's push branching), rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.

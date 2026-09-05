@@ -41,6 +41,14 @@ const path = require('path');
 const crypto = require('crypto');
 
 const SCHEMA = 'lesson-run/1';
+// The deploy triple is a scoping answer, but the log has always shown it under Phase 5 — where the
+// deploy actually happened — so it renders there and is left out of the Phase 0 scoping dump.
+// A later update reads it back from the previous run's record; nothing parses it out of the log.
+const DEPLOY_KEYS = [
+  ['deploy_action', 'Deploy action'],
+  ['deploy_service_kind', 'Deploy service kind'],
+  ['deploy_service', 'Deploy service'],
+];
 const MARKER =
   '<!-- lesson-builder:rendered v1 — everything below is generated from ' +
   '.lesson-builder/runs/ by scripts/run-manifest.cjs; edit the record, not this file -->';
@@ -379,17 +387,22 @@ function renderRun(rec) {
     ...line('Session mode', rec.session_mode),
     ...line('Effort mode', rec.effort_mode),
     ...line('Lesson file', rec.lesson.lesson_file),
+    // A stash has a ref to report; a tree the user discarded has none, so Phase 0 records the word
+    // it chose in `scoping.working_tree` and that word is what renders. "clean" is only the answer
+    // when neither is set — never a stand-in for a state a person actually decided.
     ...line(
       'Working tree state',
       rec.git.stash_oid
         ? `stashed: ${rec.git.stash_ref || 'stash@{0}'} (${rec.git.stash_oid})` +
             `${rec.git.stash_branch ? ` on ${rec.git.stash_branch}` : ''}`
-        : 'clean',
+        : rec.scoping.working_tree || 'clean',
     ),
-    ...Object.keys(rec.scoping).map(
-      (k) =>
-        `${k}: ${typeof rec.scoping[k] === 'string' ? rec.scoping[k] : JSON.stringify(rec.scoping[k])}`,
-    ),
+    ...Object.keys(rec.scoping)
+      .filter((k) => k !== 'working_tree' && !DEPLOY_KEYS.some(([key]) => key === k))
+      .map(
+        (k) =>
+          `${k}: ${typeof rec.scoping[k] === 'string' ? rec.scoping[k] : JSON.stringify(rec.scoping[k])}`,
+      ),
     ...notes(rec, 0),
     '',
   );
@@ -423,6 +436,7 @@ function renderRun(rec) {
 
   out.push(`${h2} Phase 5 — Deploy${suffix}`);
   out.push(
+    ...DEPLOY_KEYS.flatMap(([key, label]) => line(label, rec.scoping[key])),
     ...line('Commit SHA', rec.git.commit_sha),
     ...line('Stash recovery', rec.git.stash_recovery),
     ...notes(rec, 5),

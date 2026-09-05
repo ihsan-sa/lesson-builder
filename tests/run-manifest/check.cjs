@@ -299,6 +299,48 @@ cases['a log written before records exist is kept, and the update renders below 
   ok(twice.startsWith(legacy), 'the pre-record log survives a second render too');
 };
 
+// ---- 9b. the deploy triple survives to the next update without parsing the log ----
+cases['the deploy destination is inherited from the prior run record, not from the log'] = () => {
+  const root = lessonRoot('deploy-carry');
+  init(root, ['--run', 'ddd001', '--at', '2026-04-10T09:00:00Z']);
+  run(['set', '--lesson', root, 'scoping.deploy_action', 'push-to-custom']);
+  run(['set', '--lesson', root, 'scoping.deploy_service_kind', 'cli']);
+  run(['set', '--lesson', root, 'scoping.deploy_service', 'deploy-tool --prod']);
+  run(['set', '--lesson', root, 'scoping.audience_level', 'first-year']);
+  run(['render', '--lesson', root]);
+
+  const log = fs.readFileSync(path.join(root, 'lesson_build.log.md'), 'utf8');
+  const phase5 = log.slice(log.indexOf('## Phase 5 — Deploy'));
+  const phase0 = log.slice(log.indexOf('## Phase 0 — Scoping'), log.indexOf('## Phase 1'));
+  ok(phase5.includes('Deploy action: push-to-custom'), 'the deploy action renders under Phase 5');
+  ok(phase5.includes('Deploy service kind: cli'), 'the service kind renders under Phase 5');
+  ok(phase5.includes('Deploy service: deploy-tool --prod'), 'the service renders under Phase 5');
+  ok(phase0.includes('audience_level: first-year'), 'other scoping fields still render under Phase 0');
+  ok(!phase0.includes('deploy_action'), 'the deploy triple is not also dumped under Phase 0');
+  ok(phase0.includes('Working tree state: clean'), 'no stash and no recorded word renders as clean');
+
+  // A tree the user chose to discard is that word, not "clean", and is not dumped twice.
+  const discarded = lessonRoot('discarded-tree');
+  init(discarded, ['--run', 'ddd003', '--at', '2026-04-10T09:00:00Z']);
+  run(['set', '--lesson', discarded, 'scoping.working_tree', 'discarded']);
+  run(['render', '--lesson', discarded]);
+  const dlog = fs.readFileSync(path.join(discarded, 'lesson_build.log.md'), 'utf8');
+  ok(dlog.includes('Working tree state: discarded'), "a discarded tree renders as the word Phase 0 recorded");
+  ok(!dlog.includes('Working tree state: clean'), 'and never as clean');
+  eq(dlog.split('discarded').length - 1, 1, 'the word appears once, not also in a generic scoping dump');
+
+  // The next update: `current` names the prior run BEFORE init, and `get --run` reads it back.
+  const prior = run(['current', '--lesson', root]).out;
+  eq(prior, 'ddd001', 'current names the prior run before the new one is opened');
+  init(root, ['--run', 'ddd002', '--at', '2026-04-15T09:00:00Z']);
+  eq(run(['get', '--lesson', root, '--run', prior, 'scoping.deploy_action']).out, 'push-to-custom',
+    'the new run reads the destination off the prior record, not off the markdown');
+  eq(run(['get', '--lesson', root, '--run', prior, 'scoping.deploy_service']).out, 'deploy-tool --prod',
+    'and the service with it');
+  eq(run(['get', '--lesson', root, 'scoping.deploy_action']).code, 3,
+    'the new run has no destination of its own until Phase 0 sets one — never a silent default');
+};
+
 // ---- 10. resuming: `current` finds the run without being told its id ----
 cases['current returns the newest run so a resumed session finds its record'] = () => {
   const root = lessonRoot('current');

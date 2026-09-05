@@ -25,8 +25,14 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
   "lesson": { "course": "MATH101", "slug": "intro-derivatives", "lesson_file": "src/intro-derivatives.jsx" },
 
   // Phase 0's scoping artifact, verbatim: user answers, derived scope, course context, research
-  // depth, provided materials, assumptions. Free-form — every key renders into Phase 0 of the log.
-  "scoping": {},
+  // depth, provided materials, assumptions. Free-form — every key renders into Phase 0 of the log,
+  // except the deploy triple below, which renders under Phase 5 where the deploy happened.
+  "scoping": {
+    "deploy_action": "push-to-github",   // Phase 0 answers it, Phase 5 re-sets it if what ran differed
+    "deploy_service_kind": "git-remote", // the NEXT update reads these three back from this record
+    "deploy_service": "<remote URL / CLI / null>",
+    "working_tree": "discarded"          // only when there is no stash to name; renders as
+  },                                     // `Working tree state:`, which is otherwise the stash or `clean`
 
   "plan": {
     "hash": "4f2a9c17",                // first 8 hex of SHA-256 of the plan artifact, set by `plan-hash`
@@ -76,7 +82,7 @@ newest record in that lesson, so a resumed session does not have to carry the id
 | Command | Does |
 |---|---|
 | `init --mode <m> --session-mode <s> [--run <id>] [--course C] [--slug S]` | Creates the record, prints the run id. Exits 2 rather than clobber an existing one. |
-| `current` | Prints the newest run id (ties on `started` break on run id, so the order is total). |
+| `current` | Prints the newest run id (ties on `started` break on run id, so the order is total). Run it **before** `init` to learn the previous run's id, then `get --run <that id>` for anything this run inherits — the deploy triple, audience, pedagogical goal. |
 | `get <path>` | Prints a dotted field. Exits 3 if it is unset — absent, or the `null` that `init` seeds fields with. "No stash" is an exit code, never the string `null`. |
 | `set <path> <value> [--json]` | Writes a dotted field. |
 | `append <path> <json>` | Pushes onto an array field (`media`, `findings`, `phases.N.notes`). |

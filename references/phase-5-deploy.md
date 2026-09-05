@@ -465,54 +465,57 @@ The log doc lives at `<lesson_root>/lesson_build.log.md` and is rendered from th
 
 ### New mode
 
-Append under `## Phase 5 — Deploy`:
+Record these, then `render` — the deploy triple as `scoping.deploy_action` / `scoping.deploy_service_kind` / `scoping.deploy_service` (re-set here if the executed action differed from the Phase 0 answer; the next update reads them back from this record), the commit as `git.commit_sha`, everything else as `phases.5.notes` entries in this order. The rendered section reads:
 
 ```
 ## Phase 5 — Deploy
-Deploy action: push-to-github | push-to-custom | commit-only | skip
-Deploy service kind: git-remote | cli | null
-Deploy service: <remote URL / CLI / null>
-Build verification: PASS
+Deploy action: push-to-github | push-to-custom | commit-only | skip     # scoping.deploy_action
+Deploy service kind: git-remote | cli | null                            # scoping.deploy_service_kind
+Deploy service: <remote URL / CLI / null>                               # scoping.deploy_service
+Commit SHA: <sha>                                                       # git.commit_sha
+Build verification: PASS                                                # phases.5.notes, in this order
 Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
-Commit SHA: <sha>
 Push result: ok (origin main) | ok (<custom-remote>) | skipped
 Deploy dashboard URL: <host-specific>
 Live URL: <host-specific>
 
 ## Final Report to User
-<items from UNRESOLVED>
+<the record's open findings — the renderer derives this list; nothing retypes it>
 ```
 
-When `deploy_action == "skip"`, the log section is written but most fields are replaced by `Halted: no build or commit (user requested skip)`; only `Deploy action: skip` and the final report are recorded.
+The four commented fields render in that fixed order ahead of the notes; the notes render in the order they were appended, so append them as listed.
+
+When `deploy_action == "skip"`, record `scoping.deploy_action` as `skip` and a single `phases.5.notes` entry `Halted: no build or commit (user requested skip)` in place of the other fields; the final report still renders from the open findings.
 
 ### Update mode
 
-Append under the current `## Update YYYY-MM-DD (run-id: <hash>)` section as `### Phase 5 — Deploy (update)`:
+Same commands; `render` nests the section under this run's `## Update YYYY-MM-DD (run-id: <run_id>)` heading as `### Phase 5 — Deploy (update)`. The stash fields come from `git.stash_oid` and `git.stash_recovery`, not from a note:
 
 ```
 ### Phase 5 — Deploy (update)
-Deploy action: push-to-github | push-to-custom | commit-only | skip
-Deploy service kind: git-remote | cli | null
-Deploy service: <remote URL / CLI / null>
-Build verification: PASS
+Deploy action: push-to-github | push-to-custom | commit-only | skip     # scoping.deploy_action
+Deploy service kind: git-remote | cli | null                            # scoping.deploy_service_kind
+Deploy service: <remote URL / CLI / null>                               # scoping.deploy_service
+Commit SHA: <merge sha | branch sha when the merge was skipped>         # git.commit_sha
+Stash recovery: applied + dropped (<oid>) | manual (oid: <oid>) | conflict (manual) | none
+Build verification: PASS                                                # phases.5.notes, in this order
 Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
-Update branch: lesson-update/<slug>-YYYYMMDD
 Branch commit SHA: <sha>
 Merge commit SHA: <sha | skipped>
 Push result: ok (origin main) | ok (<custom-remote>) | skipped
-Stash ref: <ref or "none">
-Stash recovery: auto-popped | manual | conflict (manual) | none
 Deploy dashboard URL: <host-specific>
 Live URL: <host-specific>
 
 ### Final Report
-<items from UNRESOLVED + regression watch>
+<the record's open findings + regression watch>
 ```
 
-On build-verification failure, the same section is written but the header line becomes `Build verification: FAIL` and the subsequent fields are replaced by `Halted: yes` plus the error excerpt. No commit/merge/push fields are written because those steps did not run.
+`Stash recovery` comes from `git.stash_recovery` (step 7 above). The update branch and the stash **ref** are not repeated here — they render once, under Phase 3, from `git.branch` and `git.stash_oid`.
+
+On build-verification failure, record `Build verification: FAIL`, `Halted: yes` and the error excerpt as `phases.5.notes` entries, and re-render. No commit/merge/push fields are recorded because those steps did not run.

@@ -27,7 +27,9 @@ path.
 | 7 | `approve` at the right hash on a run a person aborted | exit 5; the abort stands |
 | 8 | `render` a new-mode run carrying plan, approval, branch, base SHA, commit SHA, a media row, a phase note, one open and one resolved finding | every heading from the log template is present; the approval, branch, base SHA, commit SHA, media intent and note render; the open finding is under `UNRESOLVED` and the resolved one is not; rendering twice is byte-identical and does not stack a second copy |
 | 9 | a lesson whose `lesson_build.log.md` was hand-written before records existed, then updated | the run starts a record without a rewrite; the old log is still the file's exact prefix, its note appearing once; the update renders below the marker as `## Update … (run-id: …)` with nested `### Phase N — … (update)` headings; a second render changes nothing |
+| 9b | a run that records a `push-to-custom` deploy triple, renders, then a second run opened after it | the triple renders under Phase 5 and not also under Phase 0, while other scoping fields still render under Phase 0; `current` names the prior run before the new `init`, `get --run <prior>` reads the destination back, and the new run's own `scoping.deploy_action` exits 3 rather than defaulting silently; a run with no stash renders `Working tree state: clean`, while one that recorded `discarded` renders that word once and never `clean` |
 | 10 | three `init`s, two of them started in the same second, then `plan-hash` with no `--run` | `current` returns the newest, tie-broken on run id rather than directory order; the hash lands on that record and not on the older one |
 
 Cases 6 and 9 are the two the brief names: the approved-but-nothing-recorded outcome, and a lesson
-whose log predates the record.
+whose log predates the record. Case 9b covers the one field a later run inherits from an earlier one —
+the deploy destination, which used to be parsed out of the previous run's log.
