@@ -30,9 +30,9 @@
 //
 // Size budget: the proxy passes the system prompt on argv only while it is
 // <= 28000 chars (server/proxy.js withSystemPrompt); above that it is demoted
-// into stdin and loses priority. This file contributes ~25.0k chars before the
-// lesson's LESSON_CONTEXT (0.3-2.6k across the 41 lessons built so far, so 27.7k
-// assembled in the worst case, CHEMHL/radioactive-decay). Headroom is ~0.3k on
+// into stdin and loses priority. This file contributes ~24.9k chars before the
+// lesson's LESSON_CONTEXT (0.3-2.6k across the 41 lessons built so far, so 27.5k
+// assembled in the worst case, CHEMHL/radioactive-decay). Headroom is ~0.5k on
 // the largest lesson: measure EVERY lesson before adding, and pay for new text
 // by rewriting a section, not by appending to one. The 2026-09-05 Stage 1 fix
 // was paid for that way -- it added ~1.4k and the duplicated statements of the
