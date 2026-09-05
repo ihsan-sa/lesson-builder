@@ -357,7 +357,7 @@ UNCHANGED_LESSON_CONTEXT / UPDATED_LESSON_CONTEXT
 
 A restructure plans across lessons, so Phase 1 runs **once for the course** rather than once for a lesson. Procedure:
 
-1. For each slug in `course_scope`, run the existing-media inventory pre-scan above — unchanged, one lesson at a time — plus its `TOPICS` list, per-topic `TOPIC_CONTEXT`, `teaching_arc` (from the lesson log, where recorded), and `GRAPH_SCHEMA` presence.
+1. For each slug in `course_scope`, run the existing-media inventory pre-scan above — unchanged, one lesson at a time — plus its `TOPICS` list, per-topic `TOPIC_CONTEXT`, `teaching_arc`, and `GRAPH_SCHEMA` presence. The arcs come from that lesson's **prior run record**, never parsed back out of its log: `run-manifest.cjs current --lesson <lesson_root>` names the prior run, `run-manifest.cjs get --lesson <lesson_root> --run <prior id> plan.artifact` names the plan file (path relative to the lesson root) whose bytes Phase 2 hashed, and the `teaching_arc` blocks are read from that file. Only when neither exists — no record, or `get` exits 3 — fall back to the pre-record prologue of `lesson_build.log.md`, where a lesson built before records kept its arcs.
 2. Compile them into one **topic × lesson × media** table: every topic in the affected set, the lesson that currently owns it, its media names and kinds, its schema keys, and the assets on disk backing it.
 3. Flag the two cross-lesson conditions no single-lesson pass can see: **duplicated topics** (the same concept taught in two lessons) and **shared assets** (one file referenced from two lessons, or one component duplicated by copy-paste). Both must appear in the consolidation plan with an owner.
 

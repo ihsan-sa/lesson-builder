@@ -5,3 +5,4 @@ server/.proxy.json
 server/chat.log
 node_modules/
 dist/
+.lesson-builder/

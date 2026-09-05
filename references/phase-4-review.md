@@ -85,7 +85,7 @@ Two reviewers per artifact, spawned in parallel, chosen for **independent failur
 - **`visual-qa-agent`** — one spawn per artifact, scoring the full presentation rubric (geometry, colour/theme, readability, and motion for video via keyframes + ffprobe). Returns per-dimension verdicts plus findings with confidence.
 - **`scientific-accuracy-agent`** — one spawn per artifact with scientific content: does the visual depict the physics/math it claims (signs, shapes, proportions, plausible values)? Independent lens with web-verification when unsure.
 - **Interactive demos additionally get `interaction-agent`** — drives the running demo via Playwright: controls respond, extremes behave, keyboard reachability. Its spawn brief must include the dev-server URL (+ tab), the control list from the demo's wiring, and the expected behavior per control — it cannot discover these itself.
-- **Static images (web-sourced)** are artifacts too: `visual-qa-agent` (readability/colour as applicable) plus `scientific-accuracy-agent` when the image carries scientific content (a spectrum, a micrograph scale bar); provenance/license is re-checked against the log, not re-derived.
+- **Static images (web-sourced)** are artifacts too: `visual-qa-agent` (readability/colour as applicable) plus `scientific-accuracy-agent` when the image carries scientific content (a spectrum, a micrograph scale bar); provenance/license is re-checked against the record's media entry, not re-derived.
 
 So a lesson with 3 SVG graphs + 2 RefImgs + 1 manim video fires 12 QA spawns (6 visual-qa + 6 scientific-accuracy), all in the same parallel batch.
 
@@ -195,7 +195,7 @@ Main Claude assembles the issue list across all reviewers into a single structur
 | `interaction-agent` | verdict `fail` → one major per broken control named in details (confidence 0.9); `issue` → minor; `unavailable` → no record, log coverage gap |
 | Playwright headed script | each console error / broken render → major, confidence 1.0, location = step + URL |
 
-The compiled issue list is the input to the fix loop. It is also written to the log under the Phase 4 section before any fixes are attempted, so the starting state is recoverable if the fix loop has to be abandoned. Writing the baseline to the log first is a deliberate choice: if the fix loop crashes or the user ctrl-Cs, the baseline is already persisted and the next run has a starting point.
+The compiled issue list is the input to the fix loop. It is also appended to the run record's `findings` (one entry per issue, `state: "open"`, with its `origin`) before any fixes are attempted, so the starting state is recoverable if the fix loop has to be abandoned. Recording the baseline first is a deliberate choice: if the fix loop crashes or the user ctrl-Cs, the baseline is already persisted and the next run has a starting point. As each issue closes, flip that entry to `state: "resolved"` — `render` lists only the open ones under `UNRESOLVED`, so the unresolved list is derived, never re-typed.
 
 ---
 
@@ -284,7 +284,7 @@ These thresholds are starting heuristics. Adjust after real runs produce real da
 
 ## Log output
 
-Main Claude writes Phase 4 progress and findings to `<lesson_root>/lesson_build.log.md` as it goes. The Phase 4 header is:
+Main Claude records Phase 4 progress in `phases.4.notes` and every issue in `findings` as it goes, re-rendering `<lesson_root>/lesson_build.log.md`. The rendered Phase 4 header is:
 
 - New mode: `## Phase 4 — Review`
 - Update mode: `### Phase 4 — Review (update)` (nested under the `## Update YYYY-MM-DD (run-id: <short-hash>)` header)

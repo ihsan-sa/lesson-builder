@@ -1,18 +1,18 @@
 # Log template — `lesson_build.log.md`
 
-Reference for main Claude when writing the per-lesson build trail during lesson-builder runs.
+Reference for what the per-lesson build trail looks like. **The log is rendered, not written**: the run's state lives in the run record (`references/run-record.md`), and `run-manifest.cjs render` writes `lesson_build.log.md` from it. No phase reads a field back out of this markdown. The skeletons below are what the renderer produces and what a reader of an old log still finds.
 
-**Pipeline-v2 fields (2026-07)** — the skeletons below predate several fields that later phases now READ BACK from the log; whenever the phase docs name them, record them even though the older skeletons don't show a slot:
+**Where each field lives** — every field a later phase needs has a home in the record, not in prose:
 
-- Phase 0: the full scoping artifact incl. `lesson_file`, `course_name`; update mode: `stashed: stash@{0} (<oid>)` with the stash OID and the branch the stash was taken on.
-- Phase 2: `Approval: PENDING → APPROVED/ABORTED by user at <timestamp>` in BOTH modes; per-media `media_id` + `original_intent` in the plan (incl. `keep` rows); per-topic `objectives:` blocks; per-topic `teaching_arc:` blocks in full (central question, entry state, purposed moves, example sequence, exit model, exit evidence — Phase 3 authors against them, Phase 4's `arc` check reads them back); any `Arc rejected (reorder test): …` lines.
-- Phase 3: `Branch:` (actual name incl. any collision suffix — Phase 5 consumes it verbatim) and `Base SHA:`.
-- Phase 4: the unresolved list covers EVERY open issue at exit with origin + attempted/no-attempt reason (incl. never-attempted low-confidence minors, keep-media findings, coverage gaps).
-- Phase 5: `deploy_code` (from the build-all inventory), stash recovery outcome by OID.
+- Phase 0: the scoping artifact under `scoping` (incl. `lesson_file`, `course_name`); update mode: `git.stash_oid`, `git.stash_ref` and `git.stash_branch`.
+- Phase 2: `plan.artifact`, `plan.hash` and `plan.approval` (`pending` → `approved`/`aborted`, with timestamp) in BOTH modes; per-media `media_id` + `intent` + `original_intent` in `media` (incl. `keep` rows). Per-topic `objectives:` and full `teaching_arc:` blocks live in the plan artifact the record points at — Phase 3 authors against them and Phase 4's `arc` check reads them from there, alongside any `Arc rejected (reorder test): …` lines.
+- Phase 3: `git.branch` (actual name incl. any collision suffix — Phase 5 reads it back verbatim) and `git.base_sha`.
+- Phase 4: `findings` covers EVERY open issue at exit with `origin` and an attempted/no-attempt `reason` (incl. never-attempted low-confidence minors, keep-media findings, coverage gaps). Anything still `state: "open"` renders under `UNRESOLVED`.
+- Phase 5: `git.commit_sha`, `git.stash_recovery` (by OID), and `deploy_code` from the build-all inventory in `phases.5.notes`.
 
 ## Purpose
 
-`lesson_build.log.md` lives in the lesson root at `<course>/claude_lessons/<slug>/lesson_build.log.md`. Main Claude writes to it throughout every run. New-mode runs create it; update-mode runs append to it. It is the canonical build/update trail for a lesson and is surfaced to the user at the end of each run. The log persists across runs, so a lesson that has been built once and updated three times will have four stacked sections in the same file: one original build and three updates.
+`lesson_build.log.md` lives in the lesson root at `<course>/claude_lessons/<slug>/lesson_build.log.md`. It is the human-readable build/update trail for a lesson and is surfaced to the user at the end of each run. Main Claude re-renders it from the run records as each phase records its state. The records persist across runs, so a lesson built once and updated three times renders four stacked sections in the same file: one original build and three updates.
 
 ## File location
 
@@ -30,7 +30,7 @@ This is per-lesson, not global. There is no shared log across lessons. Examples:
 
 ## Ownership
 
-Main Claude owns this file. Subagents and specialists do not write to it directly. They return findings, diffs, test results, and QA reports to main Claude, and main Claude logs them. This keeps the log coherent (single writer, single voice, consistent formatting) and avoids concurrent-write races when multiple agents run in parallel.
+`run-manifest.cjs render` owns everything below the render marker; nothing else writes there. Subagents and specialists do not write to the log or the record. They return findings, diffs, test results, and QA reports to main Claude, and main Claude records them. This keeps the trail coherent (single writer, single format) and avoids concurrent-write races when multiple agents run in parallel.
 
 ## New-mode skeleton
 
@@ -129,30 +129,26 @@ Course map: updated (<slug> -> live, N chunks marked built) | N/A (no COURSE.md)
 [items]
 ```
 
-## Append rules (update mode)
+## How the render stacks runs
 
-- Before Phase 0 begins, main Claude reads `<lesson_root>/lesson_build.log.md`. If it exists and is non-empty, append a new `## Update YYYY-MM-DD (run-id: <hash>)` section at the end of the file.
-- If the file does not exist (the lesson was built before lesson-builder existed, or was hand-written), create it fresh with:
-  ```markdown
-  # Lesson Build Log — <course> / <slug>
-  Started: <timestamp> (first recorded update; lesson pre-existed)
-  Skill: lesson-builder v<version>
-  ```
-  Then begin the update append immediately below.
-- Never overwrite existing content. Never collapse or rewrite previous `## Phase 0`, `## Phase 1`, ... headers from prior runs. Each update gets its own top-level `## Update YYYY-MM-DD` prefix, with nested `### Phase N — <name> (update)` headers underneath.
-- **Multiple updates in one day**: disambiguate by `run-id: <short-hash>` in the update header line. Suggested hash: first 6 characters of a SHA-256 hash of (timestamp + user message that triggered the run). Example: `## Update 2026-04-15 (run-id: a3f7b2)`.
+`run-manifest.cjs render` writes one section per record, oldest first, and no phase has to append by hand:
+
+- Each record whose `mode` is not `new` renders as its own `## Update YYYY-MM-DD (run-id: <run_id>)` section with nested `### Phase N — <name> (update)` headers. The date and the run id come from `started` and `run_id`, so several updates in one day stay distinct.
+- History is never rewritten. Everything above the render marker — a log hand-written before records existed, or one from a lesson built before this skill — is kept byte for byte, and the rendered sections go below it. A run that finds no record simply starts one (`run-manifest.cjs init`); it does not reconstruct the old log.
+- If there is no log at all, the render generates the `# Lesson Build Log — <course> / <slug>` header from the first record.
+- Records are never edited by the renderer, and a record from an earlier run is never edited by a later one.
 
 ## Log-writing conventions
 
 - Use ISO timestamps: `YYYY-MM-DDTHH:MM:SSZ` (UTC) or local equivalent with offset (`YYYY-MM-DDTHH:MM:SS-04:00`).
-- Keep entries concise but informative. One line per event is fine; multi-line is appropriate for structured data (change-lists, Lesson Plans, file lists).
-- Agent findings go in bulleted lists under the relevant phase heading. Attribute findings to the agent that produced them when useful (e.g., `- [code-reviewer] unused import in src/<slug>.jsx:14`).
-- For long artifacts (full Lesson Plans, large change-lists, compiled research packages), embed them inline in the log. This is the source of truth for the build trail, so do not truncate. If an artifact is exceptionally long (thousands of lines), link to a sibling file under the lesson root and note the path in the log.
-- Errors and unresolved items go in a clearly-marked subsection (`### UNRESOLVED` in new mode, `Regression watch: [...]` in update mode) so they are easy to surface at the end of the run.
+- Keep recorded notes concise but informative. One `phases.N.notes` entry per event is fine.
+- Agent findings go into `findings`, one entry each, with the agent that produced it as `origin` (e.g. `{"origin": "code-reviewer", "summary": "unused import in src/<slug>.jsx:14"}`).
+- Long artifacts (full Lesson Plans, large change-lists, compiled research packages) are files under the lesson root that the record points at — `plan.artifact` for the plan. Do not truncate them and do not paste them into a note; the plan artifact in particular is the exact bytes the approval hash refers to.
+- Errors and unresolved items are `findings` with `state: "open"`. The renderer collects them under `### UNRESOLVED`, so the unresolved list cannot drift from the findings themselves.
 
 ## Surfacing to the user
 
-- At the end of Phase 5, main Claude reads the `### UNRESOLVED`, `Regression watch`, and `Final Report` sections from the log and composes the user-facing final report.
+- At the end of Phase 5, main Claude composes the user-facing final report from the record's open `findings` — not by re-reading the rendered `### UNRESOLVED` section, which is a view of exactly those.
 - The full log file stays on disk. The user can read it at any time for the complete build trail.
 - The final report shown in the chat is brief (20-50 lines): deploy confirmation, commit SHA, deploy dashboard URL, and any unresolved or regression items. The log file is the full audit trail.
 

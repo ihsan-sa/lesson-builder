@@ -20,7 +20,8 @@ The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShe
 - `references/checklists.md` — KaTeX safety, template compliance, 17-test suite, splice checklists.
 - `references/graph-schema-guide.md` — `GRAPH_SCHEMA` derivation and update-mode backfill.
 - `references/desmos-schema.md` — Desmos state schema for `<DesmosGraph>` and `<<DESMOS>>`. Read before authoring either; covers the string-vs-number footgun that crashes `setState` silently.
-- `references/log-template.md` — `lesson_build.log.md` format.
+- `references/run-record.md` — the run record (`lesson-run/1`): schema, `run-manifest.cjs` commands, approval-gate outcomes.
+- `references/log-template.md` — `lesson_build.log.md` format, as rendered from the record.
 
 ## Quality policy
 
@@ -87,9 +88,16 @@ Detection needs no phase state, so resolve it at session start — before the bo
 |---|---|
 | `interactive` | `AskUserQuestion`, exactly as the phase docs describe. |
 | `channel` | Post the gate as **one message**: the same body the dialog would have carried, ending with the reply keywords. Accept `go` / `approve` (proceed), `changes: <text>` (the request-changes loop), `abort`. Then wait — silence is not approval, and no default fires. |
-| `headless` | Write the full artifact to the journal the harness names (a `cc`-style harness names `~/.cc/state/<repo>/<track>/progress.md`; ask for the path if the brief does not give one) under a `## PLAN FOR APPROVAL <hash>` heading, then stop with `BLOCKED: plan awaiting approval` as the last line. Do not proceed. The run resumes when a later task text carries `APPROVED PLAN <hash>` matching the current plan's hash — then go straight to Phase 3 without asking again. |
+| `headless` | Write the plan artifact to a file under the lesson root, hash it into the run record (`run-manifest.cjs plan-hash --lesson <lesson_root> --file <artifact>`), write the same artifact to the journal the harness names (a `cc`-style harness names `~/.cc/state/<repo>/<track>/progress.md`; ask for the path if the brief does not give one) under a `## PLAN FOR APPROVAL <hash>` heading, then stop with `BLOCKED: plan awaiting approval` as the last line. Do not proceed. The run resumes when a later task text carries `APPROVED PLAN <hash>` that the gate below accepts — then go straight to Phase 3 without asking again. |
 
-**The hash** is the first 8 hex characters of the SHA-256 of the exact artifact text under the heading, computed after the final edit to it (`sha256sum` on the extracted block, or any stable equivalent — state which). It is the approval's referent: if the plan changes at all, the hash changes, and an `APPROVED PLAN <hash>` that does not match the current plan is **not** approval — re-emit the plan under its new hash and block again. Record `Approval: APPROVED via APPROVED PLAN <hash> at <timestamp>` in `lesson_build.log.md` so the log still proves Phase 3 may run.
+**The hash** is the first 8 hex characters of the SHA-256 of the exact artifact bytes, computed after the final edit to it. `run-manifest.cjs plan-hash` computes it and records it as `plan.hash`; `sha256sum <artifact> | cut -c1-8` reproduces it. It is the approval's referent: if the plan changes at all, the hash changes.
+
+**The gate compares against the record, and only the record.** Run `run-manifest.cjs approve --lesson <lesson_root> --hash <hash from the task text>` and act on its exit code — never re-hash text out of `lesson_build.log.md` or the journal, which are renderings of the record, not the record:
+
+- **0** — the hash matches `plan.hash`. The record now says approved; go to Phase 3.
+- **3** — a plan is recorded and this is not its hash (stale, a prefix, or not 8 hex characters). **Not approval.** Re-emit the current plan under its new hash and block again, saying which hash was offered and which is current.
+- **4** — no plan is recorded for this run, so the approval refers to nothing. **Not approval.** Re-run Phase 2, record the plan, emit the gate under its hash and block. Never let a bare `APPROVED PLAN` stand in for a plan nobody saw.
+- **5** — a person aborted this run. It stays aborted; the gate does not un-abort it.
 
 **This applies to every user gate the skill has**, not just Phase 2: the Phase 0 interview and mode confirmation, the working-tree/stash choice, the legacy-lesson opt-in, Phase 1's rough-sweep topic-list confirmation, Phase 2's approval and its request-changes loop, Phase 5's gitignore-override and stash-pop questions, the bootstrap core-refresh offer, and `consolidate`'s single course-level gate.
 
@@ -151,7 +159,9 @@ Phase 5 — Deploy             Branches on deploy_action. Build verify runs unde
 
 **One mandatory human approval gate** at Phase 2, regardless of mode. Execution starts only after the user approves the Lesson Plan artifact (new mode: full plan; update mode: change-list summary). *How* the gate is delivered depends on `session_mode` — dialog, channel message, or a journal block plus `BLOCKED` (see § Session modes and gates). `consolidate` runs one course-level gate covering every affected lesson instead.
 
-**One log document** at `<lesson_root>/lesson_build.log.md`, owned by main Claude. Update runs append a `## Update YYYY-MM-DD (run-id: <hash>)` section, preserving prior history.
+**One run record per run** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`), written and read only through `scripts/run-manifest.cjs`. It holds the run's state: scoping artifact, plan hash and approval, branch and base SHA, stash OID, media manifests with their intents, open findings. Phase 0 opens it (`run-manifest.cjs init`); every later phase writes its fields there and reads them back from there.
+
+**One log document** at `<lesson_root>/lesson_build.log.md`, **rendered** from those records (`run-manifest.cjs render`) — not written by hand and never read back as state. It keeps its headings: update runs render a `## Update YYYY-MM-DD (run-id: <hash>)` section per record, and a log written before records existed is kept above the render marker, untouched. Schema, commands and gate outcomes: `references/run-record.md`.
 
 ## Infrastructure
 
@@ -187,7 +197,8 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
     index.html
     CLAUDE.md                   Per-lesson project doc (from the template)
     .gitignore                  Runtime carve-outs (from the template)
-    lesson_build.log.md         Build + update trail (owned by main Claude)
+    lesson_build.log.md         Build + update trail (rendered from the run records)
+    .lesson-builder/runs/       One JSON run record per run — the run's state
 ```
 
 `<workspace_root>` is the monorepo root; `<course>` and `<slug>` are collected at Phase 0. The three-level layout `<workspace_root>/<course>/claude_lessons/<slug>/` is required because the `@core` alias and proxy shim depths are hardcoded to it.
@@ -281,7 +292,7 @@ Every agent respects `resource_mode: "full" | "limited"`. Absent field → `"ful
 
 - **Scale the fan-out to the lesson.** A 1-2 topic lesson wants single agents per phase (one research pass, no per-resource teams); a 6+ topic lesson justifies the full parallel fan-out. Media DECISIONS always go through one whole-lesson medium-decider spawn — never per-topic deciders, which cannot coordinate diversity or dedup. Independent PRODUCTION (one specialist per media item) parallelizes freely.
 - **One approval gate** at the end of Phase 2 — `AskUserQuestion` when interactive, a channel message or a `PLAN FOR APPROVAL` journal block otherwise. No exceptions, and no `AskUserQuestion` in a session with no terminal.
-- **Log every phase transition** to `lesson_build.log.md`. Update mode appends, never overwrites.
+- **Record every phase transition** in the run record, then re-render `lesson_build.log.md` from it. Records are per-run and a later run never edits an earlier one; a log written before records existed is kept above the render marker.
 - **Fix deterministic failures first** (parse, tests, build) — they are unambiguous and other findings are often their symptoms — then iterate the progress-aware fix loop until the lesson meets the quality bar under `resource_mode: "full"`. Stop rules halt on demonstrable regression or stall, with an absolute cap of 6 iterations. Under `"limited"`, tighten stop rules aggressively.
 - **Update mode: always create a branch** before Phase 3 work. Never splice on main.
 - **Never skip the post-splice sanity pass** in update mode Phase 3 step 4.6. Semantic corruption is cheap to cause and expensive to catch later.

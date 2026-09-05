@@ -125,7 +125,7 @@ Create these at `<workspace_root>/` if missing. Do **not** overwrite existing fi
 <workspace_root>/.claude/agents/              exists, populated
 ```
 
-Log a one-line bootstrap entry in the first lesson's `lesson_build.log.md` (created in Phase 3) noting that `_lesson-core/` was installed from the skill's canonical payload on `<date>`.
+Record a one-line bootstrap entry in the first lesson's run record — `run-manifest.cjs append --lesson <lesson_root> phases.0.notes '"Bootstrap: _lesson-core/ installed from the skill payload on <date>"'` — once Phase 0 has opened it; it renders under that run's Phase 0 heading.
 
 Continue to `references/phase-0-scoping.md`.
 

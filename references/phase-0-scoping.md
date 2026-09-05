@@ -1,6 +1,6 @@
 # Phase 0 — Scoping Interview
 
-Contents: Mode detection recap · Resource-mode detection · Session-mode detection · Course context · New-mode questions · Update-mode questions · Scoping artifact format · Aggressive defaults for one-liners · Log output · Handoff.
+Contents: Mode detection recap · Resource-mode detection · Session-mode detection · Course context · New-mode questions · Update-mode questions · Scoping artifact format · Aggressive defaults for one-liners · Output (into the record) · Handoff.
 
 ## Purpose
 
@@ -10,7 +10,16 @@ Phase 0 runs before content work and produces the **scoping artifact** that driv
 
 Detection fires before the scoping interview; best-effort, Phase 0's first question confirms. The verb list and mode-assignment rules are canonical in `SKILL.md` § Mode detection; the full decision tree and edge cases live in `references/update-mode.md` §3. Candidate resolution: full path → use directly; course + slug → `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob, use if exactly one match.
 
-Main Claude writes the detection result as the first line under `## Phase 0 — Scoping` in the log doc:
+**Phase 0 opens the run record.** Before writing anything else, main Claude runs
+
+```bash
+node <skill_root>/scripts/run-manifest.cjs init --lesson <lesson_root> \
+  --mode new|update|consolidate --session-mode <session_mode> --course <course> --slug <slug>
+```
+
+which prints the `run_id` and creates `<lesson_root>/.lesson-builder/runs/<run_id>.json`. Every field this phase and later phases record goes there (`set`, `append`), and `lesson_build.log.md` is rendered from it (`render`) — nothing below is read back out of the markdown. A lesson whose log predates the record needs nothing extra: `init` starts a record, and `render` keeps the old log above its marker exactly as it was. Schema and commands: `references/run-record.md`.
+
+The detection result is the record's `mode`, and renders as the first line under `## Phase 0 — Scoping` in the log:
 
 - New mode: `Detected mode: new`
 - Update mode (resolved): `Detected mode: update (candidate: <workspace_root>/<course>/claude_lessons/<slug>/)`
@@ -131,7 +140,15 @@ Pre-checks run first:
 
 2. **Working-tree check** — only surfaced if `git status --short <lesson_root>` returned non-empty. "Your working tree has uncommitted changes in `<lesson_root>`. How should I proceed?" Options: `Stash them and continue (I'll record the stash ref for recovery)`, `Abort — I'll commit first and rerun`, `Discard them (destructive, requires explicit confirm)`. If clean, skip the question entirely and log `Working tree: clean`.
 
-   **Phase 0 owns the stash.** On the stash choice, run it now — `git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>` — then capture the stable OID via `git rev-parse stash@{0}` and log both (`stashed: stash@{0} (<oid>)`). Phase 3 consumes this ref and never stashes again; positional `stash@{0}` alone is not durable if anything else stashes in between, which is why the OID rides along.
+   **Phase 0 owns the stash.** On the stash choice, run it now — `git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>` — then capture the stable OID via `git rev-parse stash@{0}` and record it:
+
+   ```bash
+   run-manifest.cjs set --lesson <lesson_root> git.stash_oid    "$(git rev-parse stash@{0})"
+   run-manifest.cjs set --lesson <lesson_root> git.stash_ref    'stash@{0}'
+   run-manifest.cjs set --lesson <lesson_root> git.stash_branch "$(git rev-parse --abbrev-ref HEAD)"
+   ```
+
+   Phases 3 and 5 read `git.stash_oid` from the record and never stash again; positional `stash@{0}` alone is not durable if anything else stashes in between, which is why the OID is the referent and the ref rides along only for the reader.
 
 3. **Research depth** — "How deep should the research re-sweep be?" Options: `Full (comprehensive re-research — treats the lesson like a new build; default when resource_mode is full and quality is the priority)`, `Targeted (re-research specific topics you name — good balance when only part of the lesson needs a fresh look)`, `Light (minimal re-research — work from existing content, your concerns, and any new materials; default when resource_mode is limited)`. Default is `full` when `resource_mode: "full"` and the update scope is broad; `targeted` when the scope is narrow; `light` only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
 
@@ -144,7 +161,7 @@ Pre-checks run first:
 - Audience level (may have shifted from original build)
 - Pedagogical goal (may have shifted)
 - Single vs multi-lesson (unlikely to change, but cheap to confirm)
-- **Deploy destination** (same phrasing as new-mode Q7 above). The default is pulled from the most recent non-`skip` Phase 5 entry in `lesson_build.log.md` when one exists (parse `Deploy action:`, `Deploy service kind:`, `Deploy service:` fields), else `Push to GitHub`. If the user attached fresh materials alongside this update request — detected by scanning the initial message for uploaded file paths or URLs, not by parsing Q5 (which is free-text media advice, not a materials field) — populate `provided_materials` from those attachments and `materials_scope` will be asked as well; the Phase 5 materials-in-commit question then surfaces automatically.
+- **Deploy destination** (same phrasing as new-mode Q7 above). The default is pulled from the **previous run's record** when one exists — `run-manifest.cjs current --lesson <lesson_root>` before this run's `init` names it, then `run-manifest.cjs get --lesson <lesson_root> --run <prior id> scoping.deploy_action` (and `scoping.deploy_service_kind`, `scoping.deploy_service`); exit 3 on any of them means that run recorded no deploy. Walk back through older records if the newest was `skip`; if none recorded a deploy, `Push to GitHub`. Never parse the destination out of `lesson_build.log.md` — a wrong parse silently deploys somewhere else. If the user attached fresh materials alongside this update request — detected by scanning the initial message for uploaded file paths or URLs, not by parsing Q5 (which is free-text media advice, not a materials field) — populate `provided_materials` from those attachments and `materials_scope` will be asked as well; the Phase 5 materials-in-commit question then surfaces automatically.
 
 ### Auto-populated from `candidate_root` (not asked)
 
@@ -154,7 +171,7 @@ Pre-checks run first:
 
 ## Scoping artifact format
 
-Phase 0 output is a structured artifact written to the log and passed to Phase 1. Format is YAML-ish; fields vary by mode.
+Phase 0 output is a structured artifact written to the run record (`scoping.<field>`) and passed to Phase 1. The format below is how it reads; `render` puts it under the Phase 0 heading of the log. Fields vary by mode.
 
 ### Common fields (both modes)
 
@@ -278,31 +295,42 @@ For terse one-liners (e.g. "fix the `<component>` in `<slug>`", "update the `<sl
 - Request under ~20 words with an update verb.
 - No explicit scope flags ("full rewrite", "deep research", "rework everything").
 
-**Under `resource_mode: "full"`** (default): assume `research_depth: "targeted"` if the one-liner named a topic/component, else `"full"`. Never default to `light`. `scope_of_change: "specific"` if a topic was named, else `"any"`. `media_hints: []` (or single item if a medium was named). Carry audience / pedagogical goal / single-vs-multi from the existing `lesson_build.log.md`; fall back to `working`, `single`, inferred audience, or ask. Carry `deploy_action` / `deploy_service_kind` / `deploy_service` from the most recent non-`skip` Phase 5 log entry (field names: `Deploy action:`, `Deploy service kind:`, `Deploy service:`); fall back to `push-to-github` / `null` / `null` if no prior deploy was recorded or every prior entry was `skip`. If the one-liner attached fresh materials, default `materials_scope: "fill-gaps"` (middle-ground default — safe when the user hasn't signalled intent either way); surface this in the confirmation so the user can flip to `course-only` or `extensions` if they want.
+**Under `resource_mode: "full"`** (default): assume `research_depth: "targeted"` if the one-liner named a topic/component, else `"full"`. Never default to `light`. `scope_of_change: "specific"` if a topic was named, else `"any"`. `media_hints: []` (or single item if a medium was named). Carry audience / pedagogical goal / single-vs-multi from the previous run's record (`get --run <prior id> scoping.<field>`); fall back to `working`, `single`, inferred audience, or ask. Carry `deploy_action` / `deploy_service_kind` / `deploy_service` from the most recent prior run record whose `scoping.deploy_action` is not `skip` (`run-manifest.cjs get --run <prior id> scoping.deploy_action`, and the same for the other two); fall back to `push-to-github` / `null` / `null` if no prior run recorded a deploy or every prior run was `skip`. If the one-liner attached fresh materials, default `materials_scope: "fill-gaps"` (middle-ground default — safe when the user hasn't signalled intent either way); surface this in the confirmation so the user can flip to `course-only` or `extensions` if they want.
 
 **Under `resource_mode: "limited"`**: `research_depth: "light"`. Otherwise as above. `materials_scope` default stays `fill-gaps` since `course-only` is already fairly cap-heavy and `extensions` would violate the cheap-pass signal.
 
 **Confirmation**: "Here's what I'm assuming for this update — change anything?" with a compact bullet list including `resource_mode`. Options: `Looks good, proceed`, `Change some fields`, `Run the full 5-question interview`. On partial change, ask only the flagged fields. Aggressive defaults never apply in new mode.
 
-**Exception — `session_mode: "headless"`**: aggressive defaults apply in **both** modes and their triggers are waived (there is no one to run an interview with). Fill every field from the task text, `COURSE.md`, and the existing `lesson_build.log.md`, in that order of authority; the confirmation is not asked but is written verbatim into the Phase 2 `PLAN FOR APPROVAL` block as `ASSUMPTIONS`, so the single blocking gate covers it. A field with no source and no safe default — which lesson, which course — blocks instead of being guessed.
+**Exception — `session_mode: "headless"`**: aggressive defaults apply in **both** modes and their triggers are waived (there is no one to run an interview with). Fill every field from the task text, `COURSE.md`, and the previous run's record, in that order of authority; the confirmation is not asked but is written verbatim into the Phase 2 `PLAN FOR APPROVAL` block as `ASSUMPTIONS`, so the single blocking gate covers it. A field with no source and no safe default — which lesson, which course — blocks instead of being guessed.
 
 ## Output
 
-Main Claude writes the following to `<lesson_root>/lesson_build.log.md` under `## Phase 0 — Scoping` (new mode) or `### Phase 0 — Scoping (update)` nested under `## Update YYYY-MM-DD (run-id: <short-hash>)` (update mode):
+Phase 0 writes its result into the run record, then renders. Nothing here is hand-written into `lesson_build.log.md` — a hand-written Phase 0 section would be frozen above the render marker as if it predated the record, and every later render would add a second `## Phase 0 — Scoping` below it.
 
-- **Mode detection line**: `Detected mode: new` or `Detected mode: update (candidate: <path>)`; for a restructure, `Detected mode: update (consolidate: <slug>, <slug>, ...)`.
-- **Mode confirmed**: `YES` / user-corrected mode if they overrode detection.
-- **Session mode**: `Session mode: interactive|channel|headless` — and, when not `interactive`, the form each gate will take.
-- **Course context** (when `<course>/COURSE.md` exists): `Course context: COURSE.md read — map row <row>, N pending chunks, conventions applied: <fields>`.
-- **Working tree state** (update mode only): `clean` / `stashed: <stash-ref>` / `discarded`.
-- **Scoping artifact**: the full YAML-ish block from the section above, indented under a "Scoping artifact:" label.
-- **Timestamps**: phase start and phase end in ISO 8601 local time.
-- **User answers (raw)**: the verbatim answers, in order, for traceability when things go sideways later — or, in a `headless` run, the assumed values with their source.
+`init` already recorded `mode`, `session_mode`, `course` and `slug`. The rest:
 
-For update mode, if `lesson_build.log.md` does not yet exist, create it with a header noting "first recorded update; lesson pre-existed". For new mode, create the log file fresh with the standard header (`# Lesson Build Log — <course> / <slug>`, `Started: <timestamp>`, `Skill: lesson-builder v<...>`).
+```bash
+run-manifest.cjs set --lesson <lesson_root> effort_mode        <deep|standard|light>
+run-manifest.cjs set --lesson <lesson_root> lesson.lesson_file src/<slug>.jsx
+run-manifest.cjs set --lesson <lesson_root> scoping.<field>    <value>          # once per field
+run-manifest.cjs render --lesson <lesson_root>
+```
 
-Full log skeleton lives in `references/log-template.md`.
+The fields to set, all under `scoping.` unless named otherwise:
+
+- **Mode detail**: `mode_detail` — `candidate: <path>` for an update, `consolidate: <slug>, <slug>, ...` for a restructure. (The bare mode is the record's `mode`, set at `init`.)
+- **Mode confirmed**: `mode_confirmed` — `YES`, or the user-corrected mode if they overrode detection.
+- **Gate forms**: `gate_delivery` — when `session_mode` is not `interactive`, the form each gate will take. (`session_mode` itself was set at `init`.)
+- **Course context** (when `<course>/COURSE.md` exists): `course_context` — `COURSE.md read — map row <row>, N pending chunks, conventions applied: <fields>`.
+- **Working tree state** (update mode only): a stash goes in `git.stash_oid` / `git.stash_ref` / `git.stash_branch` per Q2 above, which renders as `Working tree state:`; a `discarded` tree goes in `scoping.working_tree` since there is no ref to keep.
+- **Scoping artifact**: every field of the YAML-ish block from the section above, one `set scoping.<field>` each, including `resource_mode`, `deploy_action`, `deploy_service_kind` and `deploy_service` — the next update reads that deploy triple back from this record.
+- **Timestamps**: the record's `started` is phase start; set `scoping.phase0_ended` at phase end. ISO 8601.
+- **User answers (raw)**: `scoping.user_answers` — the verbatim answers, in order, for traceability when things go sideways later — or, in a `headless` run, the assumed values with their source.
+
+Do **not** create `lesson_build.log.md` by hand in either mode: `render` generates the `# Lesson Build Log — <course> / <slug>` header when no log exists, and keeps a pre-existing one — a lesson built before this skill, or hand-written — exactly as it is, above the marker.
+
+Full log skeleton lives in `references/log-template.md`; the record's schema in `references/run-record.md`.
 
 ## Handoff to Phase 1
 
-Once the scoping artifact is written and the log is updated, main Claude proceeds to Phase 1: it runs the worker fan-out itself (extraction/research spawns persisting to `.build-scratch/evidence/`), then spawns `content-orchestrator-agent` to synthesize — new mode with the artifact + evidence dir; update mode additionally with the existing-media inventory pre-scan (generated by main Claude via Grep/Glob — see `references/phase-1-content.md`). No content work happens without a completed scoping artifact; Phase 0 is a hard gate.
+Once the scoping artifact is recorded and the log re-rendered, main Claude proceeds to Phase 1: it runs the worker fan-out itself (extraction/research spawns persisting to `.build-scratch/evidence/`), then spawns `content-orchestrator-agent` to synthesize — new mode with the artifact + evidence dir; update mode additionally with the existing-media inventory pre-scan (generated by main Claude via Grep/Glob — see `references/phase-1-content.md`). No content work happens without a completed scoping artifact; Phase 0 is a hard gate.

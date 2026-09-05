@@ -253,8 +253,9 @@ backstop.
 5. **Babel parse of the whole file** still succeeds (catches stray
    trailing commas and bracket mismatches from a hand-written schema).
 
-A failure on any check halts Phase 3 before Phase 4 runs and is logged
-under `Drift repairs:` in `lesson_build.log.md` with the failure reason.
+A failure on any check halts Phase 3 before Phase 4 runs and is recorded as a
+`phases.3.notes` entry prefixed `Drift repairs:` with the failure reason, which
+renders under the Phase 3 heading of the log.
 
 ## 6. Update-mode backfill procedure (main Claude)
 
