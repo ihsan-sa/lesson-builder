@@ -491,9 +491,9 @@ function mediaRow(rec, mediaId) {
   return row;
 }
 
-// A failed production leaves the previous artifact untouched on disk, so the row's `artifact`
-// (what the lesson tree actually holds) is left exactly as it was and the failure is recorded
-// beside it, never over it.
+// A failed production leaves the previous artifacts untouched on disk, so the row's `artifacts`
+// (what the lesson tree actually holds) are left exactly as they were and the failure is recorded
+// beside them, never over them.
 function recordFailure(lessonRoot, rec, mediaId, target, reason, at) {
   mediaRow(rec, mediaId).artifact_failure = {
     target: target || null,
@@ -606,20 +606,25 @@ function cmdPromote(flags) {
     }
   }
 
-  // The plan's `path` is the plan's word and is left alone; where the artifact actually landed is
-  // `artifact.path`, so a disagreement between the two stays visible.
-  row.artifact = {
+  // The plan's `path` is the plan's word and is left alone; where the bytes actually landed is
+  // `artifacts[].path`, so a disagreement between the two stays visible. One entry per destination
+  // path, merged by path on a re-promotion: a media id that promotes several files — a manim video
+  // and the `.py` that reproduces it — keeps a hash for each, rather than the second promotion
+  // overwriting the first.
+  if (!Array.isArray(row.artifacts)) row.artifacts = [];
+  const seen = row.artifacts.findIndex((a) => a && a.path === rel);
+  const prior = seen === -1 ? null : row.artifacts[seen];
+  const entry = {
     path: rel,
     sha256,
     bytes: buf.length,
     // Identical bytes already recorded keep the timestamp they first landed at — a no-op re-run
     // moves nothing at all.
-    promoted:
-      state === 'unchanged' && row.artifact && row.artifact.sha256 === sha256
-        ? row.artifact.promoted
-        : at,
+    promoted: state === 'unchanged' && prior && prior.sha256 === sha256 ? prior.promoted : at,
     state,
   };
+  if (seen === -1) row.artifacts.push(entry);
+  else row.artifacts[seen] = entry;
   delete row.artifact_failure; // this id holds a validated artifact again
   writeRecord(lessonRoot, rec);
   process.stdout.write(
@@ -667,14 +672,17 @@ function renderMedia(rec) {
   if (!rec.media.length) return [];
   return ['Media:'].concat(
     rec.media.map((m) => {
-      const a = m.artifact;
+      const a = Array.isArray(m.artifacts) ? m.artifacts : [];
       const f = m.artifact_failure;
       return (
         `  - ${m.media_id || '<no id>'} — intent: ${m.intent || 'unspecified'}` +
         `${m.medium ? ` — ${m.medium}` : ''}${m.original_intent ? ` — original intent: ${m.original_intent}` : ''}` +
         `${m.status ? ` — ${m.status}` : ''}` +
-        // What the lesson tree holds, and why the last production did not change it.
-        `${a ? ` — ${a.path} sha256:${String(a.sha256).slice(0, 12)} (${a.bytes} bytes, ${a.state})` : ''}` +
+        // What the lesson tree holds — one segment per promoted path — and why the last
+        // production did not change it.
+        a
+          .map((x) => ` — ${x.path} sha256:${String(x.sha256).slice(0, 12)} (${x.bytes} bytes, ${x.state})`)
+          .join('') +
         `${f ? ` — PRODUCTION FAILED: ${f.reason}` : ''}`
       );
     }),

@@ -66,9 +66,30 @@ function lesson(name) {
 const record = (l) =>
   JSON.parse(fs.readFileSync(path.join(l.root, '.lesson-builder', 'runs', `${l.runId}.json`), 'utf8'));
 const mediaRow = (l, id) => record(l).media.find((m) => m.media_id === id);
+/** The row's record of one promoted destination path. */
+const artifactAt = (row, p) => (row.artifacts || []).find((a) => a.path === p);
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const read = (p) => fs.readFileSync(p);
 const at = (root, rel) => path.join(root, ...rel.split('/'));
+
+// PNG chunk CRC-32. Computed here rather than through `zlib.crc32`, which only exists from Node
+// 20.15 / 22.2: on anything older the fallback would have written a zero CRC and this fixture
+// would have failed correct code with a PNG no validator should accept.
+const CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c;
+  }
+  return table;
+})();
+
+function crc32(buf) {
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
 
 /** A complete 1x1 PNG. Truncating it is what a production killed mid-write leaves behind. */
 function png(seed) {
@@ -77,7 +98,7 @@ function png(seed) {
     const len = Buffer.alloc(4);
     len.writeUInt32BE(data.length);
     const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(zlib.crc32 ? zlib.crc32(body) : 0);
+    crc.writeUInt32BE(crc32(body));
     return Buffer.concat([len, body, crc]);
   };
   const ihdr = Buffer.alloc(13);
@@ -203,14 +224,58 @@ cases['a validated artifact is promoted and its hash is on the media row'] = () 
   ok(fs.existsSync(dest), 'the artifact is in the lesson tree');
   eq(sha(read(dest)), sha(bytes), 'byte for byte what was staged');
   const row = mediaRow(l, 'g1');
-  eq(row.artifact.sha256, sha(bytes), 'the run record carries the integrity hash');
-  eq(row.artifact.bytes, bytes.length, 'and the size');
-  eq(row.artifact.path, 'public/images/tangent.png', 'and where it landed');
+  const a = artifactAt(row, 'public/images/tangent.png');
+  eq(a.sha256, sha(bytes), 'the run record carries the integrity hash');
+  eq(a.bytes, bytes.length, 'and the size');
+  eq(a.path, 'public/images/tangent.png', 'and where it landed');
   eq(row.intent, 'add', "and leaves the plan's intent alone");
   eq(row.status, 'planned', "and the plan's status alone");
   eq(row.artifact_failure, undefined, 'with no failure recorded');
   ok(fs.readdirSync(path.dirname(dest)).every((f) => !f.includes('.part')),
     'no .part file is left behind');
+};
+
+cases['one media id promoting several files keeps a hash for each'] = () => {
+  const l = lesson('per-path');
+  l.m('append', 'media', JSON.stringify({ media_id: 'm1', intent: 'add', medium: 'manim',
+    topic: '2', path: 'public/videos/tangent.mp4', status: 'planned' }));
+
+  // agents/manim-agent.md § Stage 4: the video first, then the scene source that reproduces it —
+  // both under the one media id. The same shape as matplotlib's PNG plus its `figures/<id>.py`.
+  const video = mp4(4096);
+  const staged = l.m('stage', '--media-id', 'm1', '--name', 'tangent.mp4').out;
+  fs.writeFileSync(staged, video);
+  eq(l.m('promote', '--media-id', 'm1', '--from', staged, '--to', 'public/videos/tangent.mp4').code, 0,
+    'the video promotes');
+  const source = Buffer.from('from manim import *\n\nclass Tangent(Scene):\n    pass\n');
+  const stagedPy = l.m('stage', '--media-id', 'm1', '--name', 'tangent.py').out;
+  fs.writeFileSync(stagedPy, source);
+  eq(l.m('promote', '--media-id', 'm1', '--from', stagedPy, '--to', 'tangent.py').code, 0,
+    'and its scene source promotes under the same media id');
+
+  const row = mediaRow(l, 'm1');
+  eq((row.artifacts || []).map((a) => a.path), ['public/videos/tangent.mp4', 'tangent.py'],
+    'the row records both promotions, in the order they landed');
+  eq(artifactAt(row, 'public/videos/tangent.mp4').sha256, sha(video),
+    "the video's hash survives the promotion that followed it");
+  eq(artifactAt(row, 'tangent.py').sha256, sha(source), 'and the source carries its own');
+  eq(artifactAt(row, 'tangent.py').bytes, source.length, 'with its own size');
+
+  // Re-promoting one of the two paths merges into that entry rather than appending a second one.
+  const revised = Buffer.from('from manim import *\n\nclass Tangent(Scene):\n    def construct(self):\n        pass\n');
+  const again = l.m('stage', '--media-id', 'm1', '--name', 'tangent.py').out;
+  fs.writeFileSync(again, revised);
+  eq(l.m('promote', '--media-id', 'm1', '--from', again, '--to', 'tangent.py').code, 0,
+    'a revised source promotes to the same path');
+  const after = mediaRow(l, 'm1');
+  eq((after.artifacts || []).length, 2, 'and merges into that path rather than appending a row');
+  eq(artifactAt(after, 'tangent.py').sha256, sha(revised), 'under the new bytes');
+  eq(artifactAt(after, 'public/videos/tangent.mp4').sha256, sha(video), 'leaving the video alone');
+
+  eq(l.m('render').code, 0, 'render succeeds');
+  const log = fs.readFileSync(path.join(l.root, 'lesson_build.log.md'), 'utf8');
+  ok(log.includes(`sha256:${sha(video).slice(0, 12)}`), 'the log carries the video hash');
+  ok(log.includes(`sha256:${sha(revised).slice(0, 12)}`), 'and the source hash beside it');
 };
 
 cases['a re-run that produces identical bytes changes nothing in the lesson tree'] = () => {
@@ -220,7 +285,7 @@ cases['a re-run that produces identical bytes changes nothing in the lesson tree
   l.m('promote', '--media-id', 'g1', '--from', staged, '--to', 'public/images/fig.png');
   const dest = at(l.root, 'public/images/fig.png');
   const before = fs.statSync(dest);
-  const firstPromotedAt = mediaRow(l, 'g1').artifact.promoted;
+  const firstPromotedAt = artifactAt(mediaRow(l, 'g1'), 'public/images/fig.png').promoted;
 
   // The producer runs again and writes the same bytes into a fresh staging file.
   const again = l.m('stage', '--media-id', 'g1', '--name', 'fig.png').out;
@@ -232,7 +297,7 @@ cases['a re-run that produces identical bytes changes nothing in the lesson tree
   const after = fs.statSync(dest);
   eq(after.ino, before.ino, 'the file in the lesson tree was not replaced');
   eq(after.mtimeMs, before.mtimeMs, 'and was not rewritten');
-  eq(mediaRow(l, 'g1').artifact.promoted, firstPromotedAt,
+  eq(artifactAt(mediaRow(l, 'g1'), 'public/images/fig.png').promoted, firstPromotedAt,
     'the record keeps the timestamp the bytes first landed at');
 
   // Different bytes at the same path DO replace the file — the no-op is about the bytes, not the path.
@@ -251,7 +316,7 @@ cases['a production killed mid-write leaves the previous artifact and says why']
   l.m('promote', '--media-id', 'v1', '--from', first, '--to', 'public/images/plot.png');
   const dest = at(l.root, 'public/images/plot.png');
   const before = fs.statSync(dest);
-  const goodHash = mediaRow(l, 'v1').artifact.sha256;
+  const goodHash = artifactAt(mediaRow(l, 'v1'), 'public/images/plot.png').sha256;
 
   // The re-run is killed part-way through writing its staged PNG: header intact, IEND missing.
   const staged = l.m('stage', '--media-id', 'v1', '--name', 'plot.png').out;
@@ -268,13 +333,14 @@ cases['a production killed mid-write leaves the previous artifact and says why']
   const row = mediaRow(l, 'v1');
   ok(/truncated/.test(row.artifact_failure.reason), 'the record carries the failure and its reason');
   eq(row.artifact_failure.target, 'public/images/plot.png', 'against the path it was refused for');
-  eq(row.artifact.sha256, goodHash, 'and still describes the good artifact the lesson holds');
+  eq(artifactAt(row, 'public/images/plot.png').sha256, goodHash,
+    'and still describes the good artifact the lesson holds');
 
   // A producer that never got as far as staging a file records the same way, and touches nothing.
   const f = l.m('fail', '--media-id', 'v2', '--reason', 'matplotlib raised: no display');
   eq(f.code, 0, 'fail records a production that produced nothing');
   eq(mediaRow(l, 'v2').artifact_failure.reason, 'matplotlib raised: no display', 'with its reason');
-  eq(mediaRow(l, 'v2').artifact, undefined, 'and claims no artifact');
+  eq(mediaRow(l, 'v2').artifacts, undefined, 'and claims no artifact');
   eq(mediaRow(l, 'v2').intent, null, 'inventing no intent the plan never carried');
 
   // A later good run clears the failure rather than leaving a stale one beside a good artifact.
@@ -400,7 +466,7 @@ cases['a producer with no run of its own opens one instead of using a finished r
 
   const rtRec = JSON.parse(fs.readFileSync(path.join(root, '.lesson-builder', 'runs', `${rt}.json`), 'utf8'));
   eq(rtRec.media.map((m) => m.media_id), ['auto_1'], 'the runtime record carries the artifact');
-  eq(rtRec.media[0].artifact.sha256, sha(mp4(4096)), 'with its hash');
+  eq(artifactAt(rtRec.media[0], 'public/videos/auto_1.mp4').sha256, sha(mp4(4096)), 'with its hash');
   eq(fs.readFileSync(buildPath, 'utf8'), buildBefore,
     "the finished build run's record is byte-identical — a later run never writes into it");
 };
@@ -500,7 +566,8 @@ cases['the manim pipeline stages, validates and promotes with no manim installed
       l.m('promote', '--media-id', 'm1', '--from', staged, '--to', 'public/videos/tangent.mp4').out);
     eq(receipt.state, 'promoted', 'the promote step moves it into the lesson tree');
     eq(receipt.sha256, sha(read(staged)), 'under the hash of the bytes that were validated');
-    eq(mediaRow(l, 'm1').artifact.path, 'public/videos/tangent.mp4', 'and the record says where');
+    eq(artifactAt(mediaRow(l, 'm1'), 'public/videos/tangent.mp4').path, 'public/videos/tangent.mp4',
+      'and the record says where');
 
     // A failed re-render leaves the promoted video exactly as it was.
     const failing = fakeToolchain(path.join(tmpRoot, 'manim', 'failbin'), { manimFails: true });

@@ -57,17 +57,24 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
   },
 
   // One entry per media item the plan carries, `keep` rows included. `intent`, `path` and
-  // `status` are the plan's words. `artifact` is what the lesson tree actually holds, written
-  // only by `promote`; `artifact_failure` is why the last production did not change it, written
-  // by `fail` or by a refused promotion and cleared by the next good one. A failed production
-  // never touches `artifact` — the previous artifact is still on disk and still described here.
+  // `status` are the plan's words. `artifacts` is what the lesson tree actually holds — one entry
+  // per destination path, written only by `promote` and merged by path when the same path is
+  // promoted again, so a media id that promotes several files (a manim video and the `.py` that
+  // reproduces it) keeps a hash for each. `artifact_failure` is why the last production did not
+  // change it, written by `fail` or by a refused promotion and cleared by the next good one. A
+  // failed production never touches `artifacts` — those files are still on disk and still
+  // described here.
   "media": [
-    { "media_id": "g1", "intent": "add", "original_intent": "add", "medium": "svg-graph",
-      "topic": "3", "path": "public/graphs/tangent.svg", "status": "built",
-      "artifact": { "path": "public/graphs/tangent.svg", "sha256": "<64 hex>", "bytes": 8214,
-                    "promoted": "2026-04-15T14:31:02Z", "state": "promoted" | "unchanged" },
-      "artifact_failure": { "target": "public/graphs/tangent.svg",
-                            "reason": "PNG is truncated (no IEND chunk at the end)",
+    { "media_id": "m1", "intent": "add", "original_intent": "add", "medium": "manim",
+      "topic": "3", "path": "public/videos/tangent.mp4", "status": "built",
+      "artifacts": [
+        { "path": "public/videos/tangent.mp4", "sha256": "<64 hex>", "bytes": 812044,
+          "promoted": "2026-04-15T14:31:02Z", "state": "promoted" | "unchanged" },
+        { "path": "tangent.py", "sha256": "<64 hex>", "bytes": 1180,
+          "promoted": "2026-04-15T14:31:05Z", "state": "promoted" }
+      ],
+      "artifact_failure": { "target": "public/videos/tangent.mp4",
+                            "reason": "MP4 is truncated (a box runs past the end of the file)",
                             "at": "2026-04-15T14:30:44Z" } }
   ],
 
@@ -137,6 +144,10 @@ truncated or simply wrong therefore leaves the lesson exactly as it was, and say
   one belongs to a finished build run, and a record is never rewritten by a later run. A lesson
   cloned or deployed without its gitignored `.lesson-builder/` has no record at all, which is the
   same case and the same answer.
+- **Each destination path is recorded on its own.** The media row's `artifacts` array holds one
+  entry per promoted path, merged by path on a re-promotion, so a media id that promotes more than
+  one file — a manim video and the `.py` that reproduces it, a matplotlib PNG and its `figures/`
+  source — carries a hash for each and the second promotion does not erase the first.
 - **The receipt** on stdout is one JSON line:
   `{"media_id","path","sha256","bytes","state":"promoted"|"unchanged","checked"}`. The SHA-256 is
   the full 64 characters and is the artifact's identity in the record.
