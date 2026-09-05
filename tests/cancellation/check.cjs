@@ -100,7 +100,7 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   // Client rules on that same record: a cancelled turn is neither offered nor
   // reclaimed after a reload.
   ok(isPickable(rec) === false, "client: cancelled session is not offered in the picker");
-  ok(isRestorable(rec) === false, "client: cancelled session is not reclaimed on reload");
+  ok(isRestorable(rec) === true, "client: cancelled-but-released session is still reclaimed on reload (only the picker hides it)");
   ok((await post("/session/open", { sessionId: sid })).status === 200, "session re-opened for the next turn");
 
   // 2. Next turn on the same session completes cleanly (no reload, no orphan cancel state).

@@ -8,9 +8,11 @@
 // keeps its result in the session for the next message (proxy.js, "A
 // disconnect is not a cancel") — so "a turn is in flight" must not hide the
 // session here, or the reload the invariant protects opens an empty chat
-// instead. Only a cancelled last turn disqualifies it. A proxy that predates
-// `lastTurn` reports neither field, which reads as the old `!s.open`.
-export const isRestorable = (s) => !s.open && !(s.lastTurn && s.lastTurn.outcome === "cancelled");
+// instead. A cancelled last turn does not disqualify it either: the student
+// stopped a reply, not the chat, and the brief requires a stopped session to
+// keep working — cancellation only keeps it out of the PICKER (isPickable),
+// which is the promotion rule. Only another tab holding it open does.
+export const isRestorable = (s) => !s.open;
 
 // A session offered to the student in the picker (or taken by the bootstrap
 // when there is nothing to restore): the proxy's own `resumable` — not open,
