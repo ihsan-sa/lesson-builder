@@ -6,10 +6,18 @@
 //   runManimPipeline({ sceneSource, sceneName, targetMp4Path, timeoutMs })
 //     -> { ok, mp4Path?, previewPngPath?, keyframePaths?, durationSec?, reason? }
 //
+// `targetMp4Path` is a path in the run's STAGING area, not in the lesson tree: this helper
+// renders and validates, and `run-manifest.cjs promote` is what moves a validated artifact into
+// the lesson under its final name (agents/manim-agent.md § File contract). Handing it a lesson
+// path would put an unpromoted render where the lesson reads it.
+//
 // Invariants:
 //   - Never throws. All errors flow back as { ok: false, reason }.
 //   - Each stage has its own kill-on-timeout budget.
 //   - Scratch dir is per-call: manim_scratch/<agentId>/
+//   - Nothing is written to targetMp4Path until every stage has passed.
+//
+// Fixture: tests/stage-promote/ drives all five stages against stubbed manim/ffmpeg/ffprobe.
 
 import { spawn, execSync } from "child_process";
 import { promises as fsp } from "fs";
@@ -273,10 +281,9 @@ export async function runManimPipeline({ sceneSource, sceneName, targetMp4Path, 
     return { ok: false, reason: `render produced no mp4 under media/videos/scene/720p30/${sceneName}.mp4` };
   }
 
-  // Stage 4: ffprobe metadata check — run against the SCRATCH render. The
-  // target path may hold the last known-good artifact (refine flow); it must
-  // only be overwritten after the new render validates, else a failed render
-  // destroys the good copy.
+  // Stage 4: ffprobe metadata check — run against the SCRATCH render, never against the target.
+  // A refine stages its re-render beside the last known-good artifact, and the promote step will
+  // not touch the lesson's copy until this render validates.
   const probe = await runProc(
     "ffprobe",
     [
@@ -338,7 +345,8 @@ export async function runManimPipeline({ sceneSource, sceneName, targetMp4Path, 
     keyframePaths.push(outPng);
   }
 
-  // Promote only after every validation passed.
+  // Hand the render to the staging path only after every validation passed. Promotion into the
+  // lesson tree is a separate, atomic step the caller runs (`run-manifest.cjs promote`).
   const mp4Copy = await copyFile(mp4Src, targetMp4Path);
   if (!mp4Copy.ok) return { ok: false, reason: mp4Copy.reason };
 

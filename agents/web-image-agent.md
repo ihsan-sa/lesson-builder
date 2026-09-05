@@ -25,16 +25,27 @@ When the brief says `mode: "pre-flight"`, search and license-verify ONLY — dow
 
 1. `WebSearch` with a targeted query. Include "public domain" or "CC-BY" to bias results.
 2. For promising hits, `WebFetch` the host page to confirm the license and find the direct image URL.
-3. Download with Bash:
-   `curl -L -o <lesson_root>/public/images/<name>.<ext> "<URL>"`
+3. Download into the run staging area — **never straight into the lesson tree**, so a cut-off download cannot replace a good image:
+
+   ```
+   staged=$(node <skill_root>/scripts/run-manifest.cjs stage --lesson <lesson_root> --media-id <media_id> --name <name>.<ext>)
+   curl -fL -o "$staged" "<URL>"
+   ```
 4. Use `Read` to view the downloaded file (it is an image; the multimodal view lets you judge it).
 5. Decide:
-   - **Keep** if the image clearly shows what the tutor asked for, is legible, and the license is verified.
-   - **Discard** otherwise. Delete with Bash `rm` and try the next candidate or return null.
+   - **Keep** if the image clearly shows what the tutor asked for, is legible, and the license is verified. Promote it:
+
+     ```
+     node <skill_root>/scripts/run-manifest.cjs promote --lesson <lesson_root> --media-id <media_id> \
+       --from "$staged" --to public/images/<name>.<ext> --min-bytes 1024
+     ```
+
+     A truncated download is refused here (exit 6) with the reason recorded — try the next candidate rather than serving half an image. `--min-bytes 1024` catches the other common fetch failure: a server that answers with a few hundred bytes of error page under an image URL.
+   - **Discard** otherwise. Delete the staged file with Bash `rm` and try the next candidate, or return null after recording `run-manifest.cjs fail --lesson <lesson_root> --media-id <media_id> --reason "<why>"`.
 
 ## Return format
 
-On success: the absolute file path AND the lesson-relative served URL (`/images/<name>.<ext>` — what a `<img src>` or the tutor actually renders), plus a one-line provenance note (`source URL, license, author`).
+On success: the promoted file path, its `sha256` from the promote receipt, AND the lesson-relative served URL (`/images/<name>.<ext>` — what a `<img src>` or the tutor actually renders), plus a one-line provenance note (`source URL, license, author`).
 On failure after a reasonable search: `null` with a one-line reason.
 
 ## Constraints
@@ -57,13 +68,13 @@ Under `mode: "update"` the brief may include:
 1. Search using the brief's hints.
 2. Download candidates to a temp location.
 3. Compare against the existing image.
-4. If any candidate is clearly better AND has the same encoding as the extension implies: replace at the SAME path (preserving filename). JSX `<img src>` stays valid. A better candidate in a different format (PNG replacing a `.jpg`) must NOT be written under the old extension — return it as a `format_change` with the new filename so the caller updates the `<img src>` instead.
+4. If any candidate is clearly better AND has the same encoding as the extension implies: promote to the SAME path (preserving filename) — a refused promotion leaves the existing image untouched. JSX `<img src>` stays valid. A better candidate in a different format (PNG replacing a `.jpg`) must NOT be written under the old extension — return it as a `format_change` with the new filename so the caller updates the `<img src>` instead.
 5. Otherwise: return `null` or `{ action: "keep_existing", reason: "..." }`. Main Claude treats this as no-change.
 
 ### Replace behavior
 
-1. Search + download a new image.
-2. Save to `<lesson_root>/public/images/<new-filename>`. Main Claude updates `<img src>` during assembly.
+1. Search + download a new image into the staging area.
+2. Promote it to `public/images/<new-filename>`. Main Claude updates `<img src>` during assembly.
 3. Main Claude deletes the old file during splice cleanup.
 4. Return the new filename and rationale.
 
@@ -73,4 +84,4 @@ Only return images with clear, verified licenses (CC, public domain, explicit re
 
 ### Output
 
-No `.build-scratch/` files. Images land directly in `<lesson_root>/public/images/` so Vite can serve them. Return names the file(s) and the action.
+No `.build-scratch/` files. Images are downloaded into the run staging area and promoted into `<lesson_root>/public/images/` so Vite can serve them; never `curl`, `cp` or `mv` into `public/` yourself, and never delete a good image before its replacement has been promoted (`references/phase-3-execution.md` § The run staging area). Return names the file(s), their hashes and the action.

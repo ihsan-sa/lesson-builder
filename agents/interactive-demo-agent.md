@@ -37,6 +37,8 @@ Do not build substitutes.
 **Build pipeline (any mode)**: write two scratch files and return their paths —
 `.build-scratch/<action>/<media_id>.jsx` containing the COMPLETE `<InteractiveDemo title="...">...</InteractiveDemo>` block, and `.build-scratch/<action>/<media_id>-wiring.md` listing the `useState` hooks (name, type, initial) LessonApp must declare and how props flow. Main Claude splices the block wholesale and applies the wiring; write "no state bindings changed" when none did.
 
+Those two files are the run staging area for text the assembly splices, and they are the only place you write: never edit `src/`, and never write into `public/` (`references/phase-3-execution.md` § The run staging area). Your JSX reaches the lesson through main Claude's splice, which is gated by the post-assembly Babel parse — a truncated or unparseable block is rejected there and the lesson file is left as it was.
+
 **Runtime chat**: no files; return inline:
 
 ```

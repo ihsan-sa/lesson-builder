@@ -6,6 +6,8 @@ Every lesson-builder run keeps its state in one versioned JSON record. The recor
 - Records: `<lesson_root>/.lesson-builder/runs/<run_id>.json`, one per run, never rewritten by a later run.
 - Rendered log: `<lesson_root>/lesson_build.log.md` (`references/log-template.md` describes what it looks like).
 - Tool: `scripts/run-manifest.cjs` — the only writer and the only reader. Its fixture is `tests/run-manifest/`.
+- Staging area: `<lesson_root>/.lesson-builder/staging/<run_id>/<media_id>/`, where every producer writes
+  before its artifact is validated and promoted (§ Artifacts, fixture `tests/stage-promote/`).
 
 ## Schema
 
@@ -54,10 +56,19 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
     "stash_recovery": "applied + dropped (<oid>)" | "manual (oid: <oid>)" | "conflict (manual)" | "none"
   },
 
-  // One entry per media item the plan carries, `keep` rows included.
+  // One entry per media item the plan carries, `keep` rows included. `intent`, `path` and
+  // `status` are the plan's words. `artifact` is what the lesson tree actually holds, written
+  // only by `promote`; `artifact_failure` is why the last production did not change it, written
+  // by `fail` or by a refused promotion and cleared by the next good one. A failed production
+  // never touches `artifact` — the previous artifact is still on disk and still described here.
   "media": [
     { "media_id": "g1", "intent": "add", "original_intent": "add", "medium": "svg-graph",
-      "topic": "3", "path": "public/graphs/tangent.svg", "status": "built" }
+      "topic": "3", "path": "public/graphs/tangent.svg", "status": "built",
+      "artifact": { "path": "public/graphs/tangent.svg", "sha256": "<64 hex>", "bytes": 8214,
+                    "promoted": "2026-04-15T14:31:02Z", "state": "promoted" | "unchanged" },
+      "artifact_failure": { "target": "public/graphs/tangent.svg",
+                            "reason": "PNG is truncated (no IEND chunk at the end)",
+                            "at": "2026-04-15T14:30:44Z" } }
   ],
 
   // Every issue open at exit, with where it came from and what was attempted. `state: "resolved"`
@@ -88,7 +99,42 @@ newest record in that lesson, so a resumed session does not have to carry the id
 | `append <path> <json>` | Pushes onto an array field (`media`, `findings`, `phases.N.notes`). |
 | `plan-hash --file <artifact>` | Hashes the artifact, records `plan.hash` + `plan.artifact`, prints the hash. A plan whose hash **changed** goes back to `pending` even if it was approved — approval does not transfer to text the user never saw. An abort stands. |
 | `approve --hash <h>` | The headless approval gate. See below. |
+| `stage --media-id <id> --name <file>` | Creates this run's staging directory for that media id and prints the path the producer writes to. |
+| `promote --media-id <id> --from <staged> --to <lesson-relative> [--min-bytes <n>]` | Validates the staged bytes and moves them into the lesson tree. Prints a JSON receipt; exits 6 on refusal. See below. |
+| `fail --media-id <id> --reason <text>` | Records a production that produced nothing. Touches no file. |
 | `render` | Rewrites `lesson_build.log.md` from every record in the lesson. |
+
+## Artifacts: stage, validate, promote
+
+Every producer of a lesson artifact writes into the run staging area, the artifact is validated
+there, and only a validated artifact is promoted into the lesson tree. A production that is killed,
+truncated or simply wrong therefore leaves the lesson exactly as it was, and says why.
+
+- **Staging area**: `<lesson_root>/.lesson-builder/staging/<run_id>/<media_id>/`, whose path
+  `stage` prints. It is beside the run records, so the lesson's `.gitignore` already covers it.
+  Text the assembly splices into the lesson source (demo and graphics JSX) stages in
+  `.build-scratch/` instead — same rule, different home, because it is spliced rather than served.
+- **`promote` refuses** — exit 6, nothing written, the reason recorded on the media row — when the
+  `--from` path is not under **this run's** staging directory, when `--to` leaves the lesson root or
+  points inside `.lesson-builder/`, when nothing is staged there, or when the staged bytes are not a
+  complete file of their kind.
+- **The completeness check** is by the destination's extension. Kinds with a fixed trailer are
+  checked at both ends, because a production killed mid-write leaves a plausible header and a
+  missing tail: PNG needs its `IEND`, JPEG its `EOI`, GIF its trailer byte, SVG its `</svg>`, WebP a
+  RIFF length that matches the file, MP4 a set of top-level boxes that tile the file exactly,
+  WebM its EBML header, and `.py`/`.jsx`/`.js`/`.json`/`.md`/`.txt`/`.b64` valid non-blank UTF-8. An extension with no known shape gets the size checks only and the receipt says so. Add
+  `--min-bytes <n>` when the caller knows its artifact is never smaller than that.
+- **The promotion is atomic**: the bytes go to `<dir>/.<name>.<run_id>.part` and are then renamed
+  over the destination, so the final name never holds a partial file and a kill mid-promotion leaves
+  the previous artifact intact.
+- **Identical bytes change nothing.** If the destination already hashes to the staged bytes, no
+  write happens at all — same inode, same mtime — the receipt says `unchanged`, and the record keeps
+  the timestamp the bytes first landed at. A re-run that produces the same artifact is a no-op.
+- **The receipt** on stdout is one JSON line:
+  `{"media_id","path","sha256","bytes","state":"promoted"|"unchanged","checked"}`. The SHA-256 is
+  the full 64 characters and is the artifact's identity in the record.
+
+Fixture: `tests/stage-promote/`.
 
 ## The approval gate
 

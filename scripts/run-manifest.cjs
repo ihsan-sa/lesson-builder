@@ -20,10 +20,22 @@
  *   run-manifest.cjs append   --lesson <dir> [--run <id>] <path> <json>
  *   run-manifest.cjs plan-hash --lesson <dir> [--run <id>] --file <plan.md>
  *   run-manifest.cjs approve  --lesson <dir> [--run <id>] --hash <h> [--at <iso>]
+ *   run-manifest.cjs stage    --lesson <dir> [--run <id>] --media-id <id> --name <file>
+ *   run-manifest.cjs promote  --lesson <dir> [--run <id>] --media-id <id> --from <staged path>
+ *                             --to <lesson-relative path> [--min-bytes <n>] [--at <iso>]
+ *   run-manifest.cjs fail     --lesson <dir> [--run <id>] --media-id <id> --reason <text>
  *   run-manifest.cjs render   --lesson <dir>
  *
  * `--run` defaults to the newest record in the lesson. Dotted <path>s index into the record
  * (`git.base_sha`, `plan.approval.state`, `phases.3.notes`).
+ *
+ * Stage, validate, promote: a producer writes only into the run staging area
+ * (`.lesson-builder/staging/<run_id>/<media_id>/`, printed by `stage`), and an artifact enters the
+ * lesson tree only through `promote`, which refuses anything this run did not stage, checks the
+ * staged bytes are a complete file of their kind, and lands them by write-to-`.part`-then-rename so
+ * the final name never holds a partial file. `promote` records the artifact's SHA-256 on its
+ * `media` row; a refusal and `fail` record the reason there and leave the lesson tree untouched.
+ * Identical bytes already in place are left alone entirely.
  *
  * Exit codes:
  *   0  ok
@@ -32,6 +44,8 @@
  *   3  get: the field is unset (absent or null)  |  approve: hash does not match the recorded plan
  *   4  approve: no plan is recorded for this run — approval refers to nothing, so it is not approval
  *   5  approve: the run was aborted by a person; a machine does not un-abort it
+ *   6  promote: refused — not staged by this run, not a complete file, or the write failed; the
+ *      lesson tree is unchanged and the reason is on the media row
  */
 
 'use strict';
@@ -328,6 +342,303 @@ function cmdApprove(flags) {
   process.stdout.write(`approved ${recorded} at ${rec.plan.approval.at}\n`);
 }
 
+// ---------- artifacts: stage, validate, promote ----------
+
+// The run staging area. Every producer writes its output here and nowhere else; an artifact
+// reaches the lesson tree only through `promote`, which validates the staged bytes first. It sits
+// beside the run records, so the lesson's own `.gitignore` (`.lesson-builder/`) already covers it.
+// Text the assembly splices into the lesson source stages in `.build-scratch/` instead — same rule,
+// different home (references/phase-3-execution.md § The run staging area).
+const stagingDir = (lessonRoot, runId, mediaId) =>
+  path.join(lessonRoot, '.lesson-builder', 'staging', runId, mediaId);
+
+// A media id and a file name each become one path segment, so neither may traverse or be empty.
+const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function requireSegment(value, what) {
+  if (!value) die(`${what} is required`);
+  if (!SEGMENT.test(value) || value.includes('..'))
+    die(`${what} "${value}" is not a plain path segment`);
+  return value;
+}
+
+// `child` is strictly inside `parent` — used to keep a promotion's source inside the staging area
+// and its destination inside the lesson.
+function isInside(parent, child) {
+  const rel = path.relative(path.resolve(parent), path.resolve(child));
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+const ascii = (s) => Array.from(s, (c) => c.charCodeAt(0));
+
+function bytesAt(buf, bytes, offset) {
+  if (buf.length < offset + bytes.length) return false;
+  return bytes.every((b, i) => buf[offset + i] === b);
+}
+
+function bytesAtEnd(buf, bytes) {
+  if (buf.length < bytes.length) return false;
+  return bytes.every((b, i) => buf[buf.length - bytes.length + i] === b);
+}
+
+function utf8Text(buf) {
+  const s = buf.toString('utf8');
+  if (Buffer.compare(Buffer.from(s, 'utf8'), buf) !== 0) return 'not valid UTF-8 text';
+  if (!s.trim()) return 'the file is only whitespace';
+  return null;
+}
+
+// Every top-level MP4 box declares its own length, so a complete file's boxes tile it exactly. A
+// render killed part-way through `mdat` leaves a last box that runs past the end — the only cheap
+// way to catch a truncated MP4 with no ffprobe on the host.
+function mp4Complete(buf) {
+  if (!bytesAt(buf, ascii('ftyp'), 4)) return 'not an MP4 (no ftyp box at offset 4)';
+  let at = 0;
+  while (at < buf.length) {
+    if (at + 8 > buf.length) return `MP4 is truncated (box header at ${at} runs past the end)`;
+    let size = buf.readUInt32BE(at);
+    let header = 8;
+    if (size === 1) {
+      if (at + 16 > buf.length) return `MP4 is truncated (64-bit box header at ${at} runs past the end)`;
+      size = Number(buf.readBigUInt64BE(at + 8));
+      header = 16;
+    } else if (size === 0) {
+      return null; // size 0 means "to the end of the file", legal only for the last box
+    }
+    if (size < header) return `MP4 is malformed (box at ${at} declares a ${size}-byte length)`;
+    if (at + size > buf.length)
+      return `MP4 is truncated (box at ${at} declares ${size} bytes, ${buf.length - at} remain)`;
+    at += size;
+  }
+  return at === buf.length ? null : `MP4 is malformed (boxes end at ${at}, file is ${buf.length} bytes)`;
+}
+
+const jpeg = (b) =>
+  !bytesAt(b, [0xff, 0xd8, 0xff], 0)
+    ? 'not a JPEG (bad SOI marker)'
+    : !bytesAtEnd(b, [0xff, 0xd9])
+      ? 'JPEG is truncated (no EOI marker at the end)'
+      : null;
+
+const svg = (b) => {
+  const bad = utf8Text(b);
+  if (bad) return bad;
+  const s = b.toString('utf8');
+  if (!s.includes('<svg')) return 'not an SVG (no <svg element)';
+  return /<\/svg>\s*$/.test(s) ? null : 'SVG is truncated (no closing </svg>)';
+};
+
+// What a complete file of each kind looks like on disk. A production killed mid-write leaves a
+// plausible header and a missing tail, so every kind that has a fixed trailer is checked at both
+// ends — that, not the size, is what catches a truncated PNG or a half-downloaded JPEG.
+const VALIDATORS = {
+  '.png': (b) =>
+    !bytesAt(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+      ? 'not a PNG (bad 8-byte signature)'
+      : !bytesAtEnd(b, ascii('IEND').concat([0xae, 0x42, 0x60, 0x82]))
+        ? 'PNG is truncated (no IEND chunk at the end)'
+        : null,
+  '.jpg': jpeg,
+  '.jpeg': jpeg,
+  '.gif': (b) =>
+    !bytesAt(b, ascii('GIF8'), 0)
+      ? 'not a GIF (bad header)'
+      : !bytesAtEnd(b, [0x3b])
+        ? 'GIF is truncated (no trailer byte)'
+        : null,
+  '.webp': (b) =>
+    !bytesAt(b, ascii('RIFF'), 0) || !bytesAt(b, ascii('WEBP'), 8)
+      ? 'not a WebP (bad RIFF header)'
+      : b.readUInt32LE(4) !== b.length - 8
+        ? `WebP is truncated (RIFF declares ${b.readUInt32LE(4) + 8} bytes, file is ${b.length})`
+        : null,
+  '.mp4': mp4Complete,
+  '.webm': (b) =>
+    bytesAt(b, [0x1a, 0x45, 0xdf, 0xa3], 0) ? null : 'not a Matroska/WebM stream (bad EBML header)',
+  '.svg': svg,
+  '.py': utf8Text,
+  '.jsx': utf8Text,
+  '.js': utf8Text,
+  '.json': utf8Text,
+  '.md': utf8Text,
+  '.txt': utf8Text,
+  '.b64': utf8Text,
+};
+
+// Returns { reason } to refuse, or { checked } naming the check that passed.
+function validateArtifact(buf, dest, minBytes) {
+  if (buf.length === 0) return { reason: 'the staged file is empty' };
+  if (buf.length < minBytes)
+    return { reason: `the staged file is ${buf.length} bytes, under --min-bytes ${minBytes}` };
+  const ext = path.extname(dest).toLowerCase();
+  const validator = VALIDATORS[ext];
+  // An extension with no known shape still gets the size checks, and the receipt says so rather
+  // than implying the bytes were inspected.
+  if (!validator) return { checked: `size only (no shape check for ${ext || 'an extensionless file'})` };
+  const bad = validator(buf);
+  return bad ? { reason: bad } : { checked: `${ext} shape` };
+}
+
+function mediaRow(rec, mediaId) {
+  let row = rec.media.find((m) => m && m.media_id === mediaId);
+  if (!row) {
+    // An artifact for an id the plan does not carry (a runtime-chat render, a degraded refine).
+    // Record it rather than drop it — and invent no `intent`: that word is the plan's, and a
+    // machine does not write one the plan never said.
+    row = { media_id: mediaId, intent: null, medium: null, topic: null, path: null, status: null };
+    rec.media.push(row);
+  }
+  return row;
+}
+
+// A failed production leaves the previous artifact untouched on disk, so the row's `artifact`
+// (what the lesson tree actually holds) is left exactly as it was and the failure is recorded
+// beside it, never over it.
+function recordFailure(lessonRoot, rec, mediaId, target, reason, at) {
+  mediaRow(rec, mediaId).artifact_failure = {
+    target: target || null,
+    reason,
+    at: at || new Date().toISOString(),
+  };
+  writeRecord(lessonRoot, rec);
+}
+
+function cmdStage(flags) {
+  const lessonRoot = requireLesson(flags);
+  const runId = resolveRun(lessonRoot, flags);
+  readRecord(lessonRoot, runId); // nothing stages against a run that has no record
+  const mediaId = requireSegment(flags['media-id'], '--media-id');
+  const name = requireSegment(flags.name, '--name');
+  const dir = stagingDir(lessonRoot, runId, mediaId);
+  fs.mkdirSync(dir, { recursive: true });
+  process.stdout.write(`${path.join(dir, name)}\n`);
+}
+
+function cmdPromote(flags) {
+  const lessonRoot = requireLesson(flags);
+  const runId = resolveRun(lessonRoot, flags);
+  const rec = readRecord(lessonRoot, runId);
+  const mediaId = requireSegment(flags['media-id'], '--media-id');
+  if (!flags.from) die("promote needs --from <a path under this run's staging dir>");
+  if (!flags.to) die('promote needs --to <a path relative to the lesson root>');
+  const minBytes = flags['min-bytes'] === undefined ? 1 : Number(flags['min-bytes']);
+  if (!Number.isInteger(minBytes) || minBytes < 1) die('--min-bytes must be a positive integer');
+
+  const stage = stagingDir(lessonRoot, runId, mediaId);
+  const from = path.resolve(flags.from);
+  const dest = path.resolve(lessonRoot, flags.to);
+  const rel = path.relative(path.resolve(lessonRoot), dest).split(path.sep).join('/');
+
+  // Every refusal takes this exit: the reason is recorded against the media id and the lesson tree
+  // is left holding whatever it already had.
+  const refuse = (reason) => {
+    recordFailure(lessonRoot, rec, mediaId, flags.to, reason, flags.at);
+    process.stderr.write(
+      `run-manifest: ${mediaId} not promoted to ${flags.to}: ${reason}. The lesson tree is unchanged.\n`,
+    );
+    process.exit(6);
+  };
+
+  if (path.isAbsolute(flags.to) || !isInside(lessonRoot, dest))
+    refuse(`--to ${flags.to} is outside the lesson root`);
+  if (rel.split('/')[0] === '.lesson-builder')
+    refuse(`--to ${flags.to} is inside the run's own area, not the lesson tree`);
+  if (fs.existsSync(dest) && !fs.statSync(dest).isFile())
+    refuse(`--to ${flags.to} already exists and is not a regular file`);
+  // The rule with teeth: an artifact this run did not stage is an artifact nothing validated.
+  if (!isInside(stage, from))
+    refuse(
+      `--from ${flags.from} is not under this run's staging dir ` +
+        `(${path.relative(path.resolve(lessonRoot), stage).split(path.sep).join('/')})`,
+    );
+
+  let stat = null;
+  try {
+    stat = fs.statSync(from);
+  } catch {
+    refuse(`nothing staged at ${flags.from}`);
+  }
+  if (!stat.isFile()) refuse(`${flags.from} is not a regular file`);
+
+  let buf = null;
+  try {
+    buf = fs.readFileSync(from);
+  } catch (e) {
+    refuse(`the staged file cannot be read: ${e.message}`);
+  }
+
+  const verdict = validateArtifact(buf, dest, minBytes);
+  if (verdict.reason) refuse(verdict.reason);
+
+  const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+  const at = flags.at || new Date().toISOString();
+  const row = mediaRow(rec, mediaId);
+  const destSha = fs.existsSync(dest)
+    ? crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex')
+    : null;
+
+  // A re-run that produced identical bytes leaves the file completely alone — no rewrite, no new
+  // mtime, nothing for a watcher or a git status to see.
+  let state = 'unchanged';
+  if (destSha !== sha256) {
+    state = 'promoted';
+    // Write under a name the lesson never reads, then rename. The final name only ever appears
+    // with the whole artifact behind it, so a kill mid-write leaves the previous file intact and
+    // the half-written bytes under a dotted `.part` name nothing serves.
+    const tmp = path.join(path.dirname(dest), `.${path.basename(dest)}.${runId}.part`);
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const fd = fs.openSync(tmp, 'w');
+      try {
+        fs.writeSync(fd, buf);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmp, dest);
+    } catch (e) {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* nothing to clean up */
+      }
+      refuse(`the promotion itself failed: ${e.message}`);
+    }
+  }
+
+  // The plan's `path` is the plan's word and is left alone; where the artifact actually landed is
+  // `artifact.path`, so a disagreement between the two stays visible.
+  row.artifact = {
+    path: rel,
+    sha256,
+    bytes: buf.length,
+    // Identical bytes already recorded keep the timestamp they first landed at — a no-op re-run
+    // moves nothing at all.
+    promoted:
+      state === 'unchanged' && row.artifact && row.artifact.sha256 === sha256
+        ? row.artifact.promoted
+        : at,
+    state,
+  };
+  delete row.artifact_failure; // this id holds a validated artifact again
+  writeRecord(lessonRoot, rec);
+  process.stdout.write(
+    `${JSON.stringify({ media_id: mediaId, path: rel, sha256, bytes: buf.length, state, checked: verdict.checked })}\n`,
+  );
+}
+
+function cmdFail(flags) {
+  const lessonRoot = requireLesson(flags);
+  const runId = resolveRun(lessonRoot, flags);
+  const rec = readRecord(lessonRoot, runId);
+  const mediaId = requireSegment(flags['media-id'], '--media-id');
+  if (!flags.reason) die('fail needs --reason "<why the production produced no artifact>"');
+  // No target: nothing got far enough to have one. `promote`'s refusals carry the path they were
+  // refused for; this one carries only the reason.
+  recordFailure(lessonRoot, rec, mediaId, null, flags.reason, flags.at);
+  process.stdout.write(`recorded: ${mediaId} failed — ${flags.reason}\n`);
+}
+
 // ---------- render ----------
 
 function notes(rec, phase) {
@@ -355,12 +666,18 @@ function renderApproval(rec) {
 function renderMedia(rec) {
   if (!rec.media.length) return [];
   return ['Media:'].concat(
-    rec.media.map(
-      (m) =>
+    rec.media.map((m) => {
+      const a = m.artifact;
+      const f = m.artifact_failure;
+      return (
         `  - ${m.media_id || '<no id>'} — intent: ${m.intent || 'unspecified'}` +
         `${m.medium ? ` — ${m.medium}` : ''}${m.original_intent ? ` — original intent: ${m.original_intent}` : ''}` +
-        `${m.status ? ` — ${m.status}` : ''}`,
-    ),
+        `${m.status ? ` — ${m.status}` : ''}` +
+        // What the lesson tree holds, and why the last production did not change it.
+        `${a ? ` — ${a.path} sha256:${String(a.sha256).slice(0, 12)} (${a.bytes} bytes, ${a.state})` : ''}` +
+        `${f ? ` — PRODUCTION FAILED: ${f.reason}` : ''}`
+      );
+    }),
   );
 }
 
@@ -496,6 +813,9 @@ const commands = {
   append: () => cmdAppend(flags, positional),
   'plan-hash': () => cmdPlanHash(flags),
   approve: () => cmdApprove(flags),
+  stage: () => cmdStage(flags),
+  promote: () => cmdPromote(flags),
+  fail: () => cmdFail(flags),
   render: () => cmdRender(flags),
 };
 if (!cmd || !commands[cmd]) {
