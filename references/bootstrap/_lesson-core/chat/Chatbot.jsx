@@ -301,7 +301,7 @@ export function Chatbot({
           // hears it.
           ...(m.obs ? { obs: m.obs } : {}),
           ...(m.foldPending ? { foldPending: true } : {}),
-          ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false, messages: (t.messages || []).map(stripStreaming) })) } : {}),
+          ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false, folding: false, messages: (t.messages || []).map(stripStreaming) })) } : {}),
         }));
         _ss.setItem("chatMsgs_" + tab.sessionId, JSON.stringify(saveable));
       } catch (_) {}
@@ -837,6 +837,7 @@ export function Chatbot({
       let finalText = "";
       let doneReceived = false;
       let stopped = false;
+      let errored = false;
       const updateAssistantMsg = (content) => {
         setTabs(prev => prev.map(t => {
           if (t.id !== tabId) return t;
@@ -889,6 +890,7 @@ export function Chatbot({
                 // _streaming forever, which permanently disables its
                 // reply-block wrapping (and so click-to-context on it).
                 finalText = data.message || "Error";
+                errored = true;
                 doneReceived = true;
                 updateTab(tabId, { statusText: "" });
               } else if (eventType === "cancelled") {
@@ -906,6 +908,11 @@ export function Chatbot({
       if (stopped) {
         obsQueue.requeue(tab.sessionId, observations);
         markStopped();
+      } else if (errored) {
+        // The CLI exited without taking the turn (auth, credit, spawn
+        // failure): what was drained into it was never seen, so it goes back
+        // to the queue and a folded thread stays pending for the next turn.
+        obsQueue.requeue(tab.sessionId, observations);
       } else {
         // Nothing is requeued on this path, so this turn carried whatever was
         // drained into it — including a folded thread's summary.
