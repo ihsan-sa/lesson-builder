@@ -993,6 +993,9 @@ ol.info-list li::marker { color: var(--accent); font-family: var(--font-mono); f
 .chat-loading span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes chatBounce { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1.1); } }
 .chat-status { font-size: 12.5px; color: var(--ink-4); font-style: italic; padding: 2px 0; }
+/* A turn the student stopped: the bubble keeps what streamed and carries this caption. */
+.chat-stopped { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-4); }
+.chat-stopped::before { content: "■ "; color: var(--danger); }
 
 /* ── Composer ── */
 .chat-composer {
