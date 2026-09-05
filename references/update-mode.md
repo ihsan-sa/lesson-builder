@@ -71,7 +71,7 @@ User message
 
 **Confirmation is mandatory.** Phase 0's first question always confirms mode — an `AskUserQuestion` in an interactive session, the same question posted as a message or resolved from the task text plus `COURSE.md` otherwise. A user who says "rework" but means "start fresh" gets corrected at the gate.
 
-**Log surface**: main Claude writes `Detected mode: update (candidate: <path>)` or `Detected mode: new` as the first line of `## Update YYYY-MM-DD > ### Phase 0 — Scoping (update)` (update mode) or `## Phase 0 — Scoping` (new mode) in `<lesson_root>/lesson_build.log.md`.
+**Log surface**: the mode is the run record's `mode`, set at `run-manifest.cjs init`, and renders as the first line of `## Update YYYY-MM-DD > ### Phase 0 — Scoping (update)` (update mode) or `## Phase 0 — Scoping` (new mode) in `<lesson_root>/lesson_build.log.md`.
 
 ## 4. The 5 media actions
 
@@ -122,7 +122,7 @@ STRUCTURAL DRIFT REPAIRS:
   - Chatbot props reconcile: <delta or "none">
 ```
 
-This block lands in `<lesson_root>/lesson_build.log.md` under `### Phase 2 — Plan (update)` and is the condensed summary shown at the approval gate in whatever form `session_mode` calls for. The full plan stays in the log; the gate surfaces only the change-list to avoid `AskUserQuestion` truncation.
+This block goes into the plan artifact Phase 2 hashes into the record, and renders under `### Phase 2 — Plan (update)`; it is the condensed summary shown at the approval gate in whatever form `session_mode` calls for. The full plan stays in the artifact; the gate surfaces only the change-list to avoid `AskUserQuestion` truncation.
 
 ## 5. Branch / stash / merge invariants
 
@@ -137,14 +137,14 @@ git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <le
 git rev-parse stash@{0}   # capture the stable OID — positional refs shift if anything else stashes
 ```
 
-Phase 0 performs the stash (once — Phase 3 never re-stashes) and logs ref + OID under `### Phase 0 — Scoping (update) > Working tree state`. Phase 5 prompts for stash pop after a successful merge. On `git stash pop` conflict, the stash stays in place and conflict files are surfaced to the user.
+Phase 0 performs the stash (once — Phase 3 never re-stashes) and records the OID as `git.stash_oid` in the run record, which renders under `### Phase 0 — Scoping (update) > Working tree state`. Phase 5 prompts for stash pop after a successful merge. On `git stash pop` conflict, the stash stays in place and conflict files are surfaced to the user.
 
 ### Merge
 After Phase 4 passes and the local build verification gate (`bash build-all.sh` + headless Playwright on the built output) succeeds:
 
 ```
 git checkout main
-git merge --no-ff <branch name recorded in the Phase 3 log>   # incl. any collision suffix
+git merge --no-ff <git.branch from the run record>   # incl. any collision suffix
 git push origin main
 ```
 

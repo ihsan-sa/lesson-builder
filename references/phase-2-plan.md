@@ -123,20 +123,24 @@ Main Claude merges the decider's verdicts and briefs (plus web-image pre-flight 
 - Reconciling the `GRAPH_SCHEMA` draft so every interactive graph has a schema entry with matching keys to its `DEFAULT_GRAPH_PARAMS`.
 - Tallying change-list counts (update mode) so the approval-gate summary can show honest `keep/refine/replace/remove/add` totals.
 - Flagging any internal inconsistencies (e.g., a topic marked `add` that depends on an equation marked `remove`).
-- **Persisting the objective skeleton** (the `objectives:` blocks from the backward-design step, checks tagged recall/transfer) into the plan and log — the Phase 4 pedagogy gate verifies the shipped lesson against exactly these, so a plan without them leaves the gate nothing to check. Update mode: objectives ride on `modify`/`add` topics; `keep` topics inherit theirs from the existing `TOPIC_CONTEXT`.
-- **Persisting the teaching arcs** (Step 1.5) into the plan and log in full — Phase 3 authors against them and Phase 4's `content-review-agent` receives them verbatim for the `arc` check (dependency structure, central question, exit model, exit evidence). A topic whose arc is missing, or failed the reorder test without a rebuild, goes back to Step 1.5; do not present the gate without it.
+- **Persisting the objective skeleton** (the `objectives:` blocks from the backward-design step, checks tagged recall/transfer) into the plan artifact — the Phase 4 pedagogy gate verifies the shipped lesson against exactly these, so a plan without them leaves the gate nothing to check. Update mode: objectives ride on `modify`/`add` topics; `keep` topics inherit theirs from the existing `TOPIC_CONTEXT`.
+- **Persisting the teaching arcs** (Step 1.5) into the plan artifact in full — Phase 3 authors against them and Phase 4's `content-review-agent` receives them verbatim for the `arc` check (dependency structure, central question, exit model, exit evidence). A topic whose arc is missing, or failed the reorder test without a rebuild, goes back to Step 1.5; do not present the gate without it.
 - **Forwarding `PRACTICE_PROBLEMS_INDEX`** from the Phase 1 package into the plan's `Practice problems index:` section so the user sees per-topic problem totals and solution provenance at the approval gate without reading every problem body.
 - **Forwarding deploy intent from the scoping artifact** into a `DEPLOY:` section of the plan. Every Lesson Plan (both modes) includes `Action: <deploy_action>`, `Service: <deploy_service>` (or "GitHub → workspace-configured host auto-deploy" when `deploy_action == "push-to-github"`), and `Course materials in commit: asked at Phase 5` (or "N/A — no materials provided" when `provided_materials` is empty). The user sees deploy intent at the approval gate alongside the content plan so approval covers both.
 - **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
 
-### Step 5: Write to lesson_build.log.md
+### Step 5: Write the plan into the run record
 
-Main Claude writes the full Lesson Plan artifact to `<lesson_root>/lesson_build.log.md` under the appropriate heading:
+Main Claude writes the full Lesson Plan artifact to a file under the lesson root (`<lesson_root>/.lesson-builder/runs/<run_id>-plan.md` — new mode: the full plan; update mode: the change-list view and the full plan together), then hashes it into the record and renders the log:
 
-- **New mode**: `## Phase 2 — Plan` section with `Plan artifact: [...]` and an `Approval:` line that starts `PENDING` and flips to `APPROVED by user at <timestamp>` on gate pass.
-- **Update mode**: `### Phase 2 — Plan (update)` nested under the day's `## Update YYYY-MM-DD (run-id: <short-hash>)` heading. Contains both `Change-list view: [...]` and `Full Lesson Plan: [...]`, plus the same `Approval:` line as new mode (`PENDING` → `APPROVED by user at <timestamp>` / `ABORTED ...`) — after an interruption at the gate, this line is the only proof Phase 3 may run.
+```bash
+run-manifest.cjs plan-hash --lesson <lesson_root> --file <lesson_root>/.lesson-builder/runs/<run_id>-plan.md
+run-manifest.cjs render    --lesson <lesson_root>
+```
 
-The log is source of truth. Long change-lists go into the log first, then the approval gate points at the log. This avoids AskUserQuestion body truncation.
+`plan-hash` records `plan.artifact`, `plan.hash` and `plan.approval.state: pending`. Per-media rows go in with `run-manifest.cjs append --lesson <lesson_root> media '{"media_id": …, "intent": …, "original_intent": …}'` — `keep` rows included. The rendered log then carries `Plan artifact:`, `Plan hash:` and the `Approval:` line under `## Phase 2 — Plan` (update mode: `### Phase 2 — Plan (update)`, nested under that run's `## Update YYYY-MM-DD (run-id: <run_id>)` heading), so a reader of an old log finds the same headings in the same places.
+
+**The record is the state; the log is a rendering of it.** After an interruption at the gate, `plan.approval` in the record — not the `Approval:` line in the markdown — is what proves Phase 3 may run. Long change-lists go into the artifact file, and the approval gate points at the rendered log. This avoids AskUserQuestion body truncation.
 
 ### Step 6: Human approval gate
 
@@ -332,11 +336,22 @@ To approve: re-dispatch with `APPROVED PLAN 4f2a9c17` in the task text.
 To change: re-dispatch with the changes described; a revised plan gets a new hash.
 ```
 
-Then stop, with `BLOCKED: plan awaiting approval` as the last line of the journal entry (harnesses that watch for a status line — `STATUS: BLOCKED: …` and the like — take that form; the phrase is what matters). Write the same plan to `lesson_build.log.md` as usual with `Approval: PENDING (hash <hash>)`.
+Then stop, with `BLOCKED: plan awaiting approval` as the last line of the journal entry (harnesses that watch for a status line — `STATUS: BLOCKED: …` and the like — take that form; the phrase is what matters). Step 5 has already hashed the plan into the record, so the log renders `Approval: PENDING (hash <hash>)`.
 
-**Resuming a headless run**: if the task text contains `APPROVED PLAN <hash>` and `<hash>` matches the hash of the plan currently recorded in `lesson_build.log.md`, the gate is passed — log `Approval: APPROVED via APPROVED PLAN <hash> at <timestamp>` and go straight to Phase 3 without re-asking. If it does not match, the plan has changed since it was approved: do **not** proceed. Re-emit the current plan under its new hash and block again, saying which hash was offered and which is current.
+**Resuming a headless run**: the task text's `APPROVED PLAN <hash>` is decided by the record, never by re-hashing text out of `lesson_build.log.md` or the journal — both are renderings, and a rendering can drift from what was hashed. `run-manifest.cjs current --lesson <lesson_root>` names the run the gate will act on; quote that run id in the resumed journal entry so the reader can see which run was approved. Then run
 
-**The hash** is the first 8 hex characters of the SHA-256 of the plan text under the heading (`sha256sum` over the extracted block), computed after the final edit. Recompute it after every request-changes revision — a revised plan is a different plan, and the point of the hash is that approval cannot silently transfer to text the user never saw.
+```bash
+run-manifest.cjs approve --lesson <lesson_root> --hash <hash from the task text>
+```
+
+and act on the exit code:
+
+- **0** — approved. The record holds `plan.approval.state: approved` with the timestamp and `via: APPROVED PLAN <hash>`. `render` the log and go straight to Phase 3 without re-asking.
+- **3** — a plan is recorded and this is not its hash: stale (the plan changed since it was approved), a prefix, or not 8 hex characters. Do **not** proceed. Re-emit the current plan under its new hash and block again, saying which hash was offered and which is current.
+- **4** — **no plan is recorded for this run.** The approval refers to nothing: an earlier run's approval quoted at a fresh run, or a run that died before Step 5. Do **not** proceed and do **not** reconstruct a hash from the log. Run Phase 2 from the top, record the plan, emit the gate under its hash, and block again — saying that the offered approval matched no recorded plan.
+- **5** — a person aborted this run. It stays aborted. Follow the abort path below.
+
+**The hash** is the first 8 hex characters of the SHA-256 of the plan artifact's bytes, recorded by `plan-hash` after the final edit. Re-run `plan-hash` after every request-changes revision — a revised plan is a different plan, and the point of the hash is that approval cannot silently transfer to text the user never saw.
 
 ### AskUserQuestion phrasing examples
 
@@ -483,17 +498,17 @@ Routing:
 - **Content changes** (facts wrong, concept missing, equation incorrect): loop back through `content-orchestrator-agent` for the affected topic only, rewrite that topic's `teaching_arc` if its explanatory line changed, then re-run `medium-decider-agent` with the revised topic flagged (the spawn still sees all topics so diversity and dedup stay coherent; it revises only what changed).
 - **Arc changes** (the user wants a topic explained in a different order, from a different central question, or toward a different exit model): no agent spawn required. Main Claude rewrites that topic's `teaching_arc` in the log per `references/teaching-communication.md`, re-applies the reorder test, and re-presents the gate.
 - **Media-only changes** (medium type wrong, specialist brief wrong): re-run `medium-decider-agent` with the user's revision noted. Cheaper than re-running content orchestration.
-- **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in `lesson_build.log.md` and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` (interactive sessions; elsewhere the same list, in the gate's delivery form) lists each orphan with its current pre-verdict and collects the user's overrides; the edited list is the new source of truth for Phase 3 orphan-asset cleanup.
+- **Orphan revisions** (flip `keep` ↔ `remove` per file, or flip the whole list): no agent spawn required. Main Claude edits the `ORPHAN ASSETS` subsection of the change-list in place in the plan artifact and re-presents the approval gate. A follow-up multi-select `AskUserQuestion` (interactive sessions; elsewhere the same list, in the gate's delivery form) lists each orphan with its current pre-verdict and collects the user's overrides; the edited list, re-hashed into the record, is what Phase 3 reads for orphan-asset cleanup.
 - **Deploy revisions** (change action, service, or materials handling): no agent spawn required. Main Claude re-asks the Phase 0 deploy-destination question (and its custom-service follow-up when applicable), updates the full deploy triple — `deploy_action` / `deploy_service_kind` / `deploy_service` — on the scoping artifact in place (dropping `deploy_service_kind` breaks Phase 5's push branching), rewrites the `DEPLOY:` block of the plan, and re-presents the approval gate. The materials-in-commit decision still happens at Phase 5 — it is intentionally not moved up, because the user may want to see the final file list before deciding whether copyrighted materials ride along.
 
 Outside an interactive session the loop is the same, minus the menu: a `channel` reply of `changes: <text>` routes by what it names (content / arc / media / orphans / deploy) and the revised view is posted as the next message; a `headless` run re-emits the revised plan under a **new** hash, since the previous hash approved text that no longer exists.
 
-In every case, the change-list is rewritten in place in `lesson_build.log.md` under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
+In every case, the change-list is rewritten in place in the plan artifact, re-hashed (`run-manifest.cjs plan-hash`) and re-rendered into the log under the same Phase 2 heading. Main Claude re-prompts with the **revised view** (same pattern, same three options). The loop continues until the user approves or aborts. There is no hard loop cap; main Claude flags diminishing returns if the same item gets revised three or more times ("we've been iterating on topic-2 media — do you want to abort and rescope?").
 
 ### Abort path
 
 If the user selects **abort**, main Claude:
-1. Writes `Approval: ABORTED by user at <timestamp>` to `lesson_build.log.md`.
+1. Records the abort — `run-manifest.cjs set --lesson <lesson_root> plan.approval '{"state":"aborted","at":"<timestamp>","via":"user"}' --json` — and renders, so the log reads `Approval: ABORTED by user at <timestamp>`. Nothing later un-writes that word: the approval gate refuses an aborted run (exit 5).
 2. Leaves the log intact (does not delete the Phase 1 or Phase 2 artifacts; they remain for reference).
 3. **Does not** proceed to Phase 3. No specialist spawns fire. No files are written to `<lesson_root>/src/`.
 4. In update mode, does **not** perform the Phase 3 pre-execution git setup (no branch created, no stash popped). The working tree state from Phase 0 is preserved.
@@ -503,7 +518,7 @@ If the user selects **abort**, main Claude:
 
 On approval, main Claude has:
 
-1. An **approved Lesson Plan artifact** written to `<lesson_root>/lesson_build.log.md` with an `Approval: APPROVED by user at <timestamp>` line — including every topic's `objectives` and `teaching_arc`, which Phase 3 authors prose against and Phase 4 reviews against.
+1. An **approved Lesson Plan artifact** recorded in the run record — `plan.artifact`, `plan.hash`, and `plan.approval.state: approved` with its timestamp (rendered into the log as the `Approval:` line) — including every topic's `objectives` and `teaching_arc`, which Phase 3 authors prose against and Phase 4 reviews against.
 2. The **medium-decider verdict list** (all topics, from the single Step 2 spawn). Each verdict carries its `specialist` routing field and its execution brief — the brief plus the topic's content package is the Phase 3 spawn prompt, refined by anything the approval loop changed.
 3. **Web-image pre-flight results** (when applicable): license-verified candidate URLs and target paths that the Phase 3 `web-image-agent` spawns consume.
 4. **(Update mode only) A branch-setup directive**: the approved plan's `Branch:` line and `ROLLBACK:` section tell Phase 3 exactly what git branch to create and what stash ref (if any) to honor. Phase 3 Step 1 runs `git checkout -b <branch>` before any specialist spawns.

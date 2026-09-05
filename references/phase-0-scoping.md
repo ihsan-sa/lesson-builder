@@ -10,7 +10,16 @@ Phase 0 runs before content work and produces the **scoping artifact** that driv
 
 Detection fires before the scoping interview; best-effort, Phase 0's first question confirms. The verb list and mode-assignment rules are canonical in `SKILL.md` § Mode detection; the full decision tree and edge cases live in `references/update-mode.md` §3. Candidate resolution: full path → use directly; course + slug → `<workspace_root>/<course>/claude_lessons/<slug>/`; only slug or only course → Glob, use if exactly one match.
 
-Main Claude writes the detection result as the first line under `## Phase 0 — Scoping` in the log doc:
+**Phase 0 opens the run record.** Before writing anything else, main Claude runs
+
+```bash
+node <skill_root>/scripts/run-manifest.cjs init --lesson <lesson_root> \
+  --mode new|update|consolidate --session-mode <session_mode> --course <course> --slug <slug>
+```
+
+which prints the `run_id` and creates `<lesson_root>/.lesson-builder/runs/<run_id>.json`. Every field this phase and later phases record goes there (`set`, `append`), and `lesson_build.log.md` is rendered from it (`render`) — nothing below is read back out of the markdown. A lesson whose log predates the record needs nothing extra: `init` starts a record, and `render` keeps the old log above its marker exactly as it was. Schema and commands: `references/run-record.md`.
+
+The detection result is the record's `mode`, and renders as the first line under `## Phase 0 — Scoping` in the log:
 
 - New mode: `Detected mode: new`
 - Update mode (resolved): `Detected mode: update (candidate: <workspace_root>/<course>/claude_lessons/<slug>/)`
@@ -131,7 +140,15 @@ Pre-checks run first:
 
 2. **Working-tree check** — only surfaced if `git status --short <lesson_root>` returned non-empty. "Your working tree has uncommitted changes in `<lesson_root>`. How should I proceed?" Options: `Stash them and continue (I'll record the stash ref for recovery)`, `Abort — I'll commit first and rerun`, `Discard them (destructive, requires explicit confirm)`. If clean, skip the question entirely and log `Working tree: clean`.
 
-   **Phase 0 owns the stash.** On the stash choice, run it now — `git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>` — then capture the stable OID via `git rev-parse stash@{0}` and log both (`stashed: stash@{0} (<oid>)`). Phase 3 consumes this ref and never stashes again; positional `stash@{0}` alone is not durable if anything else stashes in between, which is why the OID rides along.
+   **Phase 0 owns the stash.** On the stash choice, run it now — `git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>` — then capture the stable OID via `git rev-parse stash@{0}` and record it:
+
+   ```bash
+   run-manifest.cjs set --lesson <lesson_root> git.stash_oid    "$(git rev-parse stash@{0})"
+   run-manifest.cjs set --lesson <lesson_root> git.stash_ref    'stash@{0}'
+   run-manifest.cjs set --lesson <lesson_root> git.stash_branch "$(git rev-parse --abbrev-ref HEAD)"
+   ```
+
+   Phases 3 and 5 read `git.stash_oid` from the record and never stash again; positional `stash@{0}` alone is not durable if anything else stashes in between, which is why the OID is the referent and the ref rides along only for the reader.
 
 3. **Research depth** — "How deep should the research re-sweep be?" Options: `Full (comprehensive re-research — treats the lesson like a new build; default when resource_mode is full and quality is the priority)`, `Targeted (re-research specific topics you name — good balance when only part of the lesson needs a fresh look)`, `Light (minimal re-research — work from existing content, your concerns, and any new materials; default when resource_mode is limited)`. Default is `full` when `resource_mode: "full"` and the update scope is broad; `targeted` when the scope is narrow; `light` only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
 

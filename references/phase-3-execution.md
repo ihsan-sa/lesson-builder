@@ -27,6 +27,7 @@ source/
 .env
 .env.*
 lesson_build.log.md
+.lesson-builder/
 ```
 
 Semantics:
@@ -34,7 +35,7 @@ Semantics:
 - `materials/`, `source/`, `notes/` — user-provided course materials and private notes. Gitignored because these often carry copyright or draft-state risk. This covers the **lesson-level** `<lesson_root>/materials/` only. A course materials inbox at `<workspace_root>/<course>/materials/` is a different directory with a different posture — committed by convention, referenced in place, never copied down into the lesson (`references/course-curation.md` §3) — and this `.gitignore` neither covers nor should try to cover it.
 - `.env`, `.env.*`, `*.local` — credentials. Never deploy these.
 - `.build-scratch/`, `.scratch/` — specialist scratch output and ad-hoc work.
-- `lesson_build.log.md` — per the skill's existing convention (Phase 5 doc), the log stays untracked unless the user opts in.
+- `lesson_build.log.md`, `.lesson-builder/` — the rendered log and the run records it is rendered from. Per the skill's existing convention (Phase 5 doc), both stay untracked unless the user opts in; the records can carry the user's scoping answers and materials paths, so they follow the log rather than the code.
 
 Management rules:
 
@@ -49,7 +50,7 @@ Both new and update mode run this step near the tail of Phase 3 (see Step 6.5 ne
 
 ### Log discipline
 
-Write milestones to `lesson_build.log.md` under `## Phase 3 — Execution` (new) or `### Phase 3 — Execution (update)` nested under `## Update YYYY-MM-DD`. Entries: specialists spawned, files written/spliced, splice counts (update), GRAPH_SCHEMA backfill status (update), drift repairs.
+Record milestones with `run-manifest.cjs append --lesson <lesson_root> phases.3.notes '"<line>"'` and re-render; they land under `## Phase 3 — Execution` (new) or `### Phase 3 — Execution (update)` nested under `## Update YYYY-MM-DD`. Entries: specialists spawned, files written/spliced, splice counts (update), GRAPH_SCHEMA backfill status (update), drift repairs. Media rows keep their `media_id` and intents in the record's `media` array, not in prose.
 
 ### Parallel specialist spawning
 
@@ -217,11 +218,12 @@ Update mode splices specialist outputs into the **existing** `src/<slug>.jsx` in
 
 ### Step 1: pre-execution git setup
 
-Runs **before any specialist spawns**. The stash (if any) already happened at Phase 0, which logged `stashed: stash@{0} (<oid>)` — read that ref from the log; do NOT stash again. Exact commands:
+Runs **before any specialist spawns**. The stash (if any) already happened at Phase 0, which recorded `git.stash_oid` — read it back with `run-manifest.cjs get --lesson <lesson_root> git.stash_oid` (exit 3 means Phase 0 did not stash); do NOT stash again. Exact commands:
 
 ```bash
 cd <workspace_root>
 git status --short <lesson_root>   # expect clean apart from run-owned files (lesson_build.log.md,
+                                   # .lesson-builder/,
                                    # .gitignore edits this run made — both written since the Phase 0
                                    # check); anything ELSE dirty → halt and surface, don't stash
 git rev-parse --abbrev-ref HEAD    # must be the workspace default branch (normally main);
@@ -230,7 +232,12 @@ git checkout -b lesson-update/<slug>-YYYYMMDD   # collision → append -a/-b per
 git rev-parse HEAD                 # record as base_sha
 ```
 
-Log `Branch:` (the ACTUAL name incl. any collision suffix — Phase 5 consumes this recorded value verbatim, never reconstructs it) and `Base SHA:` alongside the stash ref.
+Record the branch and the base SHA — the ACTUAL branch name, collision suffix included; Phase 5 reads this recorded value back verbatim and never reconstructs it:
+
+```bash
+run-manifest.cjs set --lesson <lesson_root> git.branch   "$(git rev-parse --abbrev-ref HEAD)"
+run-manifest.cjs set --lesson <lesson_root> git.base_sha "$(git rev-parse HEAD)"
+```
 
 Substitutions:
 - `<workspace_root>` — absolute path to the monorepo root, typically derived from `git rev-parse --show-toplevel` or provided at Phase 0.
@@ -239,14 +246,15 @@ Substitutions:
 - `<date>` — `YYYYMMDD` format.
 - `YYYYMMDD` in the branch name — same format as `<date>`.
 
-Log the branch name and stash ref as the **first two lines** under `### Phase 3 — Execution (update)` in `lesson_build.log.md`:
+`run-manifest.cjs render --lesson <lesson_root>` then puts them at the top of `### Phase 3 — Execution (update)` in the log, with the stash ref carried over from Phase 0's record:
 
 ```
 Branch: lesson-update/<slug>-YYYYMMDD
-Stash ref: stash@{0} (<oid>, lesson-update-stash <slug> <date>) | none   # copied from the Phase 0 log
+Base SHA: <sha>
+Stash ref: stash@{0} (<oid>) | none
 ```
 
-If the working tree was clean at Phase 0, write `Stash ref: none`. If the user aborted on the dirty-tree question, Phase 3 never starts.
+If the working tree was clean at Phase 0 the record has no `git.stash_oid` and the log renders `Stash ref: none`. If the user aborted on the dirty-tree question, Phase 3 never starts.
 
 ### Step 2: scratch directory layout (update-specific)
 
@@ -277,7 +285,7 @@ Each specialist receives different inputs depending on the action verdict from P
 
 **refine**: existing `.py` source + existing `.mp4` under `<lesson_root>/public/videos/` + `refine_brief`. Specialist **overwrites the `.py` and `.mp4` at the same paths**, so the JSX `<video src>` reference does not need to change. No scratch file; the splice step simply re-reads the existing `src` attribute and leaves it alone.
 
-**Source-to-video name mismatch**: if the `.py` for a given `.mp4` cannot be located (e.g., the original Python file was never committed, or the `.mp4` was hand-copied from another lesson), degrade the refine to a replace: spawn a fresh manim-agent with the replace brief instead of the refine brief, write a new `.py` + new `.mp4`, and update the JSX `<video src>` during the splice. Log the degradation under `Degradations: <old-filename>: refine → replace (reason: missing source .py)` in the Phase 3 log section.
+**Source-to-video name mismatch**: if the `.py` for a given `.mp4` cannot be located (e.g., the original Python file was never committed, or the `.mp4` was hand-copied from another lesson), degrade the refine to a replace: spawn a fresh manim-agent with the replace brief instead of the refine brief, write a new `.py` + new `.mp4`, and update the JSX `<video src>` during the splice. Record the degradation as a `phases.3.notes` entry — `Degradations: <old-filename>: refine → replace (reason: missing source .py)` — and update that item's `media` row.
 
 **replace**: new `.py` + new `.mp4` with a **new filename** (even if the old one is removed). The agent's returned manifest (`mp4_path`, `py_path`, `effective_action`) carries the new paths — no scratch file; main Claude updates the JSX `<video src>` from the manifest during the splice and removes the old `.mp4` from disk.
 
@@ -410,7 +418,7 @@ Lessons that predate the graph-schema feature do not export `GRAPH_SCHEMA`. Dete
 
 1. Generate a `GRAPH_SCHEMA` from the current `DEFAULT_GRAPH_PARAMS` per the derivation rules in `references/graph-schema-guide.md` (boolean default → `{ type: "bool" }`, integer default → `{ type: "int", min, max }`, non-integer number default → `{ type: "float", min, max }` with heuristics for typical ranges, enumerable string default → `{ type: "enum", values: [...] }`, free-form string default → `{ type: "string" }`). The runtime validator at `_lesson-core/chat/graphSchema.js` accepts only these 5 types; `"number"` / `"boolean"` / `"number[]"` will fail with `"unknown schema type"`.
 2. Insert the export right after `DEFAULT_GRAPH_PARAMS` in the component block.
-3. Log as a **drift-repair** item under `Drift repairs:` in the Phase 3 log section.
+3. Record as a **drift-repair** item — a `phases.3.notes` entry prefixed `Drift repairs:`.
 4. Phase 2's approval gate should already have surfaced this to the user under "structural drift repairs"; if it did not (e.g., a narrow light-mode update that skipped the full plan view), surface it now as a post-hoc notice.
 
 #### 4.8 Chatbot props reconcile
@@ -427,7 +435,7 @@ Log any reconcile edits as **drift-repair** items.
 
 #### 4.9 Orphan asset cleanup
 
-Read the approved `ORPHAN ASSETS` verdict list from the Phase 2 change-list (written to `lesson_build.log.md` under `### Phase 2 — Plan (update)`). For each entry:
+Read the approved `ORPHAN ASSETS` verdict list from the plan artifact the record points at (`run-manifest.cjs get --lesson <lesson_root> plan.artifact` — the exact bytes Phase 2 hashed and the user approved). For each entry:
 
 1. **`keep` verdict**: no-op. Log `Kept orphan: <path>` for trace. File stays on disk.
 2. **`remove` verdict**: delete the file. Bash `rm -- <absolute-path>`. Verify the file actually existed before the call (a missing file is a trace-worthy anomaly, not a failure — log `Orphan already absent: <path>` and move on). After removal, confirm via `ls` that the file is gone.
@@ -439,7 +447,7 @@ Edge cases:
 
 If the approved change-list had no `ORPHAN ASSETS` section (empty inventory `orphans: []`), skip this step entirely and log nothing under the drift-repair category. If the section existed and all verdicts were `keep`, log `Orphan asset cleanup: all kept (N files)` for trace.
 
-Output: a count of files removed and a count of files kept, both surfaced in the Phase 3 log summary line below and in the Phase 5 final report.
+Output: a count of files removed and a count of files kept, both recorded in `phases.3.notes` (they render into the Phase 3 summary line below) and surfaced in the Phase 5 final report.
 
 #### 4.10 Log splice counts
 
@@ -488,7 +496,7 @@ Update mode's splice assembly has three standard drift-repair categories; log th
 
 When Phase 3 exits:
 
-- **New mode**: `src/<slug>.jsx` is fully written, project files are in place, `.build-scratch/` is gone, `lesson_build.log.md` has a `## Phase 3 — Execution` section with specialists spawned and files written.
-- **Update mode**: `src/<slug>.jsx` has been spliced against the approved change-list, the git branch `lesson-update/<slug>-YYYYMMDD` holds the pending commit, `.build-scratch/` is gone, and `lesson_build.log.md` has a `### Phase 3 — Execution (update)` section with branch name, stash ref, splice counts, and drift repairs.
+- **New mode**: `src/<slug>.jsx` is fully written, project files are in place, `.build-scratch/` is gone, the record carries this phase's notes and `lesson_build.log.md`, re-rendered, has a `## Phase 3 — Execution` section with specialists spawned and files written.
+- **Update mode**: `src/<slug>.jsx` has been spliced against the approved change-list, the git branch `lesson-update/<slug>-YYYYMMDD` holds the pending commit, `.build-scratch/` is gone, and the record carries `git.branch`, `git.base_sha` and this phase's notes, which re-render into a `### Phase 3 — Execution (update)` section with branch name, stash ref, splice counts, and drift repairs.
 
 Phase 4 runs parallel reviews (code, content, test, visual-QA) against the post-execution lesson file. See `references/phase-4-review.md` for review mechanics, the progress-aware fix loop, and the update-mode no-grandfathering and regression-watch rules.

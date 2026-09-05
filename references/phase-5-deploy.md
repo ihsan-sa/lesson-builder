@@ -235,7 +235,7 @@ After the push completes, capture:
 - Deploy dashboard URL (host-specific — ask the user or look it up in the workspace's deploy config)
 - Expected live URL (host-specific — typically something like `https://<site-root>/<course>/<slug>/`)
 
-Write these into the log doc under `## Phase 5 — Deploy`.
+Record these — the commit SHA as `git.commit_sha`, the rest as `phases.5.notes` — then `run-manifest.cjs render --lesson <lesson_root>`, which writes them under `## Phase 5 — Deploy`.
 
 ### 7. Surface final report
 
@@ -245,13 +245,13 @@ See "Final report format" below.
 
 ### 1. Verify current branch
 
-Before anything else, confirm the current branch equals the `Branch:` value RECORDED in the Phase 3 log (which includes any collision suffix like `-a` — never reconstruct the name from slug + date):
+Before anything else, confirm the current branch equals `git.branch` in the run record — `run-manifest.cjs get --lesson <lesson_root> git.branch`, which includes any collision suffix like `-a`. Never reconstruct the name from slug + date, and never read it out of the log:
 
 ```bash
 git rev-parse --abbrev-ref HEAD
 ```
 
-If the output differs from the recorded value (especially `main`), halt the phase immediately — Phase 3 did not create the branch, or the branch was switched away in an earlier phase, or the stash/branch state is corrupted. Surface this to the user with the actual branch name and instructions to inspect Phase 3's log entries. All later merge/log steps in this phase consume the same recorded branch name.
+If the output differs from the recorded value (especially `main`), halt the phase immediately — Phase 3 did not create the branch, or the branch was switched away in an earlier phase, or the stash/branch state is corrupted. Surface this to the user with the actual branch name and the recorded one. All later merge and render steps in this phase consume the same recorded value.
 
 ### 2. Draft commit message
 
@@ -291,7 +291,7 @@ git add <lesson_root>/public/videos/<name>.mp4
 
 Manim source scripts (`.py`) live at the lesson root, not in a `src/manim/` subdirectory. The inventory pre-scan in Phase 1 Globs `<lesson_root>/*.py` to find them.
 
-Do not stage `lesson_build.log.md` unless the user explicitly requested tracking it in git (by default the log doc stays untracked).
+Do not stage `lesson_build.log.md` or `.lesson-builder/` unless the user explicitly requested tracking them in git (by default the rendered log and the run records it comes from both stay untracked).
 
 Always stage `<lesson_root>/.gitignore` so any newly appended entries (e.g., for freshly attached materials) persist in the repo:
 
@@ -327,7 +327,7 @@ This commit lands on `lesson-update/<slug>-YYYYMMDD`, not `main`. Pre-commit hoo
 - `push-to-github` or `push-to-custom`:
   ```bash
   git checkout main
-  git merge --no-ff <recorded branch name from the Phase 3 log>
+  git merge --no-ff <git.branch from the run record>
   ```
   `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history.
 - `commit-only`: skip the merge. The commit stays on the update branch; `main` is not touched. Log `Merge: skipped (deploy_action=commit-only) — branch: lesson-update/<slug>-YYYYMMDD` so the user can merge manually later.
@@ -345,7 +345,7 @@ On conflict (should not happen from a clean branch): halt, surface conflict file
 
 ### 7. Stash recovery
 
-If Phase 0 stashed local changes (`stashed: stash@{0} (<oid>)` in the Phase 0 log, echoed in Phase 3's `Stash ref:`), prompt the user — via `AskUserQuestion` in an interactive session; in a `channel` or `headless` session take the safe default (**leave it stashed**, log and report the OID) rather than applying a stash into a tree nobody is watching:
+If Phase 0 stashed local changes (`run-manifest.cjs get --lesson <lesson_root> git.stash_oid` returns an OID; exit 3 means it did not), prompt the user — via `AskUserQuestion` in an interactive session; in a `channel` or `headless` session take the safe default (**leave it stashed**, log and report the OID) rather than applying a stash into a tree nobody is watching:
 
 > "Restore stashed changes from `<oid>`? The stash was created before this update run to protect your uncommitted work."
 
@@ -356,15 +356,15 @@ Options:
 
 Outcomes:
 
-- **Yes → clean apply**: log `Stash recovery: applied + dropped (<oid>)`.
-- **Yes → conflict**: conflict markers land in the working tree and the stash entry is untouched (that is why `apply`, not `pop`). Surface the conflict files: "Stash apply produced conflicts in `<files>`. The stash is still intact at `<oid>` — resolve manually, then `git stash drop <oid>`." Halt Phase 5 cleanly (the merge is already pushed so deploy succeeded). Log `Stash recovery: conflict (manual)`.
-- **No**: leave the stash in place. Log `Stash recovery: manual (oid: <oid>)`.
+- **Yes → clean apply**: record `git.stash_recovery` as `applied + dropped (<oid>)`.
+- **Yes → conflict**: conflict markers land in the working tree and the stash entry is untouched (that is why `apply`, not `pop`). Surface the conflict files: "Stash apply produced conflicts in `<files>`. The stash is still intact at `<oid>` — resolve manually, then `git stash drop <oid>`." Halt Phase 5 cleanly (the merge is already pushed so deploy succeeded). Record `git.stash_recovery` as `conflict (manual)`.
+- **No**: leave the stash in place. Record `git.stash_recovery` as `manual (oid: <oid>)`.
 
-If Phase 0 did not stash (`Stash ref: none`), skip this step entirely and log `Stash recovery: none`.
+If Phase 0 did not stash, skip this step entirely and record `git.stash_recovery` as `none`.
 
 ### 8. Log deploy metadata
 
-Write to the log doc under `### Phase 5 — Deploy (update)` (nested under the current `## Update YYYY-MM-DD (run-id: <hash>)` section). Fields:
+Record as above and render; the fields land under `### Phase 5 — Deploy (update)`, nested under this run's `## Update YYYY-MM-DD (run-id: <run_id>)` section:
 
 - `Update branch: lesson-update/<slug>-YYYYMMDD`
 - `Merge commit SHA: <sha>` (from `git rev-parse HEAD` after merge, before push)
@@ -461,7 +461,7 @@ If there are no unresolved items, regression-watch entries, suggested follow-ups
 
 ## Log output
 
-The log doc lives at `<lesson_root>/lesson_build.log.md`.
+The log doc lives at `<lesson_root>/lesson_build.log.md` and is rendered from the run records beside it (`references/run-record.md`).
 
 ### New mode
 

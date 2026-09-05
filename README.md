@@ -85,7 +85,7 @@ The skill's gates assume a user at a terminal, which is one of three session mod
 - **Specialists in parallel**: graphics, manim, interactive-demo, web-image, and content agents fire concurrently. Media decisions go through one whole-lesson decider spawn.
 - **Self-contained agents**: all 12 agents bundled at `agents/`. No workspace or machine-global dir required. Agent `model:` frontmatter is a floor — main Claude picks the tier per spawn from the `effort_mode` policy in `SKILL.md` (default: Opus 5 for judgment, Sonnet 5 for production, Haiku for mechanical; Fable 5 only on an explicit deep-work signal).
 - **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code.
-- **Per-lesson log** at `<lesson_root>/lesson_build.log.md`. Main Claude owns it; updates append rather than overwrite.
+- **Per-run record** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`): scoping artifact, plan hash and approval, branch and base SHA, stash OID, media manifests, open findings. `scripts/run-manifest.cjs` is the only reader and writer, and the headless approval gate decides on it. The per-lesson log at `<lesson_root>/lesson_build.log.md` is rendered from those records; a log written before records existed is kept as it is.
 - **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, TOPIC_CONTEXT invariants, template compliance, no inlined chat, no emojis, no direct API calls).
 - **`GRAPH_SCHEMA` is mandatory**: pairs with `DEFAULT_GRAPH_PARAMS` to type-check chatbot `<<EDIT_GRAPH>>` edits. Missing schemas are backfilled in Phase 3.
 
@@ -136,7 +136,10 @@ evals/teaching/                Calibration + benchmark assets: lesson-fragments/
   checklists.md                KaTeX safety, template compliance, splice + post-splice checks
   desmos-schema.md             Desmos state schema + string-vs-number footguns
   graph-schema-guide.md        GRAPH_SCHEMA derivation + update-mode backfill
-  log-template.md              lesson_build.log.md format (new + update append)
+  log-template.md              lesson_build.log.md format, as rendered from the run records
+  run-record.md                Run record schema (lesson-run/1), run-manifest.cjs commands, gate outcomes
+scripts/run-manifest.cjs       Writes, reads, hashes and renders the run record
+tests/run-manifest/            Fixture for it: write, read, hash, render, pre-record logs (node only)
 ```
 
 ## Installation
