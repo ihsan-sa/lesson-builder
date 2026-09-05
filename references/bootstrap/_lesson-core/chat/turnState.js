@@ -21,13 +21,45 @@ export const isRestorable = (s) => !s.open;
 // so a lessons-side core that lags still resumes.
 export const isPickable = (s) => (s.resumable !== undefined ? s.resumable : !s.open);
 
-// May a thread's Stop cancel the session's turn? POST /chat/cancel kills
-// whichever turn the session is running, and a tab's main transcript and its
-// threads share one session: with a main turn streaming and this thread's
-// message queued behind it, cancelling would kill the main turn the student
-// never stopped. So only when nothing else of this tab is in flight — call it
-// after deleting this thread's own abort controller.
-export function isSoleInFlight(tabId, tabAborts, threadAborts) {
-  if (tabAborts[tabId]) return false;
-  return !Object.keys(threadAborts).some((k) => k.startsWith(tabId + ":"));
+// A thread's Stop needs no rule of its own any more: a thread runs in its own
+// forked session (proxy.js, "Thread sessions"), so cancelling it names that
+// session and can only reach that thread's process tree. The main turn's Stop
+// is just as narrow.
+
+// ── Folding a thread back ──
+// A fold puts one card in the main transcript and hands the same text to the
+// main session's next turn. Both rules below are about a turn in flight, which
+// is why they live here — and being pure, tests/thread-actors drives them
+// directly instead of guessing at Chatbot.jsx from the outside.
+
+// Where the card goes. A streaming main turn writes into the LAST message, and
+// both the stream's next chunk and its completion pass only touch the
+// transcript when that trailing message is the `_streaming` assistant bubble:
+// a card appended past it starts a second bubble, strands the first as
+// `_streaming` forever and drops the reply's suggestion/commit offers. So the
+// card goes BEFORE a streaming tail, and at the end otherwise.
+export function insertFoldCard(messages, card) {
+  const last = messages.length > 0 ? messages[messages.length - 1] : null;
+  if (last && last.role === "assistant" && last._streaming) {
+    return [...messages.slice(0, -1), card, last];
+  }
+  return [...messages, card];
+}
+
+// Which folds a restored transcript still owes the tutor. The observation
+// queue is in memory and the transcript is not, so a student who folds, reads
+// the summary and then reloads before their next message would otherwise see a
+// card saying the thread was folded back while the main session never hears
+// it. Returns the observation texts to re-queue.
+export const pendingFolds = (messages) =>
+  (messages || []).filter((m) => m.role === "fold" && m.foldPending && m.obs).map((m) => m.obs);
+
+// Which folds a turn just carried. Matched on the text the turn actually
+// drained, not on "a turn completed": a fold made WHILE a turn streams is
+// enqueued after that turn drained, so it rides the next one and must stay
+// pending. Returns the same array when nothing changed, so callers can skip
+// a pointless state update.
+export function settleFolds(messages, drained) {
+  if (!drained || !messages.some((m) => m.foldPending && m.obs && drained.includes(m.obs))) return messages;
+  return messages.map((m) => (m.foldPending && m.obs && drained.includes(m.obs)) ? { ...m, foldPending: false } : m);
 }

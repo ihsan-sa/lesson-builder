@@ -80,7 +80,7 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
 }
 
 (async () => {
-  const { isRestorable, isPickable, isSoleInFlight } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
+  const { isRestorable, isPickable } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
   const model = REAL ? "haiku" : "sonnet";
   const system = "You are a test fixture. Follow the user's instruction literally and say nothing else.";
   const init = await post("/session/init", { model, effort: "low", isolated: true, system });
@@ -132,13 +132,9 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   ok(isPickable({ open: false }) === true && isRestorable({ open: false }) === true, "client: session from a pre-`resumable` proxy stays resumable");
   ok(isPickable({ open: true }) === false && isRestorable({ open: true }) === false, "client: open session from a pre-`resumable` proxy is not");
 
-  // A thread's Stop may only cancel the session's turn when this thread's is
-  // the one running -- otherwise it would kill a main turn nobody stopped.
-  // (Called after the thread deleted its own controller, so its key is gone.)
-  ok(isSoleInFlight(7, {}, {}) === true, "client: thread Stop cancels when its thread was the only request in flight");
-  ok(isSoleInFlight(7, { 7: {} }, {}) === false, "client: thread Stop does not cancel while this tab's main turn is in flight");
-  ok(isSoleInFlight(7, {}, { "7:t2": {} }) === false, "client: thread Stop does not cancel while another thread of this tab is in flight");
-  ok(isSoleInFlight(7, { 8: {} }, { "8:t1": {} }) === true, "client: another tab's in-flight requests do not block this thread's cancel");
+  // Per-thread Stop is no longer a client-side rule to test here: a thread
+  // runs in its own forked session, so its Stop names that session and cannot
+  // reach a main turn. tests/thread-actors proves that against the proxy.
 
   if (!REAL) {
     // 3. SIGTERM ignored by the whole tree: the SIGKILL pass must end it, still <= 3s.

@@ -6,12 +6,23 @@ import { ChatBubble } from "./ChatBubble.jsx";
 // effect). Each thread has its own snippet, messages, context chips,
 // attachments, loading state, and collapse flag.
 //
+// A thread talks to its own CLI session, forked from the main conversation
+// (proxy.js, "Thread sessions"): nothing said here reaches the main tutor
+// until the student folds the thread back, which is what the ⤴ button does.
+//
 // Props:
-//   thread            { id, snippet, blockIdx, messages, collapsed, loading }
+//   thread            { id, snippet, blockIdx, messages, collapsed, loading,
+//                       sessionId, folded, folding } — sessionId is the
+//                     thread's own session, null until its first send
 //   onToggleCollapse  collapse/expand
 //   onSend            (text, contextArray|null, attachmentsArray|null)
-//   onCancel          abort the in-flight reply for this thread
+//   onCancel          stop this thread's reply (this thread's process only)
 //   onDelete          remove the thread
+//   onFold            summarize the thread into the main conversation
+//   mainBusy          true while the tab's MAIN turn is streaming. The card is
+//                     placed so it cannot split that reply, but a summary
+//                     surfacing mid-reply reads as if the tutor said it, so
+//                     the button waits for the reply to land
 //   onFocusChange     (focused: boolean) -- Chatbot routes captured lesson
 //                     context into this thread while its composer has focus
 //   onReadFiles       (FileList) => Promise<attachment[]>, supplied by Chatbot
@@ -19,7 +30,7 @@ import { ChatBubble } from "./ChatBubble.jsx";
 //   contextTrigger    { threadId, text, source, ts } from the lesson's
 //                     right-click menu, Ctrl+Shift+F, or the context sink
 export function ThreadPanel({
-  thread, onToggleCollapse, onSend, onCancel, onDelete,
+  thread, onToggleCollapse, onSend, onCancel, onDelete, onFold, mainBusy,
   onFocusChange, onReadFiles, contextTrigger,
 }) {
   const [threadInput, setThreadInput] = useState("");
@@ -92,7 +103,18 @@ export function ThreadPanel({
           {thread.collapsed ? "▶" : "▼"}
         </button>
         <span className="thread-snippet">"{snippetPreview}"</span>
-        <span className="thread-count">{thread.messages.length > 0 ? `${thread.messages.length}` : "new"}</span>
+        <span className="thread-count">{thread.folded ? "folded" : thread.messages.length > 0 ? `${thread.messages.length}` : "new"}</span>
+        {/* Fold: the only route out of a thread. Offered once the thread has a
+            session of its own to summarize, and once only — a second fold
+            would put a second summary into the main conversation. */}
+        {thread.sessionId && !thread.folded && (
+          <button
+            className="thread-fold-btn"
+            disabled={!!thread.folding || !!thread.loading || !!mainBusy}
+            onClick={(e) => { e.stopPropagation(); onFold?.(); }}
+            title={mainBusy ? "Wait for the main reply to finish" : "Summarize this thread into the main conversation"}
+          >{thread.folding ? "…" : "⤴"}</button>
+        )}
         <button className="thread-close-btn" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Delete thread">{"✕"}</button>
       </div>
       {!thread.collapsed && (
@@ -124,7 +146,13 @@ export function ThreadPanel({
               <button className="thread-stop" onClick={(e) => { e.stopPropagation(); onCancel?.(); }} title="Stop generating">{"■"}</button>
             </div>
           )}
-          {!thread.loading && (
+          {/* Folding runs a turn on this thread's own CLI session. The
+              composer goes away until it lands: two turns resuming one session
+              at once and one of them is dropped. */}
+          {thread.folding && !thread.loading && (
+            <div className="thread-folding-note">Folding this thread back...</div>
+          )}
+          {!thread.loading && !thread.folding && (
             <>
               {threadAtts.length > 0 && (
                 <div className="thread-att-bar">
