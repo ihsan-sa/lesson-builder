@@ -4,23 +4,23 @@ Contents: Ordering (branch on deploy_action) · Step 1 build verification · Ste
 
 ## Purpose
 
-Phase 5 runs local build verification as a gate, commits, pushes to `main` (directly in new mode, via `--no-ff` merge from the update branch in update mode), logs deploy metadata, and surfaces the final report. Update-mode commits land on `lesson-update/<slug>-YYYYMMDD` and merge only after build verification. Update mode also handles stash recovery; branch + stash stay untouched on any failure.
+Phase 5 runs local build verification as a gate, commits, pushes to `main` (directly in new mode, via `--no-ff` merge from the update branch in update mode), logs deploy metadata, and surfaces the final report. Update-mode commits land on `lesson-update/<slug>-YYYYMMDD` and merge only after build verification — all of it inside the run's build worktree, so the user's checkout is not written to at any point. Update mode ends by pruning that worktree; branch + worktree stay untouched on any failure.
 
 ## Ordering inside Phase 5
 
 0. **Read deploy intent from the approved plan** (`deploy_action`, `deploy_service`, `deploy_service_kind`). Branch on `deploy_action`:
-   - `skip`: run step 1 (build verification, as a sanity check so the user knows whether their lesson builds) and step 3 (stash recovery, because the stash is user data that predates this run — not a deploy step). Skip step 1.5 (no commit happening), step 2 (commit + push), step 4's deploy-metadata fields, and reduce step 5 to a short "skipped" report. New-mode files remain uncommitted under the lesson root; update-mode branch + stash remain as Phase 3 left them (minus any popped stash).
+   - `skip`: run step 1 (build verification, as a sanity check so the user knows whether their lesson builds) and step 3 (worktree cleanup, which under `skip` means reporting the worktree rather than pruning it). Skip step 1.5 (no commit happening), step 2 (commit + push), step 4's deploy-metadata fields, and reduce step 5 to a short "skipped" report. New-mode files remain uncommitted under the lesson root; the update-mode branch and the build worktree remain as Phase 3 left them, the uncommitted build still in it.
    - `commit-only`: run steps 1, 1.5, 2 (commit, no push), 3, 4, 5.
    - `push-to-github`: run the full pipeline unchanged (steps 1, 1.5, 2, 3, 4, 5).
    - `push-to-custom`: same as `push-to-github` but step 2's push targets the remote/service recorded in `deploy_service` according to `deploy_service_kind` (see step 2).
 1. Local build verification (hard gate — halt the phase on failure; runs under every `deploy_action` including `skip` as a lesson-works sanity check)
 1.5 Materials-in-commit question (conditional — only when `provided_materials` is non-empty AND `deploy_action ∈ {"push-to-github", "push-to-custom", "commit-only"}`; captures `include_materials_in_commit: true | false | "custom:<list>"`)
 2. Mode-branched commit + push (new mode: direct to main; update mode: branch commit → merge → push; entirely skipped when `deploy_action == "skip"`)
-3. Stash recovery prompt (update mode only, if Phase 3 stashed — runs under every `deploy_action` because the stash is user data, not a deploy artifact)
+3. Worktree cleanup (update mode only — runs under every `deploy_action`, and prunes only a worktree whose work is committed and kept by a ref)
 4. Log append
 5. Final report to user
 
-Build verification failure halts steps 1.5 and 2 regardless of `deploy_action` — if the lesson doesn't build, committing or pushing is unsafe. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Step 3 (stash recovery) always runs in update mode — even after a build failure — so the user's uncommitted work doesn't get stranded.
+Build verification failure halts steps 1.5 and 2 regardless of `deploy_action` — if the lesson doesn't build, committing or pushing is unsafe. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Step 3 always runs in update mode — even after a build failure — and after one it reports the worktree path rather than pruning it, because the build in there is the thing the user needs to look at.
 
 ## Step 1 — Local build verification (gate)
 
@@ -57,11 +57,18 @@ Prefer `@playwright/mcp` if it is available. Otherwise fall back to a Node scrip
 
 ### Failure mode
 
-Any failure (`build-all.sh` non-zero, missing `index.html`, smoke-check fail) halts Phase 5 **before** any `git add/commit/merge`. Log the specific error (stderr, stack trace, console). Surface to the user. Update mode: branch and stash stay untouched.
+Any failure (`build-all.sh` non-zero, missing `index.html`, smoke-check fail) halts Phase 5 **before** any `git add/commit/merge`. Log the specific error (stderr, stack trace, console). Surface to the user. Update mode: branch and worktree stay untouched, and the user's checkout was never written to in the first place.
 
 ### Update mode note
 
-`build-all.sh` runs against the update branch (`lesson-update/<slug>-YYYYMMDD`), not `main`. Do not switch to `main` for the build.
+`build-all.sh` runs inside the build worktree, against the update branch (`lesson-update/<slug>-YYYYMMDD`), not `main`, and not in the user's checkout:
+
+```bash
+WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)
+cd "$(git -C "$WT" rev-parse --show-toplevel)" && bash build-all.sh
+```
+
+Do not switch any branch to build. `<workspace_root>` throughout the update-mode steps below means that worktree root, and `<lesson_root>` means `$WT`.
 
 ## Step 1.5 — Gitignore-override question (conditional)
 
@@ -168,7 +175,7 @@ git add <workspace_root>/<deploy-config-file>
 Always stage the lesson's `.gitignore` alongside the code so the privacy baseline persists in the repo:
 
 ```bash
-git add <lesson_root>/.gitignore
+git -C "$WT" add .gitignore
 ```
 
 **Gitignore override staging** (conditional on Step 1.5's `gitignore_override`):
@@ -243,15 +250,22 @@ See "Final report format" below.
 
 ## Step 2b — Update-mode deploy
 
-### 1. Verify current branch
+### 1. Verify the worktree and its branch
 
-Before anything else, confirm the current branch equals `git.branch` in the run record — `run-manifest.cjs get --lesson <lesson_root> git.branch`, which includes any collision suffix like `-a`. Never reconstruct the name from slug + date, and never read it out of the log:
+Before anything else, read the run's own paths and names out of the record and confirm the worktree is on the branch it should be. Never reconstruct the branch name from slug + date, and never read it out of the log:
 
 ```bash
-git rev-parse --abbrev-ref HEAD
+WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)      # exit 3 → no worktree: this is
+                                                                    # a record from the old stash
+                                                                    # flow, see the recovery path
+BR=$(run-manifest.cjs get --lesson <lesson_root> git.branch)        # incl. any collision suffix
+BASE=$(run-manifest.cjs get --lesson <lesson_root> git.base_branch)
+git -C "$WT" rev-parse --abbrev-ref HEAD                            # must equal "$BR"
 ```
 
-If the output differs from the recorded value (especially `main`), halt the phase immediately — Phase 3 did not create the branch, or the branch was switched away in an earlier phase, or the stash/branch state is corrupted. Surface this to the user with the actual branch name and the recorded one. All later merge and render steps in this phase consume the same recorded value.
+If the branch differs from the recorded value, halt the phase immediately — Phase 3 did not create it, or something switched it. Surface the actual branch name and the recorded one. If `git.worktree` is unset, this run predates the worktree flow: recover it by the path in `references/update-mode.md` § Recovering a run from the old stash flow rather than improvising here. All later merge and render steps consume the same recorded values.
+
+Every git command in this step runs with `-C "$WT"` (or from the worktree root). The user's checkout is not read from, not switched, and not written to.
 
 ### 2. Draft commit message
 
@@ -278,20 +292,22 @@ Example:
 Only stage files actually touched by the update. Typical set:
 
 ```bash
-git add <lesson_root>/src/<slug>.jsx
-git add <lesson_root>/public/<refreshed-asset>
+git -C "$WT" add src/<slug>.jsx
+git -C "$WT" add public/<refreshed-asset>
 ```
 
 Additional paths if the update touched manim videos or interactive demos:
 
 ```bash
-git add <lesson_root>/<name>.py
-git add <lesson_root>/public/videos/<name>.mp4
+git -C "$WT" add <name>.py
+git -C "$WT" add public/videos/<name>.mp4
 ```
 
 Manim source scripts (`.py`) live at the lesson root, not in a `src/manim/` subdirectory. The inventory pre-scan in Phase 1 Globs `<lesson_root>/*.py` to find them.
 
-Do not stage `lesson_build.log.md` or `.lesson-builder/` unless the user explicitly requested tracking them in git (by default the rendered log and the run records it comes from both stay untracked).
+Do not stage `lesson_build.log.md` or `.lesson-builder/` unless the user explicitly requested tracking them in git (by default the rendered log and the run records it comes from both stay untracked). In the worktree the only thing under `.lesson-builder/` is the pointer back to the record, and the lesson's `.gitignore` already covers it.
+
+Stage everything the update wrote. Whatever is left uncommitted keeps the worktree from being pruned at step 3 — by design, so no build is deleted — and the phase will report the path instead.
 
 Always stage `<lesson_root>/.gitignore` so any newly appended entries (e.g., for freshly attached materials) persist in the repo:
 
@@ -310,7 +326,7 @@ If the update run wrote a new materials file and the user kept the default (no o
 ### 4. Commit to branch
 
 ```bash
-git commit -m "$(cat <<'EOF'
+git -C "$WT" commit -m "$(cat <<'EOF'
 <slug>: update — <short summary>
 
 - <change 1>
@@ -320,56 +336,97 @@ EOF
 )"
 ```
 
-This commit lands on `lesson-update/<slug>-YYYYMMDD`, not `main`. Pre-commit hooks still apply; same rules as new mode (no `--no-verify`, no `--amend`, re-stage and create a new commit on hook failure).
+This commit lands on `lesson-update/<slug>-YYYYMMDD` in the worktree, not `main`. Pre-commit hooks still apply; same rules as new mode (no `--no-verify`, no `--amend`, re-stage and create a new commit on hook failure).
 
 ### 5. Merge to main (conditional on `deploy_action`)
 
-- `push-to-github` or `push-to-custom`:
+- `push-to-github` or `push-to-custom`: merge in the worktree, on a detached HEAD, so no branch anyone has checked out moves.
   ```bash
-  git checkout main
-  git merge --no-ff <git.branch from the run record>
+  git -C "$WT" checkout --detach "$BASE"
+  git -C "$WT" merge --no-ff "$BR"
+  MERGE=$(git -C "$WT" rev-parse HEAD)
+  RUN=$(run-manifest.cjs current --lesson <lesson_root>)
+  git -C "$WT" update-ref "refs/lesson-builder/$RUN/merge" "$MERGE"
   ```
-  `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history.
-- `commit-only`: skip the merge. The commit stays on the update branch; `main` is not touched. Log `Merge: skipped (deploy_action=commit-only) — branch: lesson-update/<slug>-YYYYMMDD` so the user can merge manually later.
+  `--no-ff` forces a merge commit even when fast-forward is possible, preserving the update as a visible unit in history. The `refs/lesson-builder/<run_id>/merge` ref is what keeps that commit reachable once the worktree is pruned at step 3 — a detached HEAD is not a ref, and an unreferenced merge commit is a commit git is free to collect.
 
-On conflict (should not happen from a clean branch): halt, surface conflict files, do not auto-resolve. The user resolves manually. Branch and stash stay intact.
+  Then move `refs/heads/<base>` **only if no working tree has it checked out**:
+
+  ```bash
+  git -C "$WT" worktree list --porcelain | grep -qx "branch refs/heads/$BASE" \
+    || git -C "$WT" update-ref "refs/heads/$BASE" "$MERGE" "$(git -C "$WT" rev-parse "$MERGE^1")"
+  ```
+
+  The compare-and-swap old value is the merge's own first parent — the base branch's tip at merge time — so the update is refused rather than applied blind if the branch moved meanwhile.
+
+  When a working tree does hold it, which is the normal case because that working tree is the user's, leave the ref exactly where it is. Git refuses to push or fetch into a branch a working tree has checked out for the reason that applies here: moving the ref under a checkout leaves its index and its files describing a commit its `HEAD` no longer names, which reads as a staged revert of the entire update. The push below still publishes the merge, and step 5 of the report gives the user the one command that fast-forwards their own checkout when they are ready:
+
+  ```
+  git -C <workspace_root> merge --ff-only <MERGE>
+  ```
+
+  Record which of the two happened as a note, so the log says whether the local branch moved:
+
+  ```bash
+  run-manifest.cjs append --lesson <lesson_root> phases.5.notes \
+    '"Base branch main: not moved (the user'"'"'s checkout holds it) — fast-forward with git merge --ff-only <MERGE>"'
+  ```
+- `commit-only`: skip the merge. The commit stays on the update branch; the base branch is not touched. Log `Merge: skipped (deploy_action=commit-only) — branch: lesson-update/<slug>-YYYYMMDD` so the user can merge manually later.
+
+On conflict (should not happen from a clean branch): halt, surface conflict files, do not auto-resolve. The user resolves manually. Branch and worktree stay intact, and the user's checkout — which the merge never went near — is untouched.
 
 ### 6. Push (conditional on `deploy_action`)
 
 - `push-to-github`:
   ```bash
-  git push origin main
+  git -C "$WT" push origin "$MERGE:$BASE"
   ```
-- `push-to-custom`: branch on `deploy_service_kind` — `"git-remote"` uses `git push custom-deploy main` (after `git remote add` if needed); `"cli"` runs `deploy_service` from `<workspace_root>`. Same rules as new-mode Step 2a.5.
+  Pushing the merge SHA by name rather than pushing a local branch is what makes the push identical whether or not `refs/heads/<base>` moved above.
+- `push-to-custom`: branch on `deploy_service_kind` — `"git-remote"` uses `git -C "$WT" push custom-deploy "$MERGE:$BASE"` (after `git remote add` if needed); `"cli"` runs `deploy_service` from the worktree root. Same rules as new-mode Step 2a.5.
 - `commit-only`: skip. Log `Push: skipped (deploy_action=commit-only)`.
 
-### 7. Stash recovery
+### 7. Worktree cleanup
 
-If Phase 0 stashed local changes (`run-manifest.cjs get --lesson <lesson_root> git.stash_oid` returns an OID; exit 3 means it did not), prompt the user — via `AskUserQuestion` in an interactive session; in a `channel` or `headless` session take the safe default (**leave it stashed**, log and report the OID) rather than applying a stash into a tree nobody is watching:
+The build worktree has done its job once the merge is made and pushed. Prune it:
 
-> "Restore stashed changes from `<oid>`? The stash was created before this update run to protect your uncommitted work."
+```bash
+run-manifest.cjs worktree remove --lesson <lesson_root>
+```
 
-Options:
+There is no user gate here and nothing to prompt for — nothing of the user's is in that directory,
+because nothing of the user's was ever put there. The command is its own guard: it **refuses**
+(exit 7, nothing removed) while the worktree holds uncommitted changes, or sits on a commit no ref
+keeps. That is the rollback invariant expressed once, in code, so every path through this phase gets
+it:
 
-- `Yes, restore now` — first confirm the current branch is where the user wants the work restored (after a merge that is `main`; under `commit-only`/`skip` offer to `git checkout` back to the branch the stash was taken on before applying — restoring user work onto the update branch strands it there). Then run `git stash apply <oid>` — apply by the recorded OID, never bare `git stash pop`, which grabs whatever happens to be stash@{0} (possibly a newer, unrelated stash). On clean apply, `git stash drop <oid>`.
-- `No, leave it stashed for later` — log the OID for manual recovery.
+- **`deploy_action: skip`** — nothing was committed, so the build is uncommitted in there and the
+  removal is refused. Expected. Report the path; the user keeps or discards the build themselves.
+- **After a build-verify or Phase 4 failure** — the same refusal for the same reason, and the same
+  report. The run's work stays on disk to inspect or finish by hand.
+- **`commit-only`** — the commit is on the update branch, which keeps it, so the worktree prunes
+  cleanly and the branch is what the user merges later.
+- **After a merge and push** — the merge is kept by `refs/lesson-builder/<run_id>/merge` and its
+  parent by the branch, so it prunes cleanly.
 
-Outcomes:
+Record the outcome as a note when the removal was refused, with the path, so the final report and
+the log both name it:
 
-- **Yes → clean apply**: record `git.stash_recovery` as `applied + dropped (<oid>)`.
-- **Yes → conflict**: conflict markers land in the working tree and the stash entry is untouched (that is why `apply`, not `pop`). Surface the conflict files: "Stash apply produced conflicts in `<files>`. The stash is still intact at `<oid>` — resolve manually, then `git stash drop <oid>`." Halt Phase 5 cleanly (the merge is already pushed so deploy succeeded). Record `git.stash_recovery` as `conflict (manual)`.
-- **No**: leave the stash in place. Record `git.stash_recovery` as `manual (oid: <oid>)`.
+```bash
+run-manifest.cjs append --lesson <lesson_root> phases.5.notes \
+  '"Build worktree kept at <path> — it holds work no commit does"'
+```
 
-If Phase 0 did not stash, skip this step entirely and record `git.stash_recovery` as `none`.
+`git.worktree_state` goes to `removed` on a successful prune and stays `live` otherwise;
+`worktree remove` writes it, nothing else does.
 
 ### 8. Log deploy metadata
 
 Record as above and render; the fields land under `### Phase 5 — Deploy (update)`, nested under this run's `## Update YYYY-MM-DD (run-id: <run_id>)` section:
 
 - `Update branch: lesson-update/<slug>-YYYYMMDD`
-- `Merge commit SHA: <sha>` (from `git rev-parse HEAD` after merge, before push)
-- `Stash ref: <ref or "none">`
-- `Stash recovery: auto-popped | manual | conflict (manual) | none`
+- `Merge commit SHA: <sha>` (`$MERGE` from step 5, recorded as `git.commit_sha`)
+- `Worktree: <path> (live | removed)`
+- `Base branch: moved | not moved (the user's checkout holds it)`
 - `Deploy dashboard URL: <host-specific>`
 
 ### 9. Surface final report
@@ -389,18 +446,18 @@ Whether the edit is committed follows the run's own `deploy_action`: under `push
 
 ## Rollback on failure (update mode)
 
-Three failure points in Phase 5 trigger the same behavior: **do not merge, preserve branch, preserve stash**.
+Three failure points in Phase 5 trigger the same behavior: **do not merge, preserve branch, preserve worktree**. The user's own checkout needs no preserving: no phase of the run wrote to it.
 
-1. **Phase 4 halted for a fundamental flaw**: Phase 5 still runs build verification (to confirm the current state builds), but even on pass, the skill does not merge if Phase 4 raised a fundamental-flaw halt. The update branch stays in place; the stash stays in place; the final report surfaces the branch name and stash ref plus Phase 4's diagnosis so the user can iterate manually.
-2. **Phase 5 build verification fails**: same behavior. The `build-all.sh` or smoke check failure is logged with specific error output. No commit, no merge, no push. Branch and stash untouched.
-3. **`git merge --no-ff` produces conflicts**: should not happen on a clean branch from a fresh checkout, but defensive. Halt, surface conflict files, do not attempt auto-resolve. The user's next step is to `git checkout main && git merge --abort` (or resolve manually), then rerun Phase 5 or hand-merge.
+1. **Phase 4 halted for a fundamental flaw**: Phase 5 still runs build verification (to confirm the current state builds), but even on pass, the skill does not merge if Phase 4 raised a fundamental-flaw halt. The update branch stays in place; the build worktree stays in place; the final report surfaces the branch name and the worktree path plus Phase 4's diagnosis so the user can iterate manually.
+2. **Phase 5 build verification fails**: same behavior. The `build-all.sh` or smoke check failure is logged with specific error output. No commit, no merge, no push. Branch and worktree untouched.
+3. **`git merge --no-ff` produces conflicts**: should not happen on a branch taken from the base SHA, but defensive. Halt, surface conflict files, do not attempt auto-resolve. The conflict is on the worktree's own detached HEAD, so the next step is `git -C <worktree> merge --abort` (or resolve it there), then rerun Phase 5 or hand-merge. The user's checkout is not in the conflicted state and never was.
 
 In all three cases:
 
 - The update branch is **never** force-deleted by the skill.
-- The stash is **never** dropped by the skill.
+- A worktree holding work is **never** removed by the skill — `worktree remove` refuses, and the phase reports the path.
 - The user decides whether to keep the branch or `git branch -D lesson-update/<slug>-YYYYMMDD` manually after recovery.
-- The final report lists the branch name and stash ref explicitly so recovery commands are visible.
+- The final report lists the branch name and the worktree path explicitly so recovery commands are visible.
 
 ## Hosted deploy
 
@@ -452,9 +509,10 @@ The final report is surfaced to the user as the last action of Phase 5 (after al
 - <actionable next step 1>
 - <actionable next step 2>
 
-## Stash recovery              (update mode only, if applicable)
-- Stash ref: <ref>
-- Status: auto-popped | manual | conflict (manual) | none
+## Your working tree           (update mode only)
+- Untouched from start to finish — the run built in <worktree path>, never in your checkout.
+- Local <base branch>: moved | not moved (your checkout has it) — fast-forward with `git merge --ff-only <merge sha>`
+- Build worktree: removed | kept at <path> (it holds work no commit does)
 ```
 
 If there are no unresolved items, regression-watch entries, suggested follow-ups, or orphan cleanup actions, the section heading is kept with "none" as the body so the user sees the absence explicitly. The orphan cleanup section is omitted entirely only when the Phase 1 inventory reported zero orphans (nothing to surface).
@@ -479,6 +537,8 @@ Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
 Push result: ok (origin main) | ok (<custom-remote>) | skipped
+Base branch: moved | not moved (the user's checkout holds it) — ff with git merge --ff-only <sha>
+Build worktree: removed | kept at <path> (it holds work no commit does)
 Deploy dashboard URL: <host-specific>
 Live URL: <host-specific>
 
@@ -492,7 +552,7 @@ When `deploy_action == "skip"`, record `scoping.deploy_action` as `skip` and a s
 
 ### Update mode
 
-Same commands; `render` nests the section under this run's `## Update YYYY-MM-DD (run-id: <run_id>)` heading as `### Phase 5 — Deploy (update)`. The stash fields come from `git.stash_oid` and `git.stash_recovery`, not from a note:
+Same commands; `render` nests the section under this run's `## Update YYYY-MM-DD (run-id: <run_id>)` heading as `### Phase 5 — Deploy (update)`:
 
 ```
 ### Phase 5 — Deploy (update)
@@ -500,7 +560,6 @@ Deploy action: push-to-github | push-to-custom | commit-only | skip     # scopin
 Deploy service kind: git-remote | cli | null                            # scoping.deploy_service_kind
 Deploy service: <remote URL / CLI / null>                               # scoping.deploy_service
 Commit SHA: <merge sha | branch sha when the merge was skipped>         # git.commit_sha
-Stash recovery: applied + dropped (<oid>) | manual (oid: <oid>) | conflict (manual) | none
 Build verification: PASS                                                # phases.5.notes, in this order
 Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, topics OK, graphs OK, console clean
@@ -516,6 +575,6 @@ Live URL: <host-specific>
 <the record's open findings + regression watch>
 ```
 
-`Stash recovery` comes from `git.stash_recovery` (step 7 above). The update branch and the stash **ref** are not repeated here — they render once, under Phase 3, from `git.branch` and `git.stash_oid`.
+The last two lines are the step-5 and step-7 notes. The update branch and the worktree **path** are not repeated as record fields here — they render once, under Phase 3, from `git.branch` and `git.worktree`; a record from the old flow renders its stash there too, marked legacy.
 
 On build-verification failure, record `Build verification: FAIL`, `Halted: yes` and the error excerpt as `phases.5.notes` entries, and re-render. No commit/merge/push fields are recorded because those steps did not run.

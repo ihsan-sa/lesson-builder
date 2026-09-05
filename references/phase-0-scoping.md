@@ -58,7 +58,7 @@ What it changes inside Phase 0:
 - **`channel`** — the same questions, posted as **one message** with the options written out, answered in the user's own words. Batch harder than the 4-per-call dialog limit suggests: a course-channel user will answer a compact numbered list in one reply, and a second round-trip costs minutes, not milliseconds.
 - **`headless`** — the interview does not run and does not block. Take the aggressive defaults at the end of this doc (extended to new mode, which normally forbids them), fill everything `COURSE.md` can supply (§ Course context), and carry the result into Phase 2's `PLAN FOR APPROVAL` block as an `ASSUMPTIONS` section. The one blocking gate then covers scoping and plan together. Never invent a `course` or `slug` this way — if neither the task text nor `COURSE.md` names the target lesson, that is a no-safe-default gate: block.
 
-The working-tree question (update-mode Q2) is the one Phase 0 gate that can destroy work. In `channel` and `headless` sessions its safe default is **abort**, never stash-and-continue and never discard.
+The working-tree question (update-mode Q2) used to be the one Phase 0 gate that could destroy work. It no longer can: the run builds from the recorded base SHA in a worktree of its own, so there is nothing to stash and nothing to discard. In `channel` and `headless` sessions its safe default is therefore **continue**, with the dirty paths reported as not being in what the run builds from.
 
 ## Course context
 
@@ -138,23 +138,55 @@ Pre-checks run first:
 
 1. **Mode confirmation** — "I detected an update to `<course>/claude_lessons/<slug>` at `<workspace_root>/<course>/claude_lessons/<slug>/`. Is that the lesson to revise?" Options: `Yes, update that lesson`, `Different lesson (specify course and slug)`, `Actually a brand-new lesson (switch to new mode)`. If `candidate_root` is null, rephrase as "Which existing lesson should I update?" with free-text or a Glob-enumerated option list.
 
-2. **Working-tree check** — only surfaced if `git status --short <lesson_root>` returned non-empty. "Your working tree has uncommitted changes in `<lesson_root>`. How should I proceed?" Options: `Stash them and continue (I'll record the stash ref for recovery)`, `Abort — I'll commit first and rerun`, `Discard them (destructive, requires explicit confirm)`. If clean, skip the question entirely and log `Working tree: clean`.
+2. **Working-tree check** — only surfaced if `git status --short <lesson_root>` returned non-empty. "Your working tree has uncommitted changes in `<lesson_root>`. This run builds from the last commit on `<base branch>`, in a worktree of its own, so those edits are neither included nor touched." Options: `Continue (my edits stay exactly as they are)`, `Abort — I'll commit them first and rerun`. There is no third option: nothing here stashes and nothing discards. If clean, skip the question entirely and log `Working tree: clean`.
 
-   **Phase 0 owns the stash.** On the stash choice, run it now — `git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>` — then capture the stable OID via `git rev-parse stash@{0}` and record it:
+   **Read-only.** The check runs `git status --short <lesson_root>` and writes nothing. Record what it saw, one word plus the count, and move on:
 
    ```bash
-   run-manifest.cjs set --lesson <lesson_root> git.stash_oid    "$(git rev-parse stash@{0})"
-   run-manifest.cjs set --lesson <lesson_root> git.stash_ref    'stash@{0}'
-   run-manifest.cjs set --lesson <lesson_root> git.stash_branch "$(git rev-parse --abbrev-ref HEAD)"
+   run-manifest.cjs set --lesson <lesson_root> scoping.working_tree \
+     "dirty: N path(s) uncommitted, not in the base SHA this run builds from"   # or "clean"
    ```
 
-   Phases 3 and 5 read `git.stash_oid` from the record and never stash again; positional `stash@{0}` alone is not durable if anything else stashes in between, which is why the OID is the referent and the ref rides along only for the reader.
+   `git.stash_oid`, `git.stash_ref` and `git.stash_branch` belong to the old flow, which stashed the user's tree and built in it. `run-manifest.cjs set` refuses to write them; only recovery of a run left over from that flow reads them (`references/update-mode.md` § Recovering a run from the old stash flow).
 
 3. **Research depth** — "How deep should the research re-sweep be?" Options: `Full (comprehensive re-research — treats the lesson like a new build; default when resource_mode is full and quality is the priority)`, `Targeted (re-research specific topics you name — good balance when only part of the lesson needs a fresh look)`, `Light (minimal re-research — work from existing content, your concerns, and any new materials; default when resource_mode is limited)`. Default is `full` when `resource_mode: "full"` and the update scope is broad; `targeted` when the scope is narrow; `light` only when `resource_mode: "limited"` or the user explicitly requested a shallow pass.
 
 4. **Scope of change** — "Which topics or sections need work?" Options: `Any topic (open-ended review — the orchestrator picks)`, `Specific topics (free-text list of topic ids or titles)`, `Replace whole lesson structure (warning: this is close to a rewrite — consider new mode instead)`. If the user picks the third option, warn and offer to switch to new mode before proceeding.
 
 5. **Media hints (optional)** — "Any media you specifically want kept, refined, replaced, removed, or added?" Free-text. Advisory hints only; feeds into `medium-decider-agent` in Phase 2 but doesn't override its verdict.
+
+### The base SHA and the build worktree (update mode only)
+
+Runs after the questions, once the lesson root is settled. It is the last thing Phase 0 does in the
+user's checkout, and it only reads there. Everything the run builds happens in the worktree it opens
+here — `references/update-mode.md` §5 is the invariant this implements.
+
+```bash
+cd <workspace_root>
+git rev-parse --abbrev-ref origin/HEAD       # `origin/<base>` → the workspace default branch,
+                                             # normally main; no remote HEAD → use `main`
+git rev-list --count <base>..origin/<base>   # not 0 → the default branch is behind its upstream:
+                                             # halt and say so, because the merge this run
+                                             # produces could not be pushed. The user
+                                             # fast-forwards and reruns; nothing is built.
+run-manifest.cjs set --lesson <lesson_root> git.base_branch <base>
+run-manifest.cjs set --lesson <lesson_root> git.base_sha "$(git rev-parse refs/heads/<base>)"
+run-manifest.cjs worktree add --lesson <lesson_root>   # prints the lesson root to build in
+```
+
+The base SHA is the tip of the default branch, not `HEAD` — what the user's checkout happens to be
+on, and whether it is dirty, changes nothing about what the run builds from.
+
+`worktree add` records `git.worktree` (the lesson root inside the worktree) and `git.worktree_state`,
+and leaves the pointer that lets `run-manifest.cjs` find this record from in there. Read the path
+back with `run-manifest.cjs get --lesson <lesson_root> git.worktree` — every phase from 1 on uses it
+as its `<lesson_root>`, and the record, the staging area and the rendered log stay where they are.
+Calling `worktree add` again is how a resumed run picks its worktree back up, with whatever it had
+already built still in it.
+
+No branch is created here. The worktree sits detached on the base SHA until Phase 3 names the
+branch, so a run the user aborts at the Phase 2 gate leaves nothing behind but a directory the
+lesson's `.gitignore` already covers.
 
 ### Still asked in update mode (not auto-populated)
 
@@ -235,7 +267,7 @@ research_depth: "light" | "targeted" | "full"
 scope_of_change: "any" | "specific" | "full-replace"
 scope_topics: [...]  # only when scope_of_change == "specific"
 media_hints: [...]
-working_tree_state: "clean" | "stashed: <stash-ref>" | "discarded"
+working_tree_state: "clean" | "dirty: N path(s) uncommitted, not in the base SHA this run builds from"
 ```
 
 ### Example — new mode
@@ -322,7 +354,8 @@ The fields to set, all under `scoping.` unless named otherwise:
 - **Mode confirmed**: `mode_confirmed` — `YES`, or the user-corrected mode if they overrode detection.
 - **Gate forms**: `gate_delivery` — when `session_mode` is not `interactive`, the form each gate will take. (`session_mode` itself was set at `init`.)
 - **Course context** (when `<course>/COURSE.md` exists): `course_context` — `COURSE.md read — map row <row>, N pending chunks, conventions applied: <fields>`.
-- **Working tree state** (update mode only): a stash goes in `git.stash_oid` / `git.stash_ref` / `git.stash_branch` per Q2 above, which renders as `Working tree state:`; a `discarded` tree goes in `scoping.working_tree` since there is no ref to keep.
+- **Working tree state** (update mode only): the word Q2 above recorded, in `scoping.working_tree`, which renders as `Working tree state:`. `clean` renders when nothing was recorded; a run that recorded `dirty: ...` renders that, never `clean`. The stash fields render only on a record from the old flow, marked legacy.
+- **Base SHA and worktree** (update mode only): `git.base_branch` and `git.base_sha` per the section above; `git.worktree` and `git.worktree_state` are written by `worktree add`, never by hand.
 - **Scoping artifact**: every field of the YAML-ish block from the section above, one `set scoping.<field>` each, including `resource_mode`, `deploy_action`, `deploy_service_kind` and `deploy_service` — the next update reads that deploy triple back from this record.
 - **Timestamps**: the record's `started` is phase start; set `scoping.phase0_ended` at phase end. ISO 8601.
 - **User answers (raw)**: `scoping.user_answers` — the verbatim answers, in order, for traceability when things go sideways later — or, in a `headless` run, the assumed values with their source.
@@ -333,4 +366,4 @@ Full log skeleton lives in `references/log-template.md`; the record's schema in 
 
 ## Handoff to Phase 1
 
-Once the scoping artifact is recorded and the log re-rendered, main Claude proceeds to Phase 1: it runs the worker fan-out itself (extraction/research spawns persisting to `.build-scratch/evidence/`), then spawns `content-orchestrator-agent` to synthesize — new mode with the artifact + evidence dir; update mode additionally with the existing-media inventory pre-scan (generated by main Claude via Grep/Glob — see `references/phase-1-content.md`). No content work happens without a completed scoping artifact; Phase 0 is a hard gate.
+Once the scoping artifact is recorded, the build worktree opened (update mode) and the log re-rendered, main Claude proceeds to Phase 1 — reading and writing under `git.worktree`, never in the user's checkout: it runs the worker fan-out itself (extraction/research spawns persisting to `.build-scratch/evidence/`), then spawns `content-orchestrator-agent` to synthesize — new mode with the artifact + evidence dir; update mode additionally with the existing-media inventory pre-scan (generated by main Claude via Grep/Glob — see `references/phase-1-content.md`). No content work happens without a completed scoping artifact; Phase 0 is a hard gate.

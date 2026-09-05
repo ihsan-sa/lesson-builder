@@ -24,10 +24,26 @@
  *   run-manifest.cjs promote  --lesson <dir> [--run <id>] --media-id <id> --from <staged path>
  *                             --to <lesson-relative path> [--min-bytes <n>] [--at <iso>]
  *   run-manifest.cjs fail     --lesson <dir> [--run <id>] --media-id <id> --reason <text>
+ *   run-manifest.cjs worktree add    --lesson <dir> [--run <id>]
+ *   run-manifest.cjs worktree remove --lesson <dir> [--run <id>]
  *   run-manifest.cjs render   --lesson <dir>
  *
  * `--run` defaults to the newest record in the lesson. Dotted <path>s index into the record
  * (`git.base_sha`, `plan.approval.state`, `phases.3.notes`).
+ *
+ * The build worktree: an update builds in a git worktree of its own, checked out from the base SHA
+ * the record holds, at `.lesson-builder/worktrees/<run_id>/` — inside the directory the lesson's
+ * .gitignore already covers, so the user's `git status` never sees it and the user's working tree is
+ * never stashed, switched or written to. `worktree add` creates it (detached at `git.base_sha`, or
+ * on `git.branch` once Phase 3 has named one) and records `git.worktree` + `git.worktree_state`;
+ * `worktree remove` prunes it, and refuses while it holds work no branch keeps. `.lesson-builder/`
+ * is gitignored, so the checkout does not contain the run's records: `worktree add` leaves a
+ * one-line pointer at `<worktree lesson root>/.lesson-builder/record-root` naming the lesson root
+ * that does hold them, and every read and write of a record, a staging path and the rendered log
+ * follows it. One hop only — a pointer naming another pointer is refused, not followed.
+ *
+ * `git.stash_oid`, `git.stash_ref` and `git.stash_branch` are legacy: a run under the old
+ * stash-the-user's-tree flow wrote them, recovery reads them, and `set` refuses to write them.
  *
  * Stage, validate, promote: a producer writes only into the run staging area
  * (`.lesson-builder/staging/<run_id>/<media_id>/`, printed by `stage`), and an artifact enters the
@@ -46,6 +62,8 @@
  *   5  approve: the run was aborted by a person; a machine does not un-abort it
  *   6  promote: refused — not staged by this run, not a complete file, or the write failed; the
  *      lesson tree is unchanged and the reason is on the media row
+ *   7  worktree remove: refused — the worktree holds uncommitted work, or commits no branch keeps;
+ *      nothing is removed
  */
 
 'use strict';
@@ -53,6 +71,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 
 const SCHEMA = 'lesson-run/1';
 // The deploy triple is a scoping answer, but the log has always shown it under Phase 5 — where the
@@ -92,7 +111,25 @@ function parseArgs(argv) {
 
 // ---------- record I/O ----------
 
-const runsDir = (lessonRoot) => path.join(lessonRoot, '.lesson-builder', 'runs');
+// The lesson root that holds this run's records, staging area and rendered log. Usually the one
+// passed in; inside a build worktree it is the one the pointer `worktree add` left there names,
+// because the worktree is a checkout of the base SHA and `.lesson-builder/` is gitignored, so the
+// records are not in it. One hop only: a pointer that names a lesson root which is itself a build
+// worktree is a loop, and is refused rather than followed.
+const pointerPath = (lessonRoot) => path.join(lessonRoot, '.lesson-builder', 'record-root');
+
+function recordRoot(lessonRoot) {
+  const p = pointerPath(lessonRoot);
+  if (!fs.existsSync(p)) return lessonRoot;
+  const target = fs.readFileSync(p, 'utf8').trim();
+  if (!target) die(`${p} is empty — it must name the lesson root that holds the run records`);
+  if (!fs.existsSync(target)) die(`${p} names ${target}, which does not exist`);
+  if (fs.existsSync(pointerPath(target)))
+    die(`${p} names ${target}, which is itself a build worktree — the records live in one place`);
+  return target;
+}
+
+const runsDir = (lessonRoot) => path.join(recordRoot(lessonRoot), '.lesson-builder', 'runs');
 const recordPath = (lessonRoot, runId) => path.join(runsDir(lessonRoot), `${runId}.json`);
 
 function listRecords(lessonRoot) {
@@ -215,7 +252,10 @@ function cmdInit(flags) {
     plan: { hash: null, artifact: null, approval: { state: 'none', at: null, via: null } },
     git: {
       branch: null,
+      base_branch: null,
       base_sha: null,
+      worktree: null,
+      worktree_state: null,
       stash_oid: null,
       stash_ref: null,
       stash_branch: null,
@@ -248,10 +288,19 @@ function cmdGet(flags, positional) {
   );
 }
 
+// Written only by a run under the old flow, which stashed the user's tree before building in it.
+// A run builds in a worktree of its own now, so there is nothing to stash: recovery still reads
+// these off an old record (references/update-mode.md § Recovering a run from the old stash flow),
+// and nothing writes them again. `git.stash_recovery` is not here — it is the outcome that
+// recovery itself records.
+const LEGACY_FIELDS = ['git.stash_oid', 'git.stash_ref', 'git.stash_branch'];
+
 function cmdSet(flags, positional) {
   const lessonRoot = requireLesson(flags);
   const [dotted, raw] = positional;
   if (!dotted || raw === undefined) die('set needs a dotted field path and a value');
+  if (LEGACY_FIELDS.includes(dotted))
+    die(`${dotted} is a legacy field: a run under the old stash flow wrote it and recovery reads it. A run builds in its own worktree now and never stashes.`);
   const rec = readRecord(lessonRoot, resolveRun(lessonRoot, flags));
   let value = raw;
   if (flags.json) {
@@ -350,7 +399,7 @@ function cmdApprove(flags) {
 // Text the assembly splices into the lesson source stages in `.build-scratch/` instead — same rule,
 // different home (references/phase-3-execution.md § The run staging area).
 const stagingDir = (lessonRoot, runId, mediaId) =>
-  path.join(lessonRoot, '.lesson-builder', 'staging', runId, mediaId);
+  path.join(recordRoot(lessonRoot), '.lesson-builder', 'staging', runId, mediaId);
 
 // A media id and a file name each become one path segment, so neither may traverse or be empty.
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -644,6 +693,105 @@ function cmdFail(flags) {
   process.stdout.write(`recorded: ${mediaId} failed — ${flags.reason}\n`);
 }
 
+// ---------- the build worktree ----------
+
+// Every git command this tool runs. `cwd` is always a path inside the repo the lesson lives in.
+function git(cwd, args, opts) {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  if (r.error) die(`git ${args[0]}: ${r.error.message}`);
+  const out = { code: r.status, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
+  if (out.code !== 0 && !(opts && opts.allowFail))
+    die(`git ${args.join(' ')} failed: ${out.err || `exit ${out.code}`}`);
+  return out;
+}
+
+function cmdWorktree(flags, positional) {
+  const action = positional[0];
+  if (!['add', 'remove'].includes(action)) die('worktree takes `add` or `remove`');
+  const lessonRoot = requireLesson(flags);
+  // The worktree belongs to the lesson root that holds the records, not to another worktree.
+  if (fs.existsSync(pointerPath(lessonRoot)))
+    die(`${lessonRoot} is a build worktree — run \`worktree ${action}\` against the lesson root it points at`);
+  const runId = resolveRun(lessonRoot, flags);
+  const rec = readRecord(lessonRoot, runId);
+  if (action === 'add') worktreeAdd(lessonRoot, rec);
+  else worktreeRemove(lessonRoot, rec);
+}
+
+// Checked out from the base SHA the record holds — never from whatever the user's tree happens to
+// be at, and never by moving the user's tree. Idempotent: a run that resumes after a crash calls
+// this again and gets the same worktree back, with whatever it had already built still in it.
+function worktreeAdd(lessonRoot, rec) {
+  if (!rec.git.base_sha)
+    die('git.base_sha is unset — Phase 0 records it, and the worktree is checked out from it');
+  const abs = fs.realpathSync(path.resolve(lessonRoot));
+  const repoRoot = fs.realpathSync(git(abs, ['rev-parse', '--show-toplevel']).out);
+  const rel = path.relative(repoRoot, abs);
+  const wtRoot = path.join(abs, '.lesson-builder', 'worktrees', rec.run_id);
+  const wtLesson = rel ? path.join(wtRoot, rel) : wtRoot;
+
+  if (!fs.existsSync(path.join(wtRoot, '.git'))) {
+    fs.mkdirSync(path.dirname(wtRoot), { recursive: true });
+    // A worktree git still lists but whose directory is gone — a crash that took the directory
+    // with it — is forgotten first, so `add` can put one back at the same path.
+    git(repoRoot, ['worktree', 'prune']);
+    // Before Phase 3 there is no branch yet, so the worktree sits detached on the base SHA and an
+    // abort leaves no branch behind. Once Phase 3 has named one, re-creating the worktree puts it
+    // back on that branch, so the commits it already carries stay reachable and keep accruing.
+    if (rec.git.branch) git(repoRoot, ['worktree', 'add', wtRoot, rec.git.branch]);
+    else git(repoRoot, ['worktree', 'add', '--detach', wtRoot, rec.git.base_sha]);
+  }
+
+  // The checkout is of the base SHA, and `.lesson-builder/` is gitignored, so it holds no records.
+  // This is how everything run inside it finds them.
+  fs.mkdirSync(path.join(wtLesson, '.lesson-builder'), { recursive: true });
+  fs.writeFileSync(pointerPath(wtLesson), `${abs}\n`);
+  rec.git.worktree = wtLesson;
+  rec.git.worktree_state = 'live';
+  writeRecord(lessonRoot, rec);
+  process.stdout.write(`${wtLesson}\n`);
+}
+
+// The rollback invariant, in code: nothing the skill runs removes a worktree that still holds work
+// — uncommitted changes, or commits no branch keeps. A failed run and a `deploy_action: skip` run
+// both end that way on purpose, and the phase reports the path instead of pruning it.
+function worktreeRemove(lessonRoot, rec) {
+  const wtLesson = rec.git.worktree;
+  if (!wtLesson) die('no worktree is recorded for this run', 3);
+  if (!fs.existsSync(wtLesson) || rec.git.worktree_state === 'removed') {
+    rec.git.worktree_state = 'removed';
+    writeRecord(lessonRoot, rec);
+    process.stdout.write(`${wtLesson}\n`);
+    return;
+  }
+  const wtRoot = git(wtLesson, ['rev-parse', '--show-toplevel']).out;
+
+  const dirty = git(wtRoot, ['status', '--porcelain']).out;
+  if (dirty)
+    die(
+      `the build worktree at ${wtRoot} holds uncommitted work:\n${dirty}\n` +
+        'nothing removes it — commit it on the run branch first, or remove it by hand',
+      7,
+    );
+  // A HEAD no ref keeps is work only this directory knows about. `for-each-ref` and not
+  // `branch --contains`, which lists the detached HEAD itself and so would call every detached
+  // worktree safe to delete.
+  const head = git(wtRoot, ['rev-parse', 'HEAD']).out;
+  if (!git(wtRoot, ['for-each-ref', '--contains', head, '--format=%(refname)'], { allowFail: true }).out)
+    die(
+      `the build worktree at ${wtRoot} is at ${head}, which no ref keeps — ` +
+        'removing it would drop those commits',
+      7,
+    );
+
+  // git's own refusal covers exactly the two cases checked above; `--force` past it here only
+  // covers the ignored build output (`node_modules/`, `dist/`) it would otherwise stop on.
+  git(lessonRoot, ['worktree', 'remove', '--force', wtRoot]);
+  rec.git.worktree_state = 'removed';
+  writeRecord(lessonRoot, rec);
+  process.stdout.write(`${wtLesson}\n`);
+}
+
 // ---------- render ----------
 
 function notes(rec, phase) {
@@ -751,8 +899,16 @@ function renderRun(rec) {
     ...line('Branch', rec.git.branch),
     ...line('Base SHA', rec.git.base_sha),
     ...line(
+      'Worktree',
+      rec.git.worktree ? `${rec.git.worktree} (${rec.git.worktree_state || 'live'})` : null,
+    ),
+    // Only a record from the old stash flow has one. A run that never stashed has no stash line
+    // to render — not the word "none", which read like a stash the run had decided against.
+    ...line(
       'Stash ref',
-      rec.git.stash_oid ? `${rec.git.stash_ref || 'stash@{0}'} (${rec.git.stash_oid})` : 'none',
+      rec.git.stash_oid
+        ? `${rec.git.stash_ref || 'stash@{0}'} (${rec.git.stash_oid}) — legacy, recovery only`
+        : null,
     ),
     ...notes(rec, 3),
     '',
@@ -779,7 +935,8 @@ function cmdRender(flags) {
   const lessonRoot = requireLesson(flags);
   const records = listRecords(lessonRoot);
   if (!records.length) die('no run records to render');
-  const logPath = path.join(lessonRoot, 'lesson_build.log.md');
+  // Beside the records, never inside a build worktree that `worktree remove` will prune.
+  const logPath = path.join(recordRoot(lessonRoot), 'lesson_build.log.md');
 
   let prologue;
   if (fs.existsSync(logPath)) {
@@ -824,6 +981,7 @@ const commands = {
   stage: () => cmdStage(flags),
   promote: () => cmdPromote(flags),
   fail: () => cmdFail(flags),
+  worktree: () => cmdWorktree(flags, positional),
   render: () => cmdRender(flags),
 };
 if (!cmd || !commands[cmd]) {

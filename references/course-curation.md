@@ -4,7 +4,7 @@ Contents: §1 Purpose · §2 Course context (`COURSE.md`) · §3 The course mate
 
 Read this whenever the workspace has a `<workspace_root>/<course>/COURSE.md`, whenever material arrives in chunks over a term rather than as one hand-off, or whenever the request uses a restructure verb (`restructure`, `re-split`, `consolidate`, `merge lessons`, `split this lesson`, `re-balance the course`).
 
-Cross-reference: `SKILL.md` holds the mode-detection summary, the session-mode rule, and the phase shell. `references/update-mode.md` is the lesson-level orientation — the 5 media actions, branch/stash/merge invariants, no-grandfathering. This doc adds the layer above a single lesson: where a new chunk of material belongs, when to build, and how to restructure a course without hand-editing five lessons in five uncoordinated runs. Nothing here is required — a workspace with no `COURSE.md` runs exactly as before.
+Cross-reference: `SKILL.md` holds the mode-detection summary, the session-mode rule, and the phase shell. `references/update-mode.md` is the lesson-level orientation — the 5 media actions, worktree/branch/merge invariants, no-grandfathering. This doc adds the layer above a single lesson: where a new chunk of material belongs, when to build, and how to restructure a course without hand-editing five lessons in five uncoordinated runs. Nothing here is required — a workspace with no `COURSE.md` runs exactly as before.
 
 ## 1. Purpose
 
@@ -218,7 +218,7 @@ Everything else — outline, conventions, open questions, unconsumed chunks — 
 - **A chunk with no home is not automatically a new lesson.** "No lesson covers this" is trigger 5 only after triggers 1–3 have been checked — material that seems unplaced is often a symptom of moved unit boundaries.
 - **Topic-count ceiling is a trigger, not a hard limit.** Seven topics with one arc beats six topics plus a stub. Use trigger 4 as the prompt to look at the lesson's arc, not as arithmetic.
 - **Do not let triage silently re-scope a build.** If triage says *new lesson* but the request said "update `<slug>`", say so and let the user redirect — the verdict is a recommendation surfaced at the gate, not a licence to build somewhere else.
-- **Consolidate against a dirty tree.** The Phase 0 working-tree check spans every affected lesson root; a single dirty lesson blocks the run rather than being stashed piecemeal, because a half-stashed multi-lesson restructure is unrecoverable by hand.
+- **Consolidate against a dirty tree.** The Phase 0 working-tree check spans every affected lesson root, and it only reads: each lesson builds from its own recorded base SHA in its own worktree, so a dirty lesson is reported and left alone rather than stashed. Nothing about a partially-completed restructure can strand the user's uncommitted work, because none of it was ever moved.
 
 ## 10. Phase cross-reference
 

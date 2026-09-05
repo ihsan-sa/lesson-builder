@@ -8,6 +8,8 @@ Every lesson-builder run keeps its state in one versioned JSON record. The recor
 - Tool: `scripts/run-manifest.cjs` — the only writer and the only reader. Its fixture is `tests/run-manifest/`.
 - Staging area: `<lesson_root>/.lesson-builder/staging/<run_id>/<media_id>/`, where every producer writes
   before its artifact is validated and promoted (§ Artifacts, fixture `tests/stage-promote/`).
+- Build worktree: `<lesson_root>/.lesson-builder/worktrees/<run_id>/`, where an update run builds
+  (§ The build worktree, fixture `tests/worktree-per-run/`).
 
 ## Schema
 
@@ -33,8 +35,9 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
     "deploy_action": "push-to-github",   // Phase 0 answers it, Phase 5 re-sets it if what ran differed
     "deploy_service_kind": "git-remote", // the NEXT update reads these three back from this record
     "deploy_service": "<remote URL / CLI / null>",
-    "working_tree": "discarded"          // only when there is no stash to name; renders as
-  },                                     // `Working tree state:`, which is otherwise the stash or `clean`
+    "working_tree": "dirty: 2 path(s) uncommitted, not in the base SHA this run builds from"
+  },                                     // Phase 0's word for what it saw, read-only; renders as
+                                         // `Working tree state:`, which is `clean` when unset
 
   "plan": {
     "hash": "4f2a9c17",                // first 8 hex of SHA-256 of the plan artifact, set by `plan-hash`
@@ -48,11 +51,19 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
 
   "git": {
     "branch": "lesson-update/intro-derivatives-20260415-a",  // ACTUAL name, collision suffix included
-    "base_sha": "7e4b9a2",
-    "stash_oid": "c0ffee1",            // null when Phase 0 did not stash
-    "stash_ref": "stash@{0}",          // positional, for the human reading the log; the OID is the referent
-    "stash_branch": "main",            // the branch the stash was taken on
-    "commit_sha": "9c2d1f8",
+    "base_branch": "main",             // the workspace default branch the run builds from and merges to
+    "base_sha": "7e4b9a2",             // its tip when Phase 0 ran — what the worktree is checked out from
+    "worktree": "<lesson_root>/.lesson-builder/worktrees/<run_id>/<course>/claude_lessons/<slug>",
+    "worktree_state": "live",          // "removed" once `worktree remove` has pruned it
+    "commit_sha": "9c2d1f8",           // the merge commit in update mode
+
+    // Legacy. Only a run under the old flow — which stashed the user's tree and built in their
+    // checkout — has these. Recovery reads them (references/update-mode.md § Recovering a run from
+    // the old stash flow); `set` refuses to write them; no new run produces one. `stash_recovery`
+    // is the outcome recovery itself records, so it stays writable.
+    "stash_oid": "c0ffee1",
+    "stash_ref": "stash@{0}",
+    "stash_branch": "main",
     "stash_recovery": "applied + dropped (<oid>)" | "manual (oid: <oid>)" | "conflict (manual)" | "none"
   },
 
@@ -101,15 +112,47 @@ newest record in that lesson, so a resumed session does not have to carry the id
 |---|---|
 | `init --mode <m> --session-mode <s> [--run <id>] [--course C] [--slug S]` | Creates the record, prints the run id. Exits 2 rather than clobber an existing one. |
 | `current` | Prints the newest run id (ties on `started` break on run id, so the order is total). Run it **before** `init` to learn the previous run's id, then `get --run <that id>` for anything this run inherits — the deploy triple, audience, pedagogical goal. |
-| `get <path>` | Prints a dotted field. Exits 3 if it is unset — absent, or the `null` that `init` seeds fields with. "No stash" is an exit code, never the string `null`. |
-| `set <path> <value> [--json]` | Writes a dotted field. |
+| `get <path>` | Prints a dotted field. Exits 3 if it is unset — absent, or the `null` that `init` seeds fields with. "No worktree" is an exit code, never the string `null`. |
+| `set <path> <value> [--json]` | Writes a dotted field. Refuses the three legacy stash fields: a run builds in its own worktree and never stashes. |
 | `append <path> <json>` | Pushes onto an array field (`media`, `findings`, `phases.N.notes`). |
 | `plan-hash --file <artifact>` | Hashes the artifact, records `plan.hash` + `plan.artifact`, prints the hash. A plan whose hash **changed** goes back to `pending` even if it was approved — approval does not transfer to text the user never saw. An abort stands. |
 | `approve --hash <h>` | The headless approval gate. See below. |
 | `stage --media-id <id> --name <file>` | Creates this run's staging directory for that media id and prints the path the producer writes to. |
 | `promote --media-id <id> --from <staged> --to <lesson-relative> [--min-bytes <n>]` | Validates the staged bytes and moves them into the lesson tree. Prints a JSON receipt; exits 6 on refusal. See below. |
 | `fail --media-id <id> --reason <text>` | Records a production that produced nothing. Touches no file. |
+| `worktree add` | Creates this run's build worktree from `git.base_sha`, records `git.worktree` + `git.worktree_state`, prints the lesson root inside it. Idempotent — a resumed run calls it again and gets its worktree back. |
+| `worktree remove` | Prunes it. Exits 7 and removes nothing while it holds uncommitted work or a commit no ref keeps. |
 | `render` | Rewrites `lesson_build.log.md` from every record in the lesson. |
+
+## The build worktree
+
+An update run never builds in the user's checkout. Phase 0 records `git.base_branch` and
+`git.base_sha` — the default branch and its tip — and then `worktree add` checks a git worktree out
+from that SHA at `<lesson_root>/.lesson-builder/worktrees/<run_id>/`. Everything from Phase 1 on
+reads and writes the lesson root inside it, which the record holds as `git.worktree`. The user's
+working tree is therefore byte-identical from Phase 0 to the end of Phase 5, uncommitted and
+untracked files included: nothing stashes it, nothing switches its branch, nothing writes into it.
+
+- **It is invisible to the user's `git status`.** `.lesson-builder/` is in the lesson's
+  `.gitignore`, so the worktree sits inside a directory git already ignores.
+- **The checkout does not contain the records.** Same reason — it is a checkout of the base SHA,
+  and `.lesson-builder/` is ignored. So `worktree add` writes a one-line pointer at
+  `<git.worktree>/.lesson-builder/record-root` naming the lesson root that holds them, and every
+  command follows it: the record, the staging area and the rendered log all stay in one place
+  whichever of the two lesson roots a command is given. One hop only — a pointer naming a lesson
+  root that is itself a build worktree is refused, not followed.
+- **No branch until Phase 3.** The worktree is detached on the base SHA until Phase 3 names the
+  branch in it, so a run aborted at the Phase 2 gate leaves no branch behind.
+- **`worktree add` is how a run resumes.** Called again it returns the same worktree with whatever
+  it had already built still in it, and re-creates it on the recorded branch if the directory is
+  gone but the branch is not.
+- **`worktree remove` refuses to drop work.** Exit 7, nothing removed, while the worktree holds
+  uncommitted changes or sits on a commit no ref keeps. A `deploy_action: skip` run and a failed
+  run both end that way on purpose, and Phase 5 reports the path instead of pruning.
+
+Phase 5 merges in the worktree too, on a detached HEAD, and moves `refs/heads/<base>` only when no
+working tree has it checked out — git refuses to push or fetch into a checked-out branch for the
+same reason. Commands: `references/phase-5-deploy.md` § Step 2b.
 
 ## Artifacts: stage, validate, promote
 

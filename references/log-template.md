@@ -4,11 +4,11 @@ Reference for what the per-lesson build trail looks like. **The log is rendered,
 
 **Where each field lives** — every field a later phase needs has a home in the record, not in prose:
 
-- Phase 0: the scoping artifact under `scoping` (incl. `lesson_file`, `course_name`); update mode: `git.stash_oid`, `git.stash_ref` and `git.stash_branch`.
+- Phase 0: the scoping artifact under `scoping` (incl. `lesson_file`, `course_name`, `working_tree`); update mode: `git.base_branch`, `git.base_sha`, and `git.worktree` + `git.worktree_state` from `worktree add`.
 - Phase 2: `plan.artifact`, `plan.hash` and `plan.approval` (`pending` → `approved`/`aborted`, with timestamp) in BOTH modes; per-media `media_id` + `intent` + `original_intent` in `media` (incl. `keep` rows). Per-topic `objectives:` and full `teaching_arc:` blocks live in the plan artifact the record points at — Phase 3 authors against them and Phase 4's `arc` check reads them from there, alongside any `Arc rejected (reorder test): …` lines.
 - Phase 3: `git.branch` (actual name incl. any collision suffix — Phase 5 reads it back verbatim) and `git.base_sha`.
 - Phase 4: `findings` covers EVERY open issue at exit with `origin` and an attempted/no-attempt `reason` (incl. never-attempted low-confidence minors, keep-media findings, coverage gaps). Anything still `state: "open"` renders under `UNRESOLVED`.
-- Phase 5: `git.commit_sha`, `git.stash_recovery` (by OID), and `deploy_code` from the build-all inventory in `phases.5.notes`.
+- Phase 5: `git.commit_sha`, and `deploy_code`, the base-branch line and the worktree line from `phases.5.notes`.
 
 ## Purpose
 
@@ -92,7 +92,7 @@ Detected mode: update (candidate: <path>) | update (consolidate: <slug>, <slug>,
 Mode confirmed: YES
 Session mode: interactive | channel | headless
 Course context: COURSE.md read — map row <row>, N pending chunks | N/A (no COURSE.md)
-Working tree state: clean | stashed: <stash-ref>
+Working tree state: clean | dirty: N path(s) uncommitted, not in the base SHA this run builds from
 Research depth: light | targeted | full
 Scope of change: ...
 Media hints: ...
@@ -109,7 +109,7 @@ Approval: APPROVED by user at <timestamp>
 
 ### Phase 3 — Execution (update)
 Branch: lesson-update/<slug>-YYYYMMDD
-Stash ref: <ref or "none">
+Worktree: <path> (live | removed)
 Specialists spawned: [...]
 Splice counts: refine=N, replace=M, remove=P, add=Q
 Orphan cleanup: removed=R, kept=K (or "none" if orphan list was empty)
@@ -122,7 +122,7 @@ Regression watch: [...]
 ### Phase 5 — Deploy (update)
 Build verification: PASS | FAIL
 Merge commit SHA: <sha>
-Stash recovery: auto-popped | manual | none
+Base branch: moved | not moved (the user's checkout holds it)
 Course map: updated (<slug> -> live, N chunks marked built) | N/A (no COURSE.md)
 
 ### Final Report
@@ -243,7 +243,7 @@ Approval: APPROVED by user at 2026-04-15T14:02:08-04:00
 
 ### Phase 3 — Execution (update)
 Branch: lesson-update/intro-derivatives-20260415
-Stash ref: none
+Worktree: <lesson_root>/.lesson-builder/worktrees/<run_id>/<course>/claude_lessons/<slug> (removed)
 Specialists spawned: jsx-writer, katex-writer, svg-graph-builder
 Splice counts: refine=1, replace=0, remove=0, add=1
 Orphan cleanup: none (orphan list was empty)
@@ -262,7 +262,7 @@ Regression watch:
 ### Phase 5 — Deploy (update)
 Build verification: PASS (build-all.sh, 2m 58s)
 Merge commit SHA: 9c2d1f8
-Stash recovery: none
+Base branch: not moved (the user's checkout holds it)
 
 ### Final Report
 - Update merged to main

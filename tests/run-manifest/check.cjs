@@ -93,7 +93,6 @@ cases['set, get and append round-trip every field the roadmap lists'] = () => {
   init(root, ['--run', 'bbb222']);
   run(['set', '--lesson', root, 'git.base_sha', '7e4b9a2']);
   run(['set', '--lesson', root, 'git.branch', 'lesson-update/sample-lesson-20260415-a']);
-  run(['set', '--lesson', root, 'git.stash_oid', 'c0ffee1']);
   run(['set', '--lesson', root, 'scoping.lesson_file', 'src/sample-lesson.jsx']);
   run(['append', '--lesson', root, 'media', '{"media_id":"m1","intent":"refine","original_intent":"add"}']);
   run(['append', '--lesson', root, 'media', '{"media_id":"m2","intent":"keep"}']);
@@ -103,7 +102,15 @@ cases['set, get and append round-trip every field the roadmap lists'] = () => {
   eq(run(['get', '--lesson', root, 'git.base_sha']).out, '7e4b9a2', 'base SHA reads back');
   eq(run(['get', '--lesson', root, 'git.branch']).out,
     'lesson-update/sample-lesson-20260415-a', 'the branch reads back with its collision suffix');
-  eq(run(['get', '--lesson', root, 'git.stash_oid']).out, 'c0ffee1', 'stash OID reads back');
+  // The three stash fields are legacy: only a run under the old stash-the-user's-tree flow wrote
+  // them, and a run builds in a worktree of its own now. The neighbouring `git.*` writes above are
+  // the kept case; these are the suppressed one.
+  for (const legacy of ['git.stash_oid', 'git.stash_ref', 'git.stash_branch']) {
+    const refused = run(['set', '--lesson', root, legacy, 'c0ffee1']);
+    eq([refused.code, refused.out], [1, ''], `set ${legacy} is refused — no new run writes it`);
+    ok(refused.err.includes('legacy'), `the refusal of ${legacy} says why`);
+    eq(record(root, 'bbb222').git[legacy.slice(4)], null, `${legacy} is left as init seeded it`);
+  }
   eq(record(root, 'bbb222').media.map((m) => m.media_id), ['m1', 'm2'], 'append keeps order');
   eq(record(root, 'bbb222').phases['3'].notes, ['Splice counts: refine=1'], '--json stores a real array');
 

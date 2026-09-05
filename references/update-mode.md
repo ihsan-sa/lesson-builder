@@ -1,6 +1,6 @@
 # Update-mode orientation
 
-Contents: §1 Purpose · §2 Quick mental model · §3 Mode-detection decision tree · §4 The 5 media actions · §5 Branch/stash/merge invariants · §6 No-grandfathering (and what a small update costs) · §7 Regression-watch · §8 `consolidate` · §9 What update mode does not touch · §10 Common gotchas · §11 Phase cross-reference.
+Contents: §1 Purpose · §2 Quick mental model · §3 Mode-detection decision tree · §4 The 5 media actions · §5 Worktree/branch/merge invariants · §6 No-grandfathering (and what a small update costs) · §7 Regression-watch · §8 `consolidate` · §9 What update mode does not touch · §10 Common gotchas · §11 Phase cross-reference.
 
 Single-file orientation for lesson-builder's update mode. Read this first whenever an update-mode verb or lesson reference shows up in the user's request. Do not re-stitch update-mode concepts from the six phase docs; come here, get oriented, then dive into the specific phase doc you need.
 
@@ -13,12 +13,12 @@ Update mode operates on an existing lesson rather than building from scratch. Sa
 ## 2. Quick mental model
 
 - Update mode is a **branch** in the same pipeline, not a parallel pipeline.
-- **Phase 0** adds mode detection, mode confirmation, working-tree check, research-depth question, scope-of-change question, optional media hints.
+- **Phase 0** adds mode detection, mode confirmation, working-tree report, research-depth question, scope-of-change question, optional media hints — and records the base SHA and opens the build worktree the rest of the run works in.
 - **Phase 1** has content-orchestrator's update branch: read existing JSX end-to-end, build a media inventory, diff against user concerns / new materials, classify drift / gaps / redundancies / reorganization.
 - **Phase 2** uses `medium-decider-agent`'s 5-way taxonomy (`keep / refine / replace / remove / add`) and presents a **change-list** approval view rather than a full plan dump. The gate is mandatory in every session; how it is delivered — dialog, channel message, or journal block plus `BLOCKED` — follows `session_mode` (`SKILL.md` § Session modes and gates). `add` topics and content-rewrite `modify` topics also get a `teaching_arc` (`references/phase-2-plan.md` § Teaching arc); `keep` topics do not.
-- **Phase 3** does git branch setup, splice assembly against the existing JSX (not skeleton instantiation), post-splice sanity pass.
+- **Phase 3** names the branch inside the build worktree, splices against the existing JSX (not skeleton instantiation), post-splice sanity pass.
 - **Phase 4** is mode-agnostic in mechanism; two update-specific rules apply: no-grandfathering, regression-watch.
-- **Phase 5** commits to the update branch and merges `--no-ff` to main; handles stash recovery; leaves branch + stash intact on failure for manual recovery.
+- **Phase 5** commits to the update branch and merges `--no-ff` to the base branch, all inside the worktree; leaves branch + worktree intact on failure for manual recovery.
 - **`consolidate`** (§8) is the one variant that changes this shape: it plans across several lessons at once, takes a single course-level approval, then runs Phases 3-5 lesson by lesson exactly as above.
 
 ### Inventory pre-scan (Phase 1 prerequisite)
@@ -124,39 +124,98 @@ STRUCTURAL DRIFT REPAIRS:
 
 This block goes into the plan artifact Phase 2 hashes into the record, and renders under `### Phase 2 — Plan (update)`; it is the condensed summary shown at the approval gate in whatever form `session_mode` calls for. The full plan stays in the artifact; the gate surfaces only the change-list to avoid `AskUserQuestion` truncation.
 
-## 5. Branch / stash / merge invariants
+## 5. Worktree / branch / merge invariants
+
+### The build worktree
+
+An update never builds in the user's checkout. Phase 0 records the base SHA and then
+`run-manifest.cjs worktree add --lesson <lesson_root>` creates a git worktree of the run's own at
+`<lesson_root>/.lesson-builder/worktrees/<run_id>/`, checked out from that SHA, and prints the
+lesson root inside it — which the record keeps as `git.worktree`. Every later phase reads and
+writes there. The user's working tree is never switched, never stashed and never written to: it
+holds whatever it held when the run started, uncommitted and untracked files included, from Phase 0
+to the end of Phase 5.
+
+`.lesson-builder/` is in the lesson's `.gitignore`, so the worktree is invisible to the user's
+`git status` — and so the checkout, being of the base SHA, does not contain the run's records
+either. `worktree add` leaves a one-line pointer at `<git.worktree>/.lesson-builder/record-root`
+naming the lesson root that does hold them, and `run-manifest.cjs` follows it: a command given the
+worktree's lesson root and one given the user's read and write the same record, and the rendered
+log stays beside the records rather than in a directory that gets pruned.
+
+The worktree is detached at the base SHA until Phase 3 names the branch, so a run that aborts at the
+Phase 2 gate leaves no branch behind — only a directory git already ignores.
 
 ### Branch name format
-`lesson-update/<slug>-YYYYMMDD`. Example: `lesson-update/intro-derivatives-20260415`. One branch per update run. Created in Phase 3 (not earlier), never on main.
 
-### Stash
-Phase 0's working-tree check runs `git status --short <lesson_root>`. If dirty, the user is asked whether to stash or abort. On stash:
-
-```
-git stash push --include-untracked -m "lesson-update-stash <slug> <date>" -- <lesson_root>
-git rev-parse stash@{0}   # capture the stable OID — positional refs shift if anything else stashes
-```
-
-Phase 0 performs the stash (once — Phase 3 never re-stashes) and records the OID as `git.stash_oid` in the run record, which renders under `### Phase 0 — Scoping (update) > Working tree state`. Phase 5 prompts for stash pop after a successful merge. On `git stash pop` conflict, the stash stays in place and conflict files are surfaced to the user.
+`lesson-update/<slug>-YYYYMMDD`. Example: `lesson-update/intro-derivatives-20260415`. One branch per
+update run. Created in Phase 3 (not earlier), **inside the worktree**, never in the user's checkout.
 
 ### Merge
-After Phase 4 passes and the local build verification gate (`bash build-all.sh` + headless Playwright on the built output) succeeds:
+
+After Phase 4 passes and the local build verification gate (`bash build-all.sh` + headless Playwright
+on the built output) succeeds, the merge happens in the worktree too — on a detached HEAD, so no
+branch anyone has checked out moves:
 
 ```
-git checkout main
-git merge --no-ff <git.branch from the run record>   # incl. any collision suffix
-git push origin main
+git -C <git.worktree> checkout --detach <git.base_branch>
+git -C <git.worktree> merge --no-ff <git.branch from the run record>   # incl. any collision suffix
+git -C <git.worktree> update-ref refs/lesson-builder/<run_id>/merge <merge sha>
 ```
 
-`--no-ff` is required. It preserves a merge commit so the update is visible in history as a distinct event rather than inlined into main's history.
+`--no-ff` is required. It preserves a merge commit so the update is visible in history as a distinct
+event rather than inlined into main's history. The `refs/lesson-builder/<run_id>/merge` ref is what
+keeps the merge commit reachable once the worktree is gone — a detached HEAD is not a ref.
+
+`refs/heads/<base branch>` then moves **only if no working tree has it checked out**. Git itself
+refuses to push or fetch into a branch a working tree holds, for the reason that applies here:
+moving the ref under a checkout leaves its index and its files describing a commit its HEAD no
+longer names, which reads as a staged revert of the whole update. So when the user's checkout is on
+the base branch — the normal case — the run leaves it exactly where it is, pushes the merge per
+`deploy_action`, and reports the one fast-forward the user runs when they are ready
+(`git merge --ff-only <merge sha>`). Exact commands: `references/phase-5-deploy.md` § Step 2b.
 
 ### Rollback on failure
+
 If Phase 4 halts on a fundamental flaw or Phase 5 build-verify fails:
 - **Do not merge.**
 - The update branch stays in place.
-- The stash (if any) stays in place.
-- The final report surfaces the branch name and stash ref explicitly so the user can recover manually.
-- The skill never force-deletes the branch. Manual cleanup is the user's call.
+- The build worktree stays in place: `run-manifest.cjs worktree remove` refuses while it holds
+  uncommitted work or commits no ref keeps, so the run's build is still on disk to inspect or
+  finish by hand.
+- The final report surfaces the branch name and the worktree path explicitly so the user can
+  recover manually.
+- The skill never force-deletes the branch and never removes a worktree holding work. Manual
+  cleanup is the user's call.
+
+Nothing in this path touches the user's working tree, so there is nothing to restore: the tree the
+user had when Phase 0 started is the tree they still have.
+
+### Recovering a run from the old stash flow
+
+A record with `git.stash_oid` set and no `git.worktree` comes from the flow that stashed the user's
+tree and built in the checkout. `git.stash_oid`, `git.stash_ref` and `git.stash_branch` are legacy —
+recovery reads them, `run-manifest.cjs set` refuses to write them, and no new run produces one.
+Finish or roll back such a run by hand, in this order:
+
+1. `run-manifest.cjs get --lesson <lesson_root> git.stash_oid` — exit 3 means there is no stash and
+   the run is an ordinary resume. An OID means the user's work is sitting in that stash entry.
+2. **Finish**: check out `git.branch`, complete Phase 5 from its Step 2b as that run left it, then
+   restore the stash on the branch `git.stash_branch` names —
+   `git stash apply <oid>` by the recorded OID, never a bare `git stash pop`, which grabs whatever
+   is `stash@{0}` and may be a newer, unrelated stash. On a clean apply, drop it — and because
+   `git stash drop` takes a stash-log entry rather than an OID, re-find the entry by that OID first:
+   `git stash list --format='%H %gd'`, take the `stash@{n}` on the line whose hash matches, and
+   `git stash drop <that ref>`. Positional refs shift; the OID is the referent.
+3. **Roll back**: `git checkout <git.stash_branch>` and apply the stash the same way. The update
+   branch is left in place; nothing is force-deleted.
+4. Either way, record the outcome — `run-manifest.cjs set --lesson <lesson_root> git.stash_recovery
+   'applied + dropped (<oid>)' | 'manual (oid: <oid>)' | 'conflict (manual)'` — then `render`.
+   On a conflicting apply the stash entry stays intact (that is why `apply`, not `pop`): surface the
+   conflict files and leave the entry for the user.
+
+The invariant is the same one the worktree flow keeps by construction: the user's work is never
+merged away and never dropped. Here it has to be kept by hand, which is why the flow was replaced.
 
 ## 6. No-grandfathering rule
 
@@ -219,7 +278,7 @@ The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<
 - **Orphan assets**: files present under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` with no JSX reference. Inventory generation Globs both the JSX and the filesystem; orphans get flagged in the Phase 2 change-list with a `keep | remove` action for the user to pick.
 - **Manim source-to-video naming is not 1:1**: refine assumes it can find the source `.py` for a given `.mp4`. If it cannot, **degrade `refine` to `replace`** (fresh script + fresh MP4 + update `<video src>` in JSX) and log the degradation.
 - **Missing `GRAPH_SCHEMA`**: lessons predating the graph-schema feature lack the `GRAPH_SCHEMA` export. Phase 3 backfills from current `DEFAULT_GRAPH_PARAMS` per `references/graph-schema-guide.md`. Surface it in the Phase 2 approval gate under "structural drift repairs" so the user sees the backfill coming.
-- **Dirty working tree**: Phase 0's working-tree check asks before proceeding. Either stash or abort; the skill never proceeds through dirt silently.
+- **Dirty working tree**: nothing is stashed and nothing is discarded — the run builds from the base SHA in a worktree of its own, so uncommitted work is neither used nor touched. Phase 0 reports which paths are dirty and that they are **not** in what the run builds from, and continues; the user aborts if they wanted those edits included. The one lasting effect is at the end: a dirty file the update also changed makes the user's own fast-forward stop until they deal with it, which is git protecting their edits, not the skill.
 - **Splice-heavy editing risk**: real lessons can run to thousands of lines. Babel parse catches syntax but not semantic drift. The post-splice sanity pass in Phase 3 step 4.6 is the backstop — do not skip it.
 - **Casual one-liner requests**: Phase 0 can balloon to ~5 update-specific questions. For a one-liner like "fix the tangent-slope graph in <slug>", prefer aggressive defaults (`light`, `specific: [<ComponentName>]`, no media hints) and present one condensed "here's what I'm assuming, change anything?" confirmation instead of 5 separate questions — an `AskUserQuestion` when interactive, one message in a `channel` session, and in `headless` an `ASSUMPTIONS` block folded into the Phase 2 gate (`SKILL.md` § Session modes and gates).
 
@@ -227,12 +286,12 @@ The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<
 
 Once oriented, dive into the specific phase doc for full procedures:
 
-- **Phase 0** (scoping): `references/phase-0-scoping.md` — update-mode scoping section (mode confirmation, working-tree check, research-depth, scope-of-change, media-hints questions + scoping artifact format).
+- **Phase 0** (scoping): `references/phase-0-scoping.md` — update-mode scoping section (mode confirmation, working-tree report, research-depth, scope-of-change, media-hints questions + scoping artifact format), plus the base SHA and the build worktree the run opens.
 - **Phase 1** (content analysis): `references/phase-1-content.md` — update-mode content-orchestration section with the inventory pre-scan Grep patterns and the `light / targeted / full` research_depth branches.
 - **Phase 2** (plan): `references/phase-2-plan.md` — `medium-decider-agent`'s 5-way taxonomy plus the change-list plan artifact format and approval-gate condensed-summary convention.
-- **Phase 3** (execution): `references/phase-3-execution.md` — update-mode assembly section with pre-execution git setup, scratch directory layout split by action, per-action specialist inputs, and the 10-step splice algorithm.
+- **Phase 3** (execution): `references/phase-3-execution.md` — update-mode assembly section with the in-worktree branch setup, scratch directory layout split by action, per-action specialist inputs, and the 10-step splice algorithm.
 - **Phase 4** (review + fix): `references/phase-4-review.md` — no-grandfathering and regression-watch subsections plus the update-mode change-list sanity grep.
-- **Phase 5** (deploy): `references/phase-5-deploy.md` — update-mode branch/merge/stash subsection including rollback-on-failure behavior.
+- **Phase 5** (deploy): `references/phase-5-deploy.md` — update-mode branch/merge subsection including the in-worktree merge and rollback-on-failure behavior.
 - **Checklists**: `references/checklists.md` — update-mode pre-flight checklist and update-mode splice checklist.
 - **Log format**: `references/log-template.md` — update-mode append format (`## Update YYYY-MM-DD (run-id: <hash>)` with `### Phase N` nested under it).
 - **Graph schema**: `references/graph-schema-guide.md` — used by the Phase 3 `GRAPH_SCHEMA` backfill step when the lesson predates the graph-schema feature.

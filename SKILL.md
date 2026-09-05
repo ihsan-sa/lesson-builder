@@ -11,7 +11,7 @@ The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShe
 
 **Before starting a run**, read the references relevant to the detected mode:
 - `references/bootstrap.md` — read FIRST on every run. One Glob decides whether the workspace is fresh; if `<workspace_root>/_lesson-core/` is missing, run the bootstrap procedure before Phase 0.
-- `references/update-mode.md` — read FIRST for update mode. Covers mode detection, 5 media actions, branch/stash/merge invariants, no-grandfathering rule, `consolidate`.
+- `references/update-mode.md` — read FIRST for update mode. Covers mode detection, 5 media actions, worktree/branch/merge invariants, no-grandfathering rule, `consolidate`.
 - `references/course-curation.md` — read when `<workspace_root>/<course>/COURSE.md` exists, when material arrives in chunks over a term, or on a restructure verb. Course context, the committed course materials inbox, chunk triage, batching, and the `consolidate` cross-lesson restructure.
 - `references/phase-0-scoping.md` through `references/phase-5-deploy.md` — phase procedures for both modes.
 - `references/template.md` — new-mode lesson skeleton + exposition exemplars.
@@ -99,11 +99,11 @@ Detection needs no phase state, so resolve it at session start — before the bo
 - **4** — no plan is recorded for this run, so the approval refers to nothing. **Not approval.** Re-run Phase 2, record the plan, emit the gate under its hash and block. Never let a bare `APPROVED PLAN` stand in for a plan nobody saw.
 - **5** — a person aborted this run. It stays aborted; the gate does not un-abort it.
 
-**This applies to every user gate the skill has**, not just Phase 2: the Phase 0 interview and mode confirmation, the working-tree/stash choice, the legacy-lesson opt-in, Phase 1's rough-sweep topic-list confirmation, Phase 2's approval and its request-changes loop, Phase 5's gitignore-override and stash-pop questions, the bootstrap core-refresh offer, and `consolidate`'s single course-level gate.
+**This applies to every user gate the skill has**, not just Phase 2: the Phase 0 interview and mode confirmation, the working-tree report, the legacy-lesson opt-in, Phase 1's rough-sweep topic-list confirmation, Phase 2's approval and its request-changes loop, Phase 5's gitignore-override question, the bootstrap core-refresh offer, and `consolidate`'s single course-level gate.
 
 **Blocking is reserved for decisions that cannot be defaulted.** In `channel` and `headless` sessions:
 
-- Gates with a documented safe default take it, state it in the artifact, and do **not** block: gitignore override → no override; a dirty working tree → abort rather than stash or discard (never discard without an explicit answer); orphan assets → `keep`; stash-pop → leave the stash in place and report its ref.
+- Gates with a documented safe default take it, state it in the artifact, and do **not** block: gitignore override → no override; a dirty working tree → continue and report which paths are not in the base SHA the run builds from (nothing is stashed and nothing is discarded, so there is nothing to lose by continuing); orphan assets → `keep`.
 - Gates with no safe default block: the Phase 2 plan approval (and the consolidation plan), mode confirmation when the candidate lesson is unresolved, and the legacy-lesson opt-in.
 - In `headless`, Phase 0's interview does not block. Apply the aggressive-defaults policy (`references/phase-0-scoping.md`), plus `COURSE.md` where it exists, and carry the resulting assumptions into the `PLAN FOR APPROVAL` block as an `ASSUMPTIONS` section — the single blocking gate then covers scoping and plan together.
 
@@ -154,12 +154,14 @@ Phase 5 — Deploy             Branches on deploy_action. Build verify runs unde
                               (default: no override — nothing private gets published).
                               New: commit + push per deploy_action.
                               Update: commit to branch, merge --no-ff (unless commit-only),
-                              push per deploy_action, stash recovery.
+                              push per deploy_action, worktree cleanup.
 ```
 
 **One mandatory human approval gate** at Phase 2, regardless of mode. Execution starts only after the user approves the Lesson Plan artifact (new mode: full plan; update mode: change-list summary). *How* the gate is delivered depends on `session_mode` — dialog, channel message, or a journal block plus `BLOCKED` (see § Session modes and gates). `consolidate` runs one course-level gate covering every affected lesson instead.
 
-**One run record per run** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`), written and read only through `scripts/run-manifest.cjs`. It holds the run's state: scoping artifact, plan hash and approval, branch and base SHA, stash OID, media manifests with their intents, open findings. Phase 0 opens it (`run-manifest.cjs init`); every later phase writes its fields there and reads them back from there.
+**One run record per run** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`), written and read only through `scripts/run-manifest.cjs`. It holds the run's state: scoping artifact, plan hash and approval, branch, base SHA and build worktree, media manifests with their intents, open findings. Phase 0 opens it (`run-manifest.cjs init`); every later phase writes its fields there and reads them back from there.
+
+**An update builds in a worktree of its own**, checked out from the recorded base SHA at `<lesson_root>/.lesson-builder/worktrees/<run_id>/` — so the user's working tree is never stashed, never switched and never written to, from Phase 0 to the end of Phase 5. `references/run-record.md` § The build worktree.
 
 **One log document** at `<lesson_root>/lesson_build.log.md`, **rendered** from those records (`run-manifest.cjs render`) — not written by hand and never read back as state. It keeps its headings: update runs render a `## Update YYYY-MM-DD (run-id: <hash>)` section per record, and a log written before records existed is kept above the render marker, untouched. Schema, commands and gate outcomes: `references/run-record.md`.
 
