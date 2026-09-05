@@ -443,6 +443,13 @@ export function Chatbot({
           if (rawReinf) savedReinf = JSON.parse(rawReinf);
         } catch (_) {}
         updateTab(tabId, { sessionId: sid, chatNum: data.chatNum || num, sessionStatus: "ready", isolated: !!data.isolated, ...(savedMsgs.length > 0 ? { messages: savedMsgs } : {}), ...(Array.isArray(savedReinf) && savedReinf.length > 0 ? { reinforced: savedReinf } : {}) });
+        // model/effort are global chat state, not per-tab: resuming any tab
+        // switches the whole chat to the settings that session was created
+        // with. A model the client's MODELS list no longer carries is left
+        // alone rather than applied — the picker has nothing to show for it,
+        // and the current selection is a safer fallback than an unknown value.
+        if (data.model && MODELS.some(m => m.model === data.model)) setModel(data.model);
+        if (data.effort && EFFORT_LEVELS.includes(data.effort)) setEffort(data.effort);
       } else {
         const err = await res.json();
         updateTab(tabId, { messages: [{ role: "assistant", content: err.error?.message || "Cannot open session" }], sessionStatus: "picking" });
