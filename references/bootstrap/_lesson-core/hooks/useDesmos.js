@@ -77,9 +77,12 @@ function loadDesmosScript(key) {
       if (!loaded) { settle(new Error("The Desmos script loaded but exposed no window.Desmos.")); return; }
       // "a load that is slow but eventually succeeds ends in ready: true as
       // soon as the script defines window.Desmos, however late" -- settle()
-      // no-ops once the timeout has fired, so say so out of band.
-      if (settled) { for (const notify of [...lateArrivals]) notify(); return; }
-      settle(null);
+      // no-ops once the timeout has fired, so say so out of band. Told on
+      // EVERY success, not only this tag's late one: a consumer that gave up
+      // on a tag that never arrives is still waiting when a later mount's
+      // fresh tag loads, and this is the only place that can reach it.
+      for (const notify of [...lateArrivals]) notify();
+      if (!settled) settle(null);
     };
     script.onerror = () => {
       script.setAttribute("data-desmos-loaded", "failed");
