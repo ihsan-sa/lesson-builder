@@ -456,8 +456,8 @@ app.post("/session/open", (req, res) => {
   if (session.open) return res.status(409).json({ error: { message: `Chat #${session.chatNum} is already open in another tab` } });
   session.open = true;
   session.lastSeen = Date.now();
-  log("SESSION_OPEN", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8) });
-  res.json({ ok: true, chatNum: session.chatNum, isolated: !!session.isolated });
+  log("SESSION_OPEN", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8), model: session.model, effort: session.effort });
+  res.json({ ok: true, chatNum: session.chatNum, isolated: !!session.isolated, model: session.model, effort: session.effort });
 });
 
 app.post("/session/transfer", async (req, res) => {
