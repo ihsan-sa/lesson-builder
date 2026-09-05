@@ -130,6 +130,13 @@ truncated or simply wrong therefore leaves the lesson exactly as it was, and say
 - **Identical bytes change nothing.** If the destination already hashes to the staged bytes, no
   write happens at all — same inode, same mtime — the receipt says `unchanged`, and the record keeps
   the timestamp the bytes first landed at. A re-run that produces the same artifact is a no-op.
+- **Every producer works against a run of its own.** `stage` and `promote` resolve `--run` to the
+  newest record and refuse when the lesson has none, so a producer outside a build — the tutor's
+  runtime manim render — opens one first with `init --mode update --session-mode channel` and passes
+  that `--run <id>` to every call. It never stages against whatever record happens to be newest: that
+  one belongs to a finished build run, and a record is never rewritten by a later run. A lesson
+  cloned or deployed without its gitignored `.lesson-builder/` has no record at all, which is the
+  same case and the same answer.
 - **The receipt** on stdout is one JSON line:
   `{"media_id","path","sha256","bytes","state":"promoted"|"unchanged","checked"}`. The SHA-256 is
   the full 64 characters and is the artifact's identity in the record.

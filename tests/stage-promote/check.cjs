@@ -366,6 +366,45 @@ cases['an artifact the run did not stage is refused'] = () => {
     'the same bytes staged by this run promote fine');
 };
 
+cases['a producer with no run of its own opens one instead of using a finished run'] = () => {
+  // A lesson copy with no `.lesson-builder/` at all: cloned, deployed, or built before the run
+  // record existed. This is what runtime chat meets (agents/manim-agent.md § File contract).
+  const root = path.join(tmpRoot, 'runtime', 'MATH101', 'claude_lessons', 'sample-lesson');
+  fs.mkdirSync(root, { recursive: true });
+  const bare = run(['stage', '--lesson', root, '--media-id', 'auto_1', '--name', 'auto_1.mp4']);
+  ok(bare.code !== 0, 'staging against a lesson with no run record fails rather than inventing one');
+  ok(/init/.test(bare.err), `and says to init first (${bare.err})`);
+  eq(run(['current', '--lesson', root]).code, 3, 'current reports that the lesson has no run');
+  ok(!fs.existsSync(path.join(root, '.lesson-builder', 'staging')),
+    'and no staging area was created');
+
+  // A finished build run's record. Nothing later may write into it.
+  const build = run(['init', '--lesson', root, '--mode', 'new', '--session-mode', 'headless',
+    '--run', 'bbb111', '--at', '2026-04-15T09:00:00Z']).out;
+  run(['append', '--lesson', root, '--run', build, 'media',
+    JSON.stringify({ media_id: 'm1', intent: 'add', medium: 'manim', status: 'built' })]);
+  const buildPath = path.join(root, '.lesson-builder', 'runs', `${build}.json`);
+  const buildBefore = fs.readFileSync(buildPath, 'utf8');
+
+  // The runtime render opens its own record and passes that run id to every call.
+  const rt = run(['init', '--lesson', root, '--mode', 'update', '--session-mode', 'channel']).out;
+  ok(rt && rt !== build, 'init gives the runtime render a run of its own');
+  const staged = run(['stage', '--lesson', root, '--run', rt, '--media-id', 'auto_1', '--name', 'auto_1.mp4']).out;
+  eq(path.relative(root, staged).split(path.sep).join('/'),
+    `.lesson-builder/staging/${rt}/auto_1/auto_1.mp4`, 'staging goes under the runtime run');
+  fs.writeFileSync(staged, mp4(4096));
+  const r = run(['promote', '--lesson', root, '--run', rt, '--media-id', 'auto_1',
+    '--from', staged, '--to', 'public/videos/auto_1.mp4']);
+  eq(r.code, 0, 'the runtime render promotes');
+  eq(sha(read(at(root, 'public/videos/auto_1.mp4'))), sha(mp4(4096)), 'into the lesson tree');
+
+  const rtRec = JSON.parse(fs.readFileSync(path.join(root, '.lesson-builder', 'runs', `${rt}.json`), 'utf8'));
+  eq(rtRec.media.map((m) => m.media_id), ['auto_1'], 'the runtime record carries the artifact');
+  eq(rtRec.media[0].artifact.sha256, sha(mp4(4096)), 'with its hash');
+  eq(fs.readFileSync(buildPath, 'utf8'), buildBefore,
+    "the finished build run's record is byte-identical — a later run never writes into it");
+};
+
 cases['each kind is checked for the shape of a complete file'] = () => {
   const l = lesson('kinds');
   const promote = (name, buf, to) => {

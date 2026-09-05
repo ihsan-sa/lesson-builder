@@ -17,9 +17,15 @@ dies half-way leaves the lesson's existing video untouched. The rule:
 `references/phase-3-execution.md` § The run staging area.
 
 - **Build pipeline** (Phase 3 new / update add / update replace): the stem is the brief's `media_id`, snake_cased (never derive your own from the scene name — parallel spawns with similar scenes would collide on the same files). Stage both files, then promote the MP4 to `public/videos/<stem>.mp4` and the scene source to `<stem>.py`. Both persist — the `.py` at the lesson root is what makes future refines possible (the update pipeline pairs `.py` and `.mp4` by stem; an mp4 without its source degrades every later refine into a full replace).
-- **Runtime chat** (spawned by the tutor mid-session): same two calls against the lesson root the brief gives you, with `--media-id auto_<ts>` and `--to public/videos/auto_<ts>.mp4`, `<ts>` = `Date.now()`. The parent tutor emits `<<SUGGEST>>` to add the `<video>` tag; do not edit lesson JSX yourself.
+- **Runtime chat** (spawned by the tutor mid-session): same two calls against the lesson root the brief gives you, with `--media-id auto_<ts>` and `--to public/videos/auto_<ts>.mp4`, `<ts>` = `Date.now()`. The parent tutor emits `<<SUGGEST>>` to add the `<video>` tag; do not edit lesson JSX yourself. **Open your own run record first** — a lesson built before the run record existed, or any cloned or deployed copy (`.lesson-builder/` is gitignored), carries no record at all, and a record that IS there belongs to a finished build run that nothing later may write into:
 
-Get each staging path from the tool — never build one by hand:
+  ```
+  run=$(node <skill_root>/scripts/run-manifest.cjs init --lesson <lesson_root> --mode update --session-mode channel)
+  ```
+
+  Then pass `--run "$run"` to every `run-manifest.cjs` call you make. Always `init`; never reuse whatever record happens to be newest. If `init` itself fails, stop and return the failure — do not fall back to writing into `public/` by hand.
+
+Get each staging path from the tool — never build one by hand. In the build pipeline omit `--run`: the tool uses the record Phase 0 opened, which is this run's. In runtime chat pass the `--run "$run"` you just created:
 
 ```
 staged=$(node <skill_root>/scripts/run-manifest.cjs stage --lesson <lesson_root> --media-id <media_id> --name <stem>.mp4)
@@ -84,7 +90,7 @@ node <skill_root>/scripts/run-manifest.cjs promote --lesson <lesson_root> --medi
   --from "$staged" --to public/videos/<stem>.mp4
 ```
 
-Then stage the accepted scene source as `<stem>.py` (Bash heredoc or Node writeFile into the staged path) and promote it to `<stem>.py` — the render pipeline's own scratch copy is deleted, so this promoted `.py` is the refine contract. Each promotion prints one JSON line carrying the artifact's `sha256`; a refusal exits 6 with its reason already on the media row. Then return exactly:
+(In runtime chat every one of these calls also carries `--run "$run"`, per the file contract.) Then stage the accepted scene source as `<stem>.py` (Bash heredoc or Node writeFile into the staged path) and promote it to `<stem>.py` — the render pipeline's own scratch copy is deleted, so this promoted `.py` is the refine contract. Each promotion prints one JSON line carrying the artifact's `sha256`; a refusal exits 6 with its reason already on the media row. Then return exactly:
 
 ```json
 {
