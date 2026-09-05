@@ -22,6 +22,11 @@ import { useDesmos } from "../hooks/useDesmos.js";
 // Resizing: the root uses CSS `resize: both` so the student can drag the
 // bottom-right corner to adjust both width and height. A ResizeObserver
 // calls calc.resize() so the Desmos canvas reflows cleanly.
+//
+// Failure: with no VITE_DESMOS_KEY, or once useDesmos gives up on the CDN at
+// its 8 s bound, the whole graph is replaced by a dashed fallback box rather
+// than left on "Loading graph..." forever. A bundle that arrives after the
+// bound un-fails the hook and the calculator is built then.
 
 const PRIMITIVE_CSS_ID = "core-desmos-graph-style";
 const DESMOS_CSS = `
@@ -136,7 +141,10 @@ export function DesmosGraph({ state, height = 520, options, onStateChange, class
     );
   }
   // The load settled without a calculator (dead or hung CDN): say so instead
-  // of showing "Loading graph..." forever. useDesmos never retries on its own.
+  // of showing "Loading graph..." forever. useDesmos never retries on its own,
+  // but "a late arrival after a failure must still end with the graph drawn":
+  // it clears failed and sets ready in one update, so this branch goes away,
+  // the host div mounts, and the mount effect above builds the calculator.
   if (failed) {
     return (
       <div className={["dg-root", className].filter(Boolean).join(" ")} style={{ height }} data-mid={mid}>
