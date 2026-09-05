@@ -59,7 +59,7 @@ function stripAutoplay(obj) {
 }
 
 export function DesmosGraph({ state, height = 520, options, onStateChange, className, mid }) {
-  const { ready, keyMissing } = useDesmos();
+  const { ready, keyMissing, failed } = useDesmos();
   const hostRef = useRef(null);
   const calcRef = useRef(null);
 
@@ -132,6 +132,15 @@ export function DesmosGraph({ state, height = 520, options, onStateChange, class
     return (
       <div className={["dg-root", className].filter(Boolean).join(" ")} style={{ height }} data-mid={mid}>
         <div className="dg-fallback">Desmos graph unavailable: VITE_DESMOS_KEY not configured.</div>
+      </div>
+    );
+  }
+  // The load settled without a calculator (dead or hung CDN): say so instead
+  // of showing "Loading graph..." forever. useDesmos never retries on its own.
+  if (failed) {
+    return (
+      <div className={["dg-root", className].filter(Boolean).join(" ")} style={{ height }} data-mid={mid}>
+        <div className="dg-fallback">Desmos graph unavailable: the calculator failed to load.</div>
       </div>
     );
   }

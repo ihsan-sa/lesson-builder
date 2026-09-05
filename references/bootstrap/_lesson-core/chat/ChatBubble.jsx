@@ -43,7 +43,7 @@ export function ChatBubble({ text, role, onReplyBlock, streaming }) {
   // Gate CDN load on this bubble actually needing Desmos. Avoids the ~1.3MB
   // Desmos bundle leaking into every lesson the moment the chat panel opens.
   const needsDesmos = role === "assistant" && typeof text === "string" && text.indexOf("chat-desmos-block") >= 0;
-  const { ready: desmosReady, keyMissing: desmosKeyMissing } = useDesmos({ enabled: needsDesmos });
+  const { ready: desmosReady, keyMissing: desmosKeyMissing, failed: desmosFailed } = useDesmos({ enabled: needsDesmos });
   // Tracks live calculator instances by their host element so we can destroy
   // orphans before innerHTML rewrites blow away their DOM hosts (third effect
   // only cleans up on the NEXT render pass, leaving a detached live canvas
@@ -123,6 +123,16 @@ export function ChatBubble({ text, role, onReplyBlock, streaming }) {
       });
       return;
     }
+    if (needsReady && desmosFailed) {
+      // The load settled without a calculator: say so rather than leaving the
+      // placeholder empty forever. Blocks that already mounted are left alone.
+      blocks.forEach(el => {
+        if (el.childElementCount === 0) {
+          setOnlyChild(el, 'chat-desmos-error', 'Desmos graph unavailable: the calculator failed to load.');
+        }
+      });
+      return;
+    }
     if (needsReady && !desmosReady) return; // script still loading; rerun when desmosReady flips
     blocks.forEach(el => {
       seen.add(el);
@@ -160,7 +170,7 @@ export function ChatBubble({ text, role, onReplyBlock, streaming }) {
         desmosInstancesRef.current.delete(el);
       }
     }
-  }, [text, role, streaming, desmosReady, desmosKeyMissing]);
+  }, [text, role, streaming, desmosReady, desmosKeyMissing, desmosFailed]);
 
   // Full unmount cleanup: destroy every tracked calculator so canvas /
   // observer leaks don't outlive the bubble.
