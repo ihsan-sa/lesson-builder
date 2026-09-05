@@ -36,11 +36,11 @@ start_proxy() { # $1 = PATH prefix ("" for the real CLI), $2 = port
 }
 
 start_proxy "$HERE/fake-claude" "$PORT"
-PROXY_URL="http://127.0.0.1:$(cat "$L/server/.proxy-port")" LESSON_DIR="$L" node "$HERE/check.cjs"
+PROXY_URL="http://127.0.0.1:$(cat "$L/server/.proxy-port")" LESSON_DIR="$L" CORE_DIR="$WS/_lesson-core" node "$HERE/check.cjs"
 kill "$PROXY_PID"; wait "$PROXY_PID" 2>/dev/null || true; PROXY_PID=""
 
 if [ -n "${REAL_CLAUDE:-}" ]; then
   rm -f "$L/server/chat.log"
   start_proxy "" "$((PORT + 1))"
-  PROXY_URL="http://127.0.0.1:$(cat "$L/server/.proxy-port")" LESSON_DIR="$L" node "$HERE/check.cjs" --real
+  PROXY_URL="http://127.0.0.1:$(cat "$L/server/.proxy-port")" LESSON_DIR="$L" CORE_DIR="$WS/_lesson-core" node "$HERE/check.cjs" --real
 fi

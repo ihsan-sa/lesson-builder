@@ -8,6 +8,7 @@ import { buildSystemPrompt } from "./buildSystemPrompt.js";
 import { processResponse as parseChatResponse, stripUnclosedTags } from "./processResponse.js";
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
+import { isRestorable, isPickable, isSoleInFlight } from "./turnState.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/LessonShell.jsx";
 
@@ -370,11 +371,6 @@ export function Chatbot({
     return () => window.removeEventListener("beforeunload", handleUnload);
   }, []);
 
-  // The proxy decides candidacy (/sessions `resumable`: not open, no turn in
-  // flight, latest turn not cancelled). A proxy that predates the flag is
-  // read the old way, so a lessons-side core that lags still resumes.
-  const isResumable = (s) => (s.resumable !== undefined ? s.resumable : !s.open);
-
   const makeSystemPrompt = useCallback((isolatedFlag) => buildSystemPrompt({
     courseCode, courseName, lessonContext, topicContext, graphParams, isolatedFlag, lessonFile, institution,
   }), [courseCode, courseName, lessonContext, topicContext, graphParams, lessonFile, institution]);
@@ -491,7 +487,7 @@ export function Chatbot({
         setServerSessions(list);
         let restoredFirst = false;
         for (const kc of kcList) {
-          const found = list.find(s => s.id === kc.sessionId && isResumable(s));
+          const found = list.find(s => s.id === kc.sessionId && isRestorable(s));
           if (!found) continue;
           if (!restoredFirst) {
             await resumeSessionIntoTab(firstTab.id, kc.sessionId, kc.chatNum || found.chatNum);
@@ -507,7 +503,7 @@ export function Chatbot({
       }
 
       const list = await fetchSessions();
-      const available = list.filter(isResumable);
+      const available = list.filter(isPickable);
       setServerSessions(list);
       if (available.length > 0) {
         updateTab(firstTab.id, { sessionStatus: "picking" });
@@ -669,8 +665,9 @@ export function Chatbot({
     for (const key of Object.keys(_cs.threadAborts)) {
       if (key.startsWith(tab.id + ':')) { try { _cs.threadAborts[key].abort(); } catch (_) {} delete _cs.threadAborts[key]; inFlight = true; }
     }
-    // Main and thread turns share the session, and the proxy runs one turn
-    // per session at a time — one cancel covers whichever is running.
+    // Main Stop aborts this tab's main reader and every thread reader above,
+    // so whichever turn the session is running is one the student stopped —
+    // one cancel covers it. (A thread's own Stop is narrower: see cancelThread.)
     if (inFlight) cancelTurn(tab.sessionId);
   };
 
@@ -1177,7 +1174,12 @@ export function Chatbot({
     const ctrl = _cs.threadAborts[key];
     if (ctrl) { try { ctrl.abort(); } catch (_) {} delete _cs.threadAborts[key]; }
     const tab = tabsRef.current.find(t => t.id === tabId);
-    if (ctrl && tab) cancelTurn(tab.sessionId);
+    // The proxy cancels the session's active turn, which is not necessarily
+    // this thread's: with a main turn streaming and this thread queued behind
+    // it, cancelling would truncate the turn the student never stopped. Stop
+    // this thread's reader either way; cancel only when nothing else of the
+    // tab is in flight (isSoleInFlight, checked after our own delete above).
+    if (ctrl && tab && isSoleInFlight(tabId, _cs.tabAborts, _cs.threadAborts)) cancelTurn(tab.sessionId);
   }, []);
 
   const sendThreadMessage = async (tabId, msgIdx, threadId, snippet, text, context, atts) => {
@@ -1659,7 +1661,7 @@ export function Chatbot({
               <div className="chat-empty">
                 <div style={{ marginBottom: 8 }}>Available sessions. Pick one or create new:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                  {serverSessions.filter(s => isResumable(s) && !tabs.some(t => t.sessionId === s.id)).map(s => (
+                  {serverSessions.filter(s => isPickable(s) && !tabs.some(t => t.sessionId === s.id)).map(s => (
                     <button key={s.id} onClick={() => { if (activeTab) resumeSessionIntoTab(activeTab.id, s.id, s.chatNum); }} style={{ background: "var(--bg-eq)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", color: "var(--accent)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
                       {"Chat #"}{s.chatNum} ({s.messageCount} msgs) {s.isolated ? "ISO" : "MEM"}
                     </button>

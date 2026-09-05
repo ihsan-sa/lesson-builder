@@ -7,6 +7,10 @@ const path = require("path");
 const BASE = process.env.PROXY_URL || "http://127.0.0.1:3901";
 const REAL = process.argv.includes("--real");
 const LOG = process.env.LESSON_DIR ? path.join(process.env.LESSON_DIR, "server", "chat.log") : null;
+// The client's own candidacy and Stop rules, imported from the core copy in
+// the workspace — the same module Chatbot.jsx imports, driven here against the
+// proxy's real /sessions payloads instead of being restated.
+const CORE_DIR = process.env.CORE_DIR;
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
 const post = async (route, body) => { const r = await fetch(BASE + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
@@ -76,6 +80,7 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
 }
 
 (async () => {
+  const { isRestorable, isPickable, isSoleInFlight } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
   const model = REAL ? "haiku" : "sonnet";
   const system = "You are a test fixture. Follow the user's instruction literally and say nothing else.";
   const init = await post("/session/init", { model, effort: "low", isolated: true, system });
@@ -92,6 +97,10 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   await post("/session/close", { sessionId: sid, keepContext: true });
   let rec = (await sessionsList()).find((s) => s.id === sid);
   ok(rec && rec.open === false && rec.lastTurn?.outcome === "cancelled" && rec.resumable === false, `cancelled turn -> resumable:false (lastTurn=${JSON.stringify(rec?.lastTurn)})`);
+  // Client rules on that same record: a cancelled turn is neither offered nor
+  // reclaimed after a reload.
+  ok(isPickable(rec) === false, "client: cancelled session is not offered in the picker");
+  ok(isRestorable(rec) === false, "client: cancelled session is not reclaimed on reload");
   ok((await post("/session/open", { sessionId: sid })).status === 200, "session re-opened for the next turn");
 
   // 2. Next turn on the same session completes cleanly (no reload, no orphan cancel state).
@@ -104,6 +113,7 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   await post("/session/close", { sessionId: sid, keepContext: true });
   rec = (await sessionsList()).find((s) => s.id === sid);
   ok(rec && rec.lastTurn?.outcome === "completed" && rec.resumable === true, `completed turn -> resumable:true (lastTurn=${JSON.stringify(rec?.lastTurn)})`);
+  ok(isPickable(rec) === true && isRestorable(rec) === true, "client: completed session is both offered and reclaimable");
   await post("/session/open", { sessionId: sid });
 
   // Wrong / stale ids are refused, never acted on.
@@ -116,6 +126,19 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   await post("/session/close", { sessionId: init2.body.sessionId, keepContext: true });
   const rec2 = (await sessionsList()).find((s) => s.id === init2.body.sessionId);
   ok(rec2 && rec2.resumable === true, "zero-turn session stays a resume candidate");
+
+  // A proxy that predates `resumable`/`lastTurn` (a lessons-side core that
+  // lags) is read the old way, not treated as un-resumable.
+  ok(isPickable({ open: false }) === true && isRestorable({ open: false }) === true, "client: session from a pre-`resumable` proxy stays resumable");
+  ok(isPickable({ open: true }) === false && isRestorable({ open: true }) === false, "client: open session from a pre-`resumable` proxy is not");
+
+  // A thread's Stop may only cancel the session's turn when this thread's is
+  // the one running -- otherwise it would kill a main turn nobody stopped.
+  // (Called after the thread deleted its own controller, so its key is gone.)
+  ok(isSoleInFlight(7, {}, {}) === true, "client: thread Stop cancels when its thread was the only request in flight");
+  ok(isSoleInFlight(7, { 7: {} }, {}) === false, "client: thread Stop does not cancel while this tab's main turn is in flight");
+  ok(isSoleInFlight(7, {}, { "7:t2": {} }) === false, "client: thread Stop does not cancel while another thread of this tab is in flight");
+  ok(isSoleInFlight(7, { 8: {} }, { "8:t1": {} }) === true, "client: another tab's in-flight requests do not block this thread's cancel");
 
   if (!REAL) {
     // 3. SIGTERM ignored by the whole tree: the SIGKILL pass must end it, still <= 3s.
@@ -142,6 +165,24 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
     ok(left4.length === 0, `turn4: session delete killed the tree (survivors: ${left4.join(",") || "none"})`);
     ok((await post("/chat/cancel", { sessionId: sid })).status === 404, "cancel on the deleted session -> 404");
     await t4.ended;
+
+    // 6. Reload mid-turn, on its own session: beforeunload beacons
+    // /session/close {keepContext:true} while the CLI runs on (a disconnect is
+    // not a cancel). The turn must survive, must not be offered to anyone
+    // else, and must still be the tab's to reclaim.
+    const init3 = await post("/session/init", { model, effort: "low", isolated: true, system });
+    const sid3 = init3.body.sessionId;
+    const t6 = await startTurn(sid3, longMsg, isRunning);
+    const running = await activeTurn(sid3);
+    await post("/session/close", { sessionId: sid3, keepContext: true });
+    const rec6 = (await sessionsList()).find((s) => s.id === sid3);
+    ok(tree(running.pid).length >= 3, `turn6: reload does not kill the turn (${tree(running.pid).length} pids)`);
+    ok(rec6 && rec6.open === false && rec6.turn && rec6.resumable === false, `turn6: in-flight session is not resumable (turn=${JSON.stringify(rec6?.turn && rec6.turn.msg)})`);
+    ok(isPickable(rec6) === false, "client: a session with a turn in flight is not offered in the picker");
+    ok(isRestorable(rec6) === true, "client: the reloading tab reclaims its own session mid-turn");
+    await post("/session/open", { sessionId: sid3 });
+    await cancelAndVerify("turn6 (after reload)", sid3, t6);
+    await post("/session/close", { sessionId: sid3, keepContext: false });
   } else {
     await post("/session/close", { sessionId: sid, keepContext: false });
   }

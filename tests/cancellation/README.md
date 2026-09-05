@@ -34,12 +34,21 @@ proxy must still count as cancelled).
 | 3 | tree ignores SIGTERM | same as 1, ended by the SIGKILL pass, still <= 3s. |
 | 5 | CLI exits 0 on SIGTERM | graceful shutdown with no result, ended by the SIGTERM pass; the accepted cancel wins over the exit code: stream ends `cancelled`, `lastTurn.outcome:"cancelled"`, `resumable:false`. |
 | 4 | KILL mid-turn (`/session/close` without keepContext) | the tree is gone within ~2s; a later cancel on that id -> 404. |
+| 6 | reload mid-turn (`/session/close {keepContext:true}` while the CLI streams) | the turn survives (a disconnect is not a cancel); the session is `resumable:false` so nobody else is offered it, but the reloading tab still reclaims it; then cancelling it works as in 1. |
+| | client rules (`chat/turnState.js`, the module `Chatbot.jsx` imports) | run against those same `/sessions` records: `isPickable` false for cancelled / in-flight and true for completed; `isRestorable` false only for cancelled; both fall back to `!open` against a pre-`resumable` proxy; `isSoleInFlight` lets a thread's Stop cancel only when nothing else of its tab is in flight. |
 | | `server/chat.log` | `CHAT_CANCELLED` for turns 1 and 5, `CHAT_OK` for turn 2, no `CHAT_ERROR`. |
 
 `--real` (via `REAL_CLAUDE=1`) runs scenarios 1 and 2 and the id checks against the real CLI:
 the long turn asks the model to run `sleep 120` with Bash, so the tree really is claude + a shell
-+ sleep. Scenarios 3, 5 and 4 are fake-only.
++ sleep. Scenarios 3, 5, 4 and 6 are fake-only; the client-rule checks run in both modes.
 
-Client wiring (Stop -> `/chat/cancel`, the stopped bubble, `resumable` in the picker and the
-reload resume) is in `chat/Chatbot.jsx` and `chat/ThreadPanel.jsx`; it is not driven by this
-script.
+The rest of the client wiring (Stop -> `/chat/cancel`, the stopped bubble) is in
+`chat/Chatbot.jsx` and `chat/ThreadPanel.jsx` and is not driven by this script: what it checks of
+the client is `chat/turnState.js`, imported from the workspace copy (`CORE_DIR`), not restated.
+
+## Sync to the lessons workspace
+
+`lessons/_lesson-core` must stay byte-identical to `references/bootstrap/_lesson-core`. This change
+touches `server/proxy.js`, `chat/turnState.js` (new file), `chat/Chatbot.jsx`, `chat/ThreadPanel.jsx`
+and `chat/chat.css.js` — sync all five after it lands, or the lessons-side tutor keeps a Stop that
+does not stop.
