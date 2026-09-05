@@ -1324,7 +1324,8 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
   background: none; border: none; cursor: pointer;
   color: var(--ink-4); font-size: 12px; padding: 0 4px;
 }
-.thread-fold-btn:hover { color: var(--accent); }
+.thread-fold-btn:hover:not([disabled]) { color: var(--accent); }
+.thread-folding-note { font-size: 11px; color: var(--ink-4); font-style: italic; padding: 6px 2px; }
 .thread-fold-btn[disabled] { opacity: .45; cursor: default; }
 
 /* ── Dead-session recovery bar ── */

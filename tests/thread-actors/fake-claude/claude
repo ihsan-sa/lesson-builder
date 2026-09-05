@@ -5,6 +5,9 @@
 //
 //   * every invocation appends {argv, stdin} to $FAKE_STATE/argv.jsonl, so a
 //     check can assert WHICH session a turn resumed and whether it forked;
+//   * a completed turn writes BOTH sides to the transcript (the message on
+//     start, the reply on the result) — so a turn the proxy kills mid-flight
+//     provably leaves no reply behind, which is what case 5 measures;
 //   * each session id owns a transcript file $FAKE_STATE/hist-<sid>.txt, and
 //     `--fork-session` copies the resumed session's transcript into a NEW id
 //     and answers as that id — a real fork: the child starts with the parent's
@@ -18,7 +21,10 @@
 //   LONG         stream for two minutes over a real bash+sleep tree, so a
 //                cancel has something to kill (same shape as tests/cancellation)
 //   NOFORK       ignore --fork-session and answer as the RESUMED id — the CLI
-//                failing to fork, which the proxy must refuse to record
+//                failing to fork, which the proxy must refuse to record. The
+//                reply is held back 3s: a real CLI takes seconds to answer,
+//                and the proxy kills this turn the moment the init line names
+//                the parent, so the reply must never reach the transcript
 const fs = require("fs");
 const path = require("path");
 const args = process.argv.slice(2);
@@ -81,7 +87,23 @@ function main() {
     return;
   }
 
-  const text = /RECALL/.test(stdin) ? "KNOWN: " + readHist(sid).join(" | ") : "ack";
+  const recall = /RECALL/.test(stdin);
+  const NOFORK_ANSWER_MS = 3000;
+  const text = recall ? "KNOWN: " + readHist(sid).join(" | ") : "ack: " + stdin.replace(/\s+/g, " ").trim().slice(0, 60);
   emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+  // The reply lands in the transcript only when the turn reaches its result —
+  // a killed turn leaves the message and nothing else. RECALL is exempt: it is
+  // this suite's read instrument, and echoing its own output back into the
+  // history it reads would make every later RECALL quote itself.
+  if (/NOFORK/.test(stdin)) {
+    // Answering as the parent takes as long as any other turn. Whether this
+    // reply ever lands in the parent's transcript is the measurement.
+    setTimeout(() => {
+      append(text);
+      emit({ type: "result", session_id: sid, result: text, usage, total_cost_usd: 0 });
+    }, NOFORK_ANSWER_MS);
+    return;
+  }
+  if (!recall) append(text);
   emit({ type: "result", session_id: sid, result: text, usage, total_cost_usd: 0 });
 }

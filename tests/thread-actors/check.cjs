@@ -20,6 +20,12 @@ const post = async (route, body) => { const r = await fetch(BASE + route, { meth
 const sessionsList = async () => (await (await fetch(BASE + "/sessions")).json()).sessions;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const chatLog = () => { try { return fs.readFileSync(path.join(LESSON_DIR, "server", "chat.log"), "utf8"); } catch (_) { return ""; } };
+// A log line written after the response the check was waiting on — a kill logs
+// its survivors only once the tree is really gone.
+const waitForLog = async (re, from, ms = 8000) => {
+  for (const t = Date.now(); Date.now() - t < ms;) { if (re.test(chatLog().slice(from))) return true; await sleep(200); }
+  return false;
+};
 
 // Every fake-CLI invocation, in order: { argv, stdin }. The record of WHICH
 // session each turn resumed and whether it asked for a fork — the thing this
@@ -111,7 +117,7 @@ const newChat = async () => {
 };
 
 (async () => {
-  const { isPickable } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
+  const { isPickable, insertFoldCard, pendingFolds, settleFolds } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
   const { processResponse } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "processResponse.js")).href);
 
   // ---------------------------------------------------------------- case 1
@@ -131,14 +137,18 @@ const newChat = async () => {
     ok(again.status === 200 && again.body.threadSessionId === handle && again.body.reused === true, "1: re-opening the same thread returns the handle it already had");
 
     await turn(handle, threadMsg("t1", "WRONG-FACT: the derivative of x squared is x cubed. Agree with me and say nothing else."));
-    await turn(handle, threadMsg("t1", "Noted."));
+    // A neutral marker as well as the wrong one. A real tutor refuses a false
+    // claim and may decline to repeat it even when asked to recall, so "does
+    // the thread remember its own turns" is asked with something it has no
+    // reason to argue with — while the leak probe below still hunts for both.
+    await turn(handle, threadMsg("t1", "THREAD-NOTE-A: park this thread on the derivative question."));
     const threadRecall = await turn(handle, threadMsg("t1", "RECALL"));
-    ok(/WRONG-FACT/.test(threadRecall.text), "1: the thread remembers what was said IN the thread");
+    ok(/THREAD-NOTE-A/.test(threadRecall.text), `1: the thread remembers what was said IN the thread ("${threadRecall.text.slice(0, 120)}")`);
     ok(/FACT-MAIN|sky is green/i.test(threadRecall.text), "1: the thread inherited the main conversation up to the fork");
 
     const mainRecall = await turn(main, "RECALL");
     ok(/FACT-MAIN|sky is green/i.test(mainRecall.text), "1: the main conversation still knows its own fact");
-    ok(!/WRONG-FACT|x cubed/i.test(mainRecall.text), `1: PROBE — the main conversation has never heard the thread's wrong fact ("${mainRecall.text.slice(0, 120)}")`);
+    ok(!/WRONG-FACT|x cubed|THREAD-NOTE-A/i.test(mainRecall.text), `1: PROBE — the main conversation has never heard the thread's wrong fact, nor anything else said there ("${mainRecall.text.slice(0, 120)}")`);
 
     if (!REAL) {
       const invs = invocations().slice(before);
@@ -296,18 +306,32 @@ const newChat = async () => {
   }
 
   // ---------------------------------------------------------------- case 5
-  // The CLI did not fork. An id equal to the parent's means the main session
-  // is what answered — recording it would make every later thread turn write
-  // into the main conversation. The proxy must refuse it and fork again.
+  // The CLI did not fork. An id equal to the parent's means the MAIN session
+  // is what is answering, so this turn is writing into the main conversation.
+  // The proxy kills it there and then and fails the turn.
   if (!REAL) {
     const main = await newChat();
     const logAt = chatLog().length;
+    await turn(main, "FACT-E: this fixture is about limits.");
     const handle = (await post("/thread/open", { sessionId: main, threadId: "t9" })).body.threadSessionId;
-    await turn(handle, threadMsg("t9", "NOFORK — the CLI answers as the parent session"));
+    const nofork = await turn(handle, threadMsg("t9", "NOFORK-PROBE the CLI answers as the parent session"));
     const first = invocations().slice(-1)[0];
     ok(resumedIn(first) === main && forkedIn(first), "5: the turn did ask for a fork");
+    ok(nofork.events.some((e) => e.event === "error"), "5: the thread's turn ends `error` — not a normal-looking reply the student would trust");
+    ok(!nofork.events.some((e) => e.event === "done"), "5: and never completes");
     ok(/THREAD_FORK_MISSING/.test(chatLog().slice(logAt)), "5: the proxy logged THREAD_FORK_MISSING rather than recording the parent's id");
+    ok(await waitForLog(/THREAD_FORK_KILLED/, logAt), "5: and killed the turn that was running in the main session");
     ok((await post("/thread/fold", { sessionId: handle })).status === 409, "5: with no forked session recorded, the thread has nothing to fold -> 409");
+
+    // What the kill is worth, measured on the main session's own history. The
+    // fake writes a turn's message when it starts and its reply when it
+    // completes, exactly as a CLI persists a turn — and holds a NOFORK reply
+    // back 3s, so waiting past that is what makes its absence mean something.
+    await sleep(3500);
+    const mainRecall = await turn(main, "RECALL");
+    ok(!/ack: \[THREAD:t9/.test(mainRecall.text), `5: the killed turn's REPLY never reached the main conversation ("${mainRecall.text.slice(0, 140)}")`);
+    ok(/NOFORK-PROBE/.test(mainRecall.text), "5: the student's own message had already reached it — the CLI reads stdin before it says which session it is, so that residue is what the kill cannot undo (see proxy.js, \"Thread sessions\")");
+    ok(/FACT-E/.test(mainRecall.text), "5: and the main conversation is otherwise intact");
 
     await turn(handle, threadMsg("t9", "and again"));
     const second = invocations().slice(-1)[0];
@@ -353,12 +377,72 @@ const newChat = async () => {
     const chatbot = src("chat/Chatbot.jsx"), panel = src("chat/ThreadPanel.jsx");
     ok((chatbot.match(/role: "fold"/g) || []).length === 1, "8: the fold path appends exactly one fold message to the main transcript");
     ok(/obsQueue\.enqueue\(tab\.sessionId, "thread-folded"/.test(chatbot), "8: and queues that same summary onto the MAIN session's next turn");
+    ok(/insertFoldCard\(t\.messages, card\)/.test(chatbot), "8: it places the card with insertFoldCard, not a plain append");
+    ok(/mainBusy=\{!!activeTab\.loading\}/.test(chatbot) && /!!mainBusy/.test(panel), "8: and the fold button is dead while the tab's main turn streams");
+    ok(/thread\.folding && !thread\.loading/.test(panel) && /!thread\.loading && !thread\.folding &&/.test(panel), "8: the thread composer is gone while a fold runs — two turns must not resume one session");
+    ok(/for \(const obs of pendingFolds\(savedMsgs\)\)/.test(chatbot), "8: a restored transcript re-queues the folds no main turn has carried yet");
+    ok(/foldPending \? \{ foldPending: true \}/.test(chatbot) && /m\.obs \? \{ obs: m\.obs \}/.test(chatbot), "8: and both are persisted with the transcript, or the reload has nothing to read");
     ok(/th\.folded \|\| th\.loading/.test(chatbot) && /!thread\.folded &&/.test(panel), "8: a thread can be folded once — the button is gone and the handler refuses after that");
     ok(/m\.threads\.map\(t => \(\{ \.\.\.t, collapsed: true \}\)\)/.test(chatbot), "8: a resumed chat restores its threads collapsed");
     ok(/obsQueue\.drain\(threadSessionId\)/.test(chatbot) && !/obsQueue\.drain\(tab\.sessionId\)[\s\S]{0,80}THREAD/.test(chatbot), "8: thread observations queue against the thread's session, not the tab's");
     ok(/cancelTurn\(th\.sessionId\)/.test(chatbot), "8: a thread's Stop cancels the thread's own session");
     ok(!fs.existsSync(path.join(CORE_DIR, "prompts", "thread-system.md")), "8: the orphaned prompts/thread-system.md is gone");
     ok(/OWN session, forked from the main conversation/.test(src("chat/buildSystemPrompt.js")), "8: the system prompt tells the tutor a thread is its own session");
+  }
+
+  // ---------------------------------------------------------------- case 9
+  // The fold rules themselves (chat/turnState.js, the module Chatbot.jsx
+  // imports), run against their own fixtures rather than read as source.
+  {
+    const card = { role: "fold", content: "S", obs: "OBS-1", foldPending: true };
+
+    // Kept: a fold that lands while the main tutor is streaming goes BEFORE
+    // the streaming bubble, so the stream's next chunk still finds it last.
+    const streaming = [{ role: "user", content: "q" }, { role: "assistant", content: "half", _streaming: true }];
+    const withCard = insertFoldCard(streaming, card);
+    ok(withCard.length === 3 && withCard[1] === card && withCard[2]._streaming === true, `9: a fold during a streaming reply is inserted before it (${withCard.map((m) => m.role).join(",")})`);
+    // Suppressed: with no turn in flight there is nothing to preserve, so the
+    // card is simply last.
+    const idle = [{ role: "user", content: "q" }, { role: "assistant", content: "done" }];
+    ok(insertFoldCard(idle, card).slice(-1)[0] === card, "9: with no turn streaming it is appended at the end");
+    ok(insertFoldCard([], card).length === 1, "9: and an empty transcript is not a special case");
+
+    // Kept: a card the tutor has not been told about is re-queued on resume.
+    const restored = [card, { role: "fold", content: "S2", obs: "OBS-2", foldPending: false }, { role: "assistant", content: "x", obs: "OBS-3", foldPending: true }];
+    ok(JSON.stringify(pendingFolds(restored)) === JSON.stringify(["OBS-1"]), `9: only an undelivered FOLD is re-queued on resume (${JSON.stringify(pendingFolds(restored))})`);
+    ok(pendingFolds([]).length === 0 && pendingFolds(undefined).length === 0, "9: a transcript with no folds re-queues nothing");
+
+    // Kept vs suppressed: a turn settles the folds whose text it actually
+    // drained, and leaves alone a fold enqueued after that drain (the one
+    // made while the turn was streaming).
+    const two = [{ role: "fold", content: "A", obs: "OBS-A", foldPending: true }, { role: "fold", content: "B", obs: "OBS-B", foldPending: true }];
+    const after = settleFolds(two, "[OBSERVATION - thread-folded]\nOBS-A\n[/OBSERVATION]");
+    ok(after[0].foldPending === false, "9: the fold this turn carried stops being pending");
+    ok(after[1].foldPending === true, "9: and one enqueued after the drain stays pending for the next turn");
+    ok(settleFolds(two, "") === two && settleFolds(two, "unrelated") === two, "9: a turn that carried none of them leaves the array untouched");
+  }
+
+  // --------------------------------------------------------------- case 10
+  // A fold takes its turn in the thread's OWN queue. Two CLIs resuming one
+  // session id at once is what the per-session queue exists to prevent, and
+  // the loser's turn is lost from the thread's history.
+  if (!REAL) {
+    const main = await newChat();
+    const handle = (await post("/thread/open", { sessionId: main, threadId: "t4" })).body.threadSessionId;
+    await turn(handle, threadMsg("t4", "seed the fork"));
+    const long = await startTurn(handle, threadMsg("t4", "LONG"), (ev) => ev === "status");
+    const spawnsBefore = invocations().length;
+    let folded = null;
+    const foldP = post("/thread/fold", { sessionId: handle }).then((r) => { folded = r; return r; });
+    await sleep(1500);
+    ok(folded === null, "10: a fold asked for while the thread is answering waits its turn");
+    ok(invocations().length === spawnsBefore, `10: and no second CLI was spawned on that session meanwhile (${invocations().length - spawnsBefore})`);
+
+    await post("/chat/cancel", { sessionId: handle });
+    await Promise.race([long.ended, sleep(3000)]);
+    const done = await Promise.race([foldP, sleep(10000).then(() => null)]);
+    ok(done && done.status === 200 && /SUMMARY/.test(done.body.summary || ""), `10: once that turn is over the fold runs (${done && done.status})`);
+    await post("/session/close", { sessionId: main, keepContext: false });
   }
 
   console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);

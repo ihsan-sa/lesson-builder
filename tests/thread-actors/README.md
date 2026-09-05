@@ -20,7 +20,9 @@ the workspace. Exit code 0 only when every check passes. No dependencies beyond 
 every invocation appends its `{argv, stdin}` to `$FAKE_STATE/argv.jsonl`, and each session id owns
 a transcript file. `--fork-session` copies the resumed session's transcript into a **new** id and
 answers as that id — a real fork, so "which session heard what" is a string check rather than a
-guess. Message switches: `RECALL` replies with that session's whole transcript, `LONG` streams for
+guess. A turn writes its message to the transcript when it starts and its reply when it reaches its
+result, the way a CLI persists a turn — so a turn the proxy kills mid-flight provably leaves no
+reply behind (case 5). `RECALL` is exempt: it is the read instrument. Message switches: `RECALL` replies with that session's whole transcript, `LONG` streams for
 two minutes over a real `bash`+`sleep` tree so a cancel has something to kill, `NOFORK` makes the
 CLI ignore `--fork-session` and answer as the parent (the failure the proxy must refuse to record).
 
@@ -30,19 +32,21 @@ Each case opens its own chat and its own thread; none reads state a previous cas
 
 | | Case | Must hold |
 | --- | --- | --- |
-| 1 | isolation | `/thread/open` returns a handle that is not the chat's id, and the same handle for the same `(chat, threadId)`. The thread inherits the main conversation up to the fork and remembers its own turns. **The main conversation, asked afterwards, has never heard the thread's wrong fact.** Argv: the thread's first turn is `--resume <main> --fork-session` (fork and turn in ONE spawn — a thread turn costs no more prompt than a main turn), later turns resume the fork and do not fork again, main turns never resume the fork. `/sessions` never lists the handle; the thread's turns do not count against the chat's `messageCount`; the chat is still a resume candidate (`isPickable`); a thread handle cannot be opened as a chat. |
+| 1 | isolation | `/thread/open` returns a handle that is not the chat's id, and the same handle for the same `(chat, threadId)`. The thread inherits the main conversation up to the fork and remembers its own turns (asked with a neutral marker: a real tutor refuses the wrong fact and may decline to repeat it). **The main conversation, asked afterwards, has never heard the thread's wrong fact.** Argv: the thread's first turn is `--resume <main> --fork-session` (fork and turn in ONE spawn — a thread turn costs no more prompt than a main turn), later turns resume the fork and do not fork again, main turns never resume the fork. `/sessions` never lists the handle; the thread's turns do not count against the chat's `messageCount`; the chat is still a resume candidate (`isPickable`); a thread handle cannot be opened as a chat. |
 | 2 | fold-back | Folding a thread nobody asked anything -> 409. Before the fold the main conversation does not know the thread's conclusion; `/thread/fold` returns a summary of it in one haiku spawn against the **thread's** session, and writes nothing into the main session. **Only after the student's next main turn carries that summary does the main conversation know it.** Folding a main session id -> 404. |
 | 3a | a thread's Stop | With a main turn and a thread turn streaming as two processes, `/chat/cancel` on the thread kills the thread's whole tree and ends its stream `cancelled` — and the main turn's tree is untouched and still streaming. |
 | 3b | the main turn's Stop | The mirror: cancelling the main turn leaves the running thread alone. Then discarding the chat (`/session/close` without `keepContext`) does take its threads with it — tree gone, handle 404. |
 | 4 | reload | After `/session/close {keepContext:true}` + `/session/open`, re-opening the thread returns the handle it had, its next turn resumes the same forked session without forking again, it still has its own history — and the resumed chat still has not heard it. |
-| 5 | the CLI did not fork | `NOFORK`: the proxy logs `THREAD_FORK_MISSING` instead of recording the parent's id as the thread's session, so the thread has nothing to fold (409) and its next turn forks again rather than resuming — and writing — the main conversation. |
+| 5 | the CLI did not fork | `NOFORK`: the proxy kills the turn (`THREAD_FORK_MISSING` then `THREAD_FORK_KILLED`), the thread's stream ends `error` and never `done`, and no id is recorded — so the thread has nothing to fold (409) and its next turn forks again rather than resuming the main session. On the main session's own history: **the killed turn's reply never reached it**, the rest of the conversation is intact, and the student's own message is there — the CLI reads stdin before it says which session it is, so that one line is the residue the kill cannot undo (`proxy.js`, "Thread sessions"). |
 | 6 | bad input | Missing / malformed `threadId`, unknown chat, malformed handle -> 400/404, no session created. |
 | 7 | client rules (`chat/processResponse.js`, the module `Chatbot.jsx` imports) | `<<REINFORCE>>` in a **thread** reply is collected exactly as it is on the main transcript (one list, one chat) and stripped from the display; `<<SUGGEST>>` is still stripped in thread scope and reported back as `thread-tag-deferred`. |
-| 8 | client wiring, source checks | What this suite cannot drive headlessly (no DOM), read out of the workspace's core copy so a refactor that drops it is caught: exactly one `role: "fold"` message per fold, the summary queued onto the **main** session's next turn, the fold offered once, a resumed chat restoring its threads collapsed, thread observations queued against the thread's session, a thread's Stop naming the thread's session, `prompts/thread-system.md` gone, and the system prompt telling the tutor a thread is its own session. |
+| 9 | the fold rules | `chat/turnState.js` run against its own fixtures: a fold that lands while the main tutor is streaming is inserted **before** that bubble (appending past it splits the reply and strands the first half `_streaming`), and is simply appended when nothing is in flight; a restored transcript re-queues only an undelivered fold; a turn settles the folds whose text it actually drained and leaves a fold enqueued after that drain pending for the next turn. |
+| 10 | the fold takes its turn | With a thread turn streaming, `/thread/fold` waits in that thread's queue — no second CLI is spawned on the session — and runs once the turn is cancelled. Two CLIs resuming one session id is what the queue exists to prevent. |
+| 8 | client wiring, source checks | What this suite cannot drive headlessly (no DOM), read out of the workspace's core copy so a refactor that drops it is caught: exactly one `role: "fold"` message per fold, the summary queued onto the **main** session's next turn, the fold offered once, a resumed chat restoring its threads collapsed, thread observations queued against the thread's session, a thread's Stop naming the thread's session, the fold card placed by `insertFoldCard`, the ⤴ dead while the main turn streams, the thread composer gone while a fold runs, the pending fold re-queued on resume and persisted with the transcript, `prompts/thread-system.md` gone, and the system prompt telling the tutor a thread is its own session. |
 
-`--real` (via `REAL_CLAUDE=1`) runs cases 1, 2, 4, 6, 7 and 8 against the real CLI — the ones that
-prove `--fork-session` actually forks. Cases 3 and 5 are fake-only (they need a killable tree and a
-CLI that refuses to fork).
+`--real` (via `REAL_CLAUDE=1`) runs cases 1, 2, 4, 6, 7, 8 and 9 against the real CLI — the ones
+that prove `--fork-session` actually forks. Cases 3, 5 and 10 are fake-only (they need a killable
+tree and a CLI that refuses to fork).
 
 ## Transcripts
 

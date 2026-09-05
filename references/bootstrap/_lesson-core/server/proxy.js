@@ -16,10 +16,19 @@
 // turn costs no more than a main turn). The fork is taken from the main
 // session as it stands when that first thread turn runs — the CLI can fork a
 // session's tip, not an arbitrary earlier turn — and the anchor snippet rides
-// in the message. Later turns resume the forked session. Nothing said in a
+// in the message. Later turns resume the forked session. If the CLI answers
+// that first turn as the main session instead of a fork, the turn is killed
+// and the stream ends `error`. That is as early as the proxy can act: the CLI
+// reads the prompt before it announces a session id, so a CLI that ignores
+// `--fork-session` has already taken the student's message into the main
+// conversation. What the kill does prevent is everything after it — the
+// tutor's reply is never written there, and no id is recorded, so no later
+// turn of that thread resumes the main session either. Nothing said in a
 // thread ever enters the main session's history; what a thread concluded
 // reaches the main conversation only through POST /thread/fold, whose summary
-// the client shows the student and carries into its next main turn.
+// the client shows the student and carries into its next main turn. The fold
+// runs through the thread's own turn queue, so it never races a thread turn
+// for the same CLI session.
 // A thread handle is a session for every purpose except resumption: /chat and
 // /chat/cancel take it (so a thread's Stop kills only that thread's process
 // tree), and /sessions never lists it — a thread is not a chat to walk into.
@@ -643,18 +652,23 @@ app.post("/thread/fold", async (req, res) => {
 
   const args = ["--resume", session.cliSessionId, "-p", "--print", "--output-format", "json", "--model", "haiku", "--effort", "low"];
   const prompt = "SYSTEM TASK: This side thread is being folded back into the main conversation. In at most 5 sentences of plain prose, state what this thread actually settled: the question it started from and the conclusion reached. Correct anything in it that was wrong rather than repeating it. No preamble, no [THREAD:...] prefix, no control tags.";
-  try {
-    const parsed = parseCliJson(await runClaude(args, prompt, session.isolated));
-    const tok = extractTokens(parsed);
-    accumulateTokens(tok);
-    const summary = (parsed.result || "").trim();
-    if (!summary) throw new Error("empty summary");
-    log("THREAD_FOLD", { chatNum: session.chatNum, threadId: session.threadId, summaryLen: summary.length, ...tok });
-    res.json({ summary, threadId: session.threadId });
-  } catch (err) {
-    log("THREAD_FOLD_ERROR", { chatNum: session.chatNum, threadId: session.threadId, error: err.message });
-    res.status(500).json({ error: { message: err.message } });
-  }
+  // Through the thread's own queue, exactly like /chat: the fold resumes the
+  // same CLI session a thread turn does, and two CLIs resuming one session id
+  // at once lose one of the two turns.
+  await enqueueForSession(handle, async () => {
+    try {
+      const parsed = parseCliJson(await runClaude(args, prompt, session.isolated));
+      const tok = extractTokens(parsed);
+      accumulateTokens(tok);
+      const summary = (parsed.result || "").trim();
+      if (!summary) throw new Error("empty summary");
+      log("THREAD_FOLD", { chatNum: session.chatNum, threadId: session.threadId, summaryLen: summary.length, ...tok });
+      res.json({ summary, threadId: session.threadId });
+    } catch (err) {
+      log("THREAD_FOLD_ERROR", { chatNum: session.chatNum, threadId: session.threadId, error: err.message });
+      res.status(500).json({ error: { message: err.message } });
+    }
+  });
 });
 
 const UPLOAD_DIR = path.join(PROJECT_DIR, "server", ".uploads");
@@ -776,6 +790,25 @@ app.post("/chat", async (req, res) => {
       res.end();
       settle("cancelled");
     };
+    // The fork did not happen: this turn is running IN the main conversation,
+    // so every character it writes from here lands in the history a thread
+    // must never touch. Kill it and fail the turn — a turn allowed to finish
+    // here IS the leak, and the student would be shown a normal-looking reply
+    // for it. The prompt is already gone (the CLI reads stdin before it says
+    // which session it is): the reply, and every later turn, is what this
+    // stops.
+    let forkFailed = false;
+    const failForkMissing = () => {
+      if (settled) return;
+      forkFailed = true;
+      sse("error", { message: "This thread could not get a session of its own. The turn was stopped before it could write into the main conversation." });
+      res.end();
+      // settle BEFORE the kill so the outcome recorded is this failure, not
+      // the cancellation that ends the process.
+      settle("error");
+      const pid = turn ? turn.pid : proc && proc.pid;
+      if (pid) killTree(pid).then((left) => log("THREAD_FORK_KILLED", { chatNum: session.chatNum, threadId: session.threadId, msg: msgNum, survivors: left }));
+    };
 
     const proc = runClaudeStreaming(args, message, session.isolated,
       (parsed) => {
@@ -792,6 +825,7 @@ app.post("/chat", async (req, res) => {
               log("THREAD_FORK", { chatNum: session.chatNum, threadId: session.threadId, from: forkFrom.slice(0, 8), to: parsed.session_id.slice(0, 8) });
             } else {
               log("THREAD_FORK_MISSING", { chatNum: session.chatNum, threadId: session.threadId, sessionId: forkFrom.slice(0, 8) });
+              return failForkMissing();
             }
           }
           if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
@@ -819,11 +853,13 @@ app.post("/chat", async (req, res) => {
         } catch (_) {}
       },
       () => {
+        if (forkFailed) return;   // already answered and settled as an error
         if (turn && turn.cancelled) return cancelledExit();
         if (!resultSent) { sse("done", { text: "" }); res.end(); }
         settle("completed");
       },
       (err) => {
+        if (forkFailed) return;
         if (turn && turn.cancelled) return cancelledExit();
         log("CHAT_ERROR", { chatNum: session.chatNum, error: err.message });
         sse("error", { message: err.message });
@@ -833,7 +869,7 @@ app.post("/chat", async (req, res) => {
     );
     proc.stdout.on("data", (d) => { streamedChars += d.length; });
     turn = { msgNum, pid: proc.pid, proc, startedAt: Date.now(), cancelled: false, killed: null };
-    session.turn = turn;
+    if (!settled) session.turn = turn;   // a turn that already settled (fork-missing) is not in flight
 
     res.on("close", () => {
       log("CHAT_DISCONNECT", { chatNum: session.chatNum, msg: msgNum, resultSent });

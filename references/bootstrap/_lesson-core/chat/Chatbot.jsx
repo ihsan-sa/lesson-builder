@@ -8,7 +8,7 @@ import { buildSystemPrompt } from "./buildSystemPrompt.js";
 import { processResponse as parseChatResponse, stripUnclosedTags } from "./processResponse.js";
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
-import { isRestorable, isPickable } from "./turnState.js";
+import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/LessonShell.jsx";
 
@@ -271,6 +271,17 @@ export function Chatbot({
     const { _streaming, ...rest } = m;
     return rest;
   };
+
+  // A fold card is "pending" until a main turn has actually carried its
+  // summary to the tutor (turnState.js, "Folding a thread back").
+  const markFoldsDelivered = (tabId, drained) => {
+    if (!drained) return;
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tabId) return t;
+      const messages = settleFolds(t.messages, drained);
+      return messages === t.messages ? t : { ...t, messages };
+    }));
+  };
   useEffect(() => {
     for (const tab of tabs) {
       if (!tab.keepContext || !tab.sessionId || tab.messages.length === 0) continue;
@@ -283,6 +294,13 @@ export function Chatbot({
           ...(m.commitSuggest ? { commitSuggest: m.commitSuggest } : {}),
           ...(m.commitResult ? { commitResult: m.commitResult } : {}),
           ...(m.stopped ? { stopped: true } : {}),
+          // A fold's handover text and whether a main turn has carried it yet.
+          // The observation queue is in memory: without these two, a reload
+          // between the fold and the next main message leaves a transcript
+          // saying the thread was folded back and a main session that never
+          // hears it.
+          ...(m.obs ? { obs: m.obs } : {}),
+          ...(m.foldPending ? { foldPending: true } : {}),
           ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false, messages: (t.messages || []).map(stripStreaming) })) } : {}),
         }));
         _ss.setItem("chatMsgs_" + tab.sessionId, JSON.stringify(saveable));
@@ -438,6 +456,9 @@ export function Chatbot({
         try {
           const raw = _ss.getItem("chatMsgs_" + sid);
           if (raw) savedMsgs = JSON.parse(raw).map(m => m.threads ? { ...m, threads: m.threads.map(t => ({ ...t, collapsed: true })) } : m);
+          // A fold the student read but no main turn has carried yet: the
+          // queue died with the page, the transcript did not, so put it back.
+          for (const obs of pendingFolds(savedMsgs)) obsQueue.enqueue(sid, "thread-folded", obs);
         } catch (_) {}
         let savedReinf = [];
         try {
@@ -885,7 +906,12 @@ export function Chatbot({
       if (stopped) {
         obsQueue.requeue(tab.sessionId, observations);
         markStopped();
-      } else if (finalText) {
+      } else {
+        // Nothing is requeued on this path, so this turn carried whatever was
+        // drained into it — including a folded thread's summary.
+        markFoldsDelivered(tabId, observations);
+      }
+      if (!stopped && finalText) {
         const reply = processResponse(finalText);
         setTabs(prev => prev.map(t => {
           if (t.id !== tabId) return t;
@@ -1408,6 +1434,14 @@ export function Chatbot({
                 updateThreadAssistant(display);
               } else if (eventType === "done") {
                 finalText = data.text || finalText;
+              } else if (eventType === "error") {
+                // Same route as the main reader: through finalText, so the
+                // completion pass finalises the bubble instead of leaving it
+                // flagged `_streaming` forever. The proxy ends a thread turn
+                // this way when the CLI did not fork — the turn was killed
+                // before it could write into the main conversation, and the
+                // student is told rather than shown a normal-looking reply.
+                finalText = data.message || "Error";
               } else if (eventType === "cancelled") {
                 threadStopped = true;
               }
@@ -1513,10 +1547,12 @@ export function Chatbot({
         addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: data.error?.message || `Could not fold this thread (HTTP ${res.status}).` });
         return;
       }
-      setTabs(prev => prev.map(t => t.id === tabId
-        ? { ...t, messages: [...t.messages, { role: "fold", source: th.snippet, content: data.summary }] }
-        : t));
-      obsQueue.enqueue(tab.sessionId, "thread-folded", `A side thread on "${th.snippet.slice(0, 120)}" was folded back into this conversation. You did not see that thread; this summary is all of it, and the student has read it too:\n\n${data.summary}\n\nTreat it as settled context, not as a new question.`);
+      const obs = `A side thread on "${th.snippet.slice(0, 120)}" was folded back into this conversation. You did not see that thread; this summary is all of it, and the student has read it too:\n\n${data.summary}\n\nTreat it as settled context, not as a new question.`;
+      // insertFoldCard, not a plain append: a main turn may be streaming into
+      // the last message and has to keep it (turnState.js).
+      const card = { role: "fold", source: th.snippet, content: data.summary, obs, foldPending: true };
+      setTabs(prev => prev.map(t => t.id === tabId ? { ...t, messages: insertFoldCard(t.messages, card) } : t));
+      obsQueue.enqueue(tab.sessionId, "thread-folded", obs);
       updateThread(tabId, msgIdx, threadId, { folded: true, collapsed: true });
     } catch (e) {
       addThreadMsg(tabId, msgIdx, threadId, { role: "assistant", content: `Could not fold this thread: ${e.message}` });
@@ -1901,6 +1937,7 @@ export function Chatbot({
                 onCancel={() => cancelThread(activeTab.id, msgIdx, threadId)}
                 onDelete={() => deleteThread(activeTab.id, msgIdx, threadId)}
                 onFold={() => foldThread(activeTab.id, msgIdx, threadId)}
+                mainBusy={!!activeTab.loading}
                 onFocusChange={(focused) => setThreadFocus(activeTab.id, msgIdx, threadId, focused)}
                 onReadFiles={readFiles}
                 contextTrigger={effectiveThreadCtxTrigger}
