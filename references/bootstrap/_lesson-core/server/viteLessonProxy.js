@@ -64,7 +64,7 @@ export function lessonChatProxy(lessonDir) {
     try {
       raw = fs.readFileSync(IDENT_FILE, "utf8");
     } catch (_) {
-      return { error: `The tutor backend for "${name}" is not running. Start it with \`npm run proxy\` in the lesson directory (or \`lesson up <course>/${name}\` on the box), then reload.` };
+      return { error: `The tutor backend for "${name}" is not running. Start it with \`npm run proxy\` in the lesson directory, then reload.` };
     }
     let rec;
     try {

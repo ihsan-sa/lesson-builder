@@ -12,7 +12,7 @@
 - Express proxy (`server/proxy.js` shim) spawning the local `claude` CLI per chat session
 
 ## How to Run
-1. Start the proxy: `npm run proxy` (finds a free port from 3001 up and writes two files: `server/.proxy.json`, its identity — port, lessonDir, pid, startedAt — and `server/.proxy-port`, the bare number kept for `bin/lesson`; both gitignored, both removed on exit)
+1. Start the proxy: `npm run proxy` (finds a free port from 3001 up and writes two files: `server/.proxy.json`, its identity — port, lessonDir, pid, startedAt — and `server/.proxy-port`, the bare number kept for launcher scripts; both gitignored, both removed on exit)
 2. Start the Vite dev server: `npm run dev` — the `lessonChatProxy` plugin in `vite.config.js` resolves the chat routes through `server/.proxy.json` on every request and refuses to forward to another lesson's proxy, so start order does not matter
 3. Open the URL Vite prints (default `http://localhost:5173`)
 
