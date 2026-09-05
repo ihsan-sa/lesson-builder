@@ -650,12 +650,12 @@ const MAX_PORT_ATTEMPTS = 50;
 const PORT_FILE = path.join(process.cwd(), "server", ".proxy-port");
 // Identity file. `.proxy-port` holds a bare number, which cannot answer the
 // only question that matters to a client — "is the process on that port MY
-// lesson's proxy?" — so it is kept for the tooling that already reads it
-// (bin/lesson) and this file carries the identity Vite actually checks.
+// lesson's proxy?" — so it is kept for launcher scripts that already read
+// it, and this file carries the identity Vite actually checks.
 const IDENT_FILE = path.join(process.cwd(), "server", ".proxy.json");
 
 function writeIdentity(port) {
-  // Identity first, port second: `lesson up` waits for .proxy-port and then
+  // Identity first, port second: a launcher waits for .proxy-port before it
   // starts Vite, and Vite resolves through .proxy.json — so .proxy.json has
   // to be on disk before .proxy-port announces that the proxy is ready.
   try {

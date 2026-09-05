@@ -18,7 +18,7 @@ If the workspace is fresh (no `<workspace_root>/_lesson-core/`), run the bootstr
   server/
     proxy.js                (1-line shim -> _lesson-core/server/proxy.js)
     .proxy.json             (auto-written at runtime: the proxy's identity — port, lessonDir, pid, startedAt; what Vite resolves through)
-    .proxy-port             (auto-written at runtime: the bare port number, kept for `bin/lesson`)
+    .proxy-port             (auto-written at runtime: the bare port number, kept for launcher scripts)
     .isolated/              (auto-created at runtime: isolated-mode CWD)
     .uploads/               (auto-created at runtime: uploaded files)
     chat.log                (auto-written at runtime: request log)
@@ -143,7 +143,7 @@ Why a shim:
 - Path depth: `../../../../` = `server/` -> `<slug>/` -> `claude_lessons/` -> `<course>/` -> `<workspace_root>/`. Adjust only if a lesson ever lives at a non-standard depth.
 
 Canonical proxy behavior worth knowing:
-- **Port selection**: base port comes from the `PROXY_PORT` env var when set, else 3001. On `EADDRINUSE` the proxy increments and retries (up to 50 attempts), then writes two files: `server/.proxy.json` first — the identity record `{port, lessonDir, pid, startedAt}` (`lessonDir` = realpath of the lesson) that Vite's `lessonChatProxy` resolves through on every request — and then `server/.proxy-port`, the bare number kept for tooling that waits on it (`bin/lesson`). On exit (`SIGINT`/`SIGTERM`/`SIGHUP`) both are removed, but only if the record still carries this process's pid, so a successor proxy is never stranded and a client can tell "not running" from "running somewhere else".
+- **Port selection**: base port comes from the `PROXY_PORT` env var when set, else 3001. On `EADDRINUSE` the proxy increments and retries (up to 50 attempts), then writes two files: `server/.proxy.json` first — the identity record `{port, lessonDir, pid, startedAt}` (`lessonDir` = realpath of the lesson) that Vite's `lessonChatProxy` resolves through on every request — and then `server/.proxy-port`, the bare number kept for launcher scripts that wait on it. On exit (`SIGINT`/`SIGTERM`/`SIGHUP`) both are removed, but only if the record still carries this process's pid, so a successor proxy is never stranded and a client can tell "not running" from "running somewhere else".
 - **Cross-lesson guard**: any request whose `X-Expect-Lesson-Dir` header names a different lesson is refused with 409 before a session is opened or a CLI is spawned (logged as `WRONG_LESSON`); requests without the header (curl, health checks) pass. `GET /whoami` returns `{lessonDir, port, pid, startedAt}`.
 - **CLI output parsing**: the spawned CLI shares stdout with MCP client diagnostics that can land before or after its result object, so the proxy takes the last JSON object out of stdout (`parseCliJson`) instead of parsing the whole buffer. Symptom of the old behaviour: intermittent "Session failed to initialize. Is the proxy server running?" on a healthy proxy.
 - **Model pass-through**: the proxy forwards the model name from the request to the CLI unchanged — it does NOT collapse full model names to `opus`/`sonnet`-style latest aliases. Selecting a specific version in the chat header runs exactly that version, not whatever the alias currently resolves to.
