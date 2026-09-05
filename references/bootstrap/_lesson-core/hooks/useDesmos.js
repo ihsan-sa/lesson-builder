@@ -18,16 +18,27 @@ import { useEffect, useState } from "react";
 // inside LOAD_TIMEOUT_MS -- the same bound useKatex.js uses. Nothing here may
 // leave a consumer waiting on a dead or hung CDN forever.
 //
+// The bound reports a slow load, it does not cancel it. The script tag stays,
+// and a bundle that arrives late -- 10s on a hotspot or a cold CDN -- flips
+// every consumer that had given up back to ready.
+//
 // Returns { ready, keyMissing, failed }:
 //   - ready === true  -> window.Desmos is available and safe to call
 //   - keyMissing      -> consumer should render a red fallback instead
-//   - failed          -> the load settled without a calculator; the consumer
-//                        should stop waiting. Nothing retries on its own.
+//   - failed          -> the load has not produced a calculator within the
+//                        bound; the consumer should stop waiting. Nothing
+//                        retries on its own, but a late arrival clears this
+//                        and sets ready.
 
 const LOAD_TIMEOUT_MS = 8000;
 
 let desmosLoadPromise = null;
 let warned = false;
+
+// Consumers that gave up at LOAD_TIMEOUT_MS. A script that lands after the
+// bound still defines window.Desmos, so it tells them instead of leaving them
+// on an error that the page has already disproved.
+const lateArrivals = new Set();
 
 // One warning per page, whatever went wrong: a dead CDN is a single fact, and
 // a lesson full of graphs would otherwise report it once per <DesmosGraph>.
@@ -61,8 +72,17 @@ function loadDesmosScript(key) {
       reject(err);
     };
     script.onload = () => {
-      script.setAttribute("data-desmos-loaded", window.Desmos ? "true" : "failed");
-      settle(window.Desmos ? null : new Error("The Desmos script loaded but exposed no window.Desmos."));
+      const loaded = !!window.Desmos;
+      script.setAttribute("data-desmos-loaded", loaded ? "true" : "failed");
+      if (!loaded) { settle(new Error("The Desmos script loaded but exposed no window.Desmos.")); return; }
+      // "a load that is slow but eventually succeeds ends in ready: true as
+      // soon as the script defines window.Desmos, however late" -- settle()
+      // no-ops once the timeout has fired, so say so out of band. Told on
+      // EVERY success, not only this tag's late one: a consumer that gave up
+      // on a tag that never arrives is still waiting when a later mount's
+      // fresh tag loads, and this is the only place that can reach it.
+      for (const notify of [...lateArrivals]) notify();
+      if (!settled) settle(null);
     };
     script.onerror = () => {
       script.setAttribute("data-desmos-loaded", "failed");
@@ -99,13 +119,17 @@ export function useDesmos({ enabled = true } = {}) {
     }
     let mounted = true;
     setFailed(false);
+    // Subscribed for the life of this effect, which outlives the failed state:
+    // its deps do not change when `failed` does, so nothing else would re-run.
+    const succeed = () => { if (!mounted) return; setFailed(false); setReady(true); };
+    lateArrivals.add(succeed);
     loadDesmosScript(key)
-      .then(() => { if (mounted) setReady(true); })
+      .then(succeed)
       .catch(err => {
         warnOnce(`[useDesmos] ${err.message} Graphs will not render.`);
         if (mounted) setFailed(true);
       });
-    return () => { mounted = false; };
+    return () => { mounted = false; lateArrivals.delete(succeed); };
   }, [enabled, ready, key, keyMissing]);
 
   return { ready, keyMissing, failed };
