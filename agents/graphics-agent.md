@@ -49,11 +49,23 @@ Non-negotiables — these are what visual-QA and the numerical spot-check fail b
 
 ## Matplotlib reference images
 
-- `MPLBACKEND=agg`; save to `<lesson_root>/public/images/<name>.png` at `dpi=150`, `bbox_inches='tight'`.
+- `MPLBACKEND=agg`; save at `dpi=150`, `bbox_inches='tight'` — **to a staged path, never into the lesson tree.** Ask for it first, and let the figure's own `savefig` write there:
+
+  ```
+  staged=$(node <skill_root>/scripts/run-manifest.cjs stage --lesson <lesson_root> --media-id <media_id> --name <name>.png)
+  ```
+
 - Figure face `#F4F1EB`, text/axes `#3A3833`, primary curves `#C96442`, secondary dashed muted. Light figures only — the shell has no dark mode.
 - View the PNG with `Read` before returning — you are the first reviewer of your own render.
 - Print an assertions line to stderr before the script ends: `ASSERTIONS: {"width":N,"height":N,"nonblank":true,"hasCurves":N}`.
-- **Persist the source**: in build modes, write the final `.py` to `<lesson_root>/figures/<media_id>.py` (create `figures/` if absent) — scratch is deleted after assembly, and this persisted script is what makes a future refine reproducible. Deliverable: that `.py` path, the PNG path, and (for lesson embedding) the base64 `const IMG_X = "..."` string for `<RefImg>`.
+- **Promote the figure, then its source**: in build modes both are staged and then promoted — the PNG to `public/images/<name>.png` and the final `.py` to `figures/<media_id>.py`:
+
+  ```
+  node <skill_root>/scripts/run-manifest.cjs promote --lesson <lesson_root> --media-id <media_id> \
+    --from "$staged" --to public/images/<name>.png
+  ```
+
+  Scratch is deleted after assembly, so the promoted `.py` is what makes a future refine reproducible. `promote` refuses a truncated PNG — a figure whose script died part-way through `savefig` never replaces the good one, and the reason lands on the media row. A run that produced nothing at all is recorded with `run-manifest.cjs fail --lesson <lesson_root> --media-id <media_id> --reason "<why>"`. Deliverable: the promoted `.py` path, the promoted PNG path and its `sha256` from the receipt, and (for lesson embedding) the base64 `const IMG_X = "..."` string for `<RefImg>`.
 
 ## Chat mode: inline SVG for `<<DEMO>>` blocks
 
@@ -73,10 +85,11 @@ The brief carries the action:
 - **replace**: same inputs plus a new function name from the brief. Cross-medium replacements go to the destination-type specialist, not you.
 - **add**: build from scratch per the build-mode contract.
 
-Output locations: `.build-scratch/refine/topic-N-<name>.jsx`, `.build-scratch/replace/topic-N-<name>.jsx`, `.build-scratch/add/topic-N-<name>.jsx` (matplotlib: `.py` + `.b64` alongside).
+Output locations: `.build-scratch/refine/topic-N-<name>.jsx`, `.build-scratch/replace/topic-N-<name>.jsx`, `.build-scratch/add/topic-N-<name>.jsx` (matplotlib: `.py` + `.b64` alongside). Those are the staging area for text main Claude splices; they are never a path the lesson serves. Matplotlib's PNG and its persisted `.py` are files the lesson serves and go through `stage` + `promote` as above.
 
 ## Constraints
 
+- Write only into `.build-scratch/` and the staging paths `stage` prints. Never write into `public/` or `figures/` — `promote` is the only way an artifact enters the lesson tree (`references/phase-3-execution.md` § The run staging area).
 - No emojis, no Unicode arrows in SVG text.
 - Do not invent schema parameters.
 - One deliverable per spawn.

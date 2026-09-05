@@ -138,8 +138,12 @@ evals/teaching/                Calibration + benchmark assets: lesson-fragments/
   graph-schema-guide.md        GRAPH_SCHEMA derivation + update-mode backfill
   log-template.md              lesson_build.log.md format, as rendered from the run records
   run-record.md                Run record schema (lesson-run/1), run-manifest.cjs commands, gate outcomes
-scripts/run-manifest.cjs       Writes, reads, hashes and renders the run record
+  run-record.md                (§ Artifacts) stage-validate-promote rule, completeness checks
+scripts/run-manifest.cjs       Writes, reads, hashes and renders the run record; stages, validates
+                               and atomically promotes every produced artifact
 tests/run-manifest/            Fixture for it: write, read, hash, render, pre-record logs (node only)
+tests/stage-promote/           Fixture for stage-validate-promote: killed and truncated productions,
+                               atomic promotion, the manim pipeline on stubs (node only)
 ```
 
 ## Installation

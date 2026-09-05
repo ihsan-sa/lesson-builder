@@ -1,6 +1,6 @@
 # Phase 3 — Execution
 
-Contents: Shared conventions (scratch dir, private-by-default .gitignore, logging, parallel spawning, prose authoring against the teaching arc) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
+Contents: Shared conventions (scratch dir, the run staging area, private-by-default .gitignore, logging, parallel spawning, prose authoring against the teaching arc) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
 
 ## Purpose
 
@@ -11,6 +11,27 @@ Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project fi
 ### Scratch directory
 
 All specialist work lands under `<lesson_root>/.build-scratch/`. Gitignored (add `**/.build-scratch/` to workspace `.gitignore` if missing). Deleted after successful assembly; left in place on failure for inspection. One file per specialist output.
+
+### The run staging area
+
+**No producer writes into the lesson tree.** Every artifact is written into the run staging area, validated there, and moved into the lesson tree only by `run-manifest.cjs promote`, which refuses anything this run did not stage and lands the bytes by write-to-`.part`-then-rename. A production that is killed, truncated or wrong therefore leaves the previous artifact exactly as it was, and the record says why. Full rule and the completeness checks: `references/run-record.md` § Artifacts; fixture: `tests/stage-promote/`.
+
+The staging area has two homes, one rule:
+
+| What | Stages in | Reaches the lesson by |
+|---|---|---|
+| Files the lesson serves — manim MP4 and its `.py`, matplotlib PNG and its `.py`, web images | `.lesson-builder/staging/<run_id>/<media_id>/`, whose path `run-manifest.cjs stage` prints | `run-manifest.cjs promote --media-id <id> --from <staged> --to <lesson-relative path>` |
+| Text the assembly splices — interactive-demo and graphics JSX, wiring notes, `.b64` strings | `.build-scratch/` (Step 2 below and § 4.2) | main Claude's assembly / splice, gated by the post-assembly Babel parse |
+
+```bash
+staged=$(run-manifest.cjs stage --lesson <lesson_root> --media-id g1 --name tangent.png)
+# ... the producer writes $staged and nothing else ...
+run-manifest.cjs promote --lesson <lesson_root> --media-id g1 --from "$staged" --to public/images/tangent.png
+```
+
+`promote` prints one JSON line — `{"media_id","path","sha256","bytes","state","checked"}` — and records the SHA-256 on that media row. `state: "unchanged"` means the bytes were already there and nothing was written: a re-run that produces an identical artifact is a no-op in the lesson tree, and that is the expected outcome, not a failure. A refusal exits 6 with the reason on the media row; a producer that produced nothing at all records it with `run-manifest.cjs fail --media-id <id> --reason "<why>"`. Either way main Claude keeps the old artifact, logs the media item as failed, and does not fabricate a call site for a file that is not there.
+
+The media-id-to-path convention is owned here and nowhere else: the artifact's name comes from the plan's immutable `media_id`, and the destination is `public/videos/<stem>.mp4` for manim, `public/images/<name>.<ext>` for figures and web images, `<lesson_root>/<stem>.py` for manim sources, `figures/<media_id>.py` for matplotlib sources.
 
 ### Private-by-default `.gitignore`
 
@@ -54,7 +75,7 @@ Record milestones with `run-manifest.cjs append --lesson <lesson_root> phases.3.
 
 ### Parallel specialist spawning
 
-One specialist per media item, spawned concurrently. Each spawn prompt = the item's Phase 2 execution brief + the topic's content package (equations, constants, context) + the file-contract line for that specialist (scratch path or on-disk target). Wait for all returns before assembling.
+One specialist per media item, spawned concurrently. Each spawn prompt = the item's Phase 2 execution brief + the topic's content package (equations, constants, context) + the file-contract line for that specialist (its scratch path, or its `media_id` and the lesson root so it can `stage` and `promote`). Wait for all returns before assembling.
 
 **Degenerate cases**: text-only topics skip specialist spawns; main Claude writes content directly from Phase 1. Fully text-only lessons skip Step 1 entirely. The harness queues concurrent spawns on its own — no manual batching needed; just log the fan-out count.
 
@@ -81,7 +102,7 @@ Media captions and `<InteractiveDemo description>` text written by specialists a
 
 ### Step 1: spawn medium specialists
 
-Main Claude reads the approved plan's media list and spawns every specialist concurrently, one per media item (typical 6-topic fan-out: 6-12 graphics, 1-3 manim, 0-2 interactive-demo, 0-4 web-image). Manim spawns follow the build-pipeline file contract in `agents/manim-agent.md`: descriptive snake_case stem, `.py` at `<lesson_root>/<stem>.py`, MP4 at `public/videos/<stem>.mp4` — the persisted `.py` is what keeps future refines possible. Wait for all returns.
+Main Claude reads the approved plan's media list and spawns every specialist concurrently, one per media item (typical 6-topic fan-out: 6-12 graphics, 1-3 manim, 0-2 interactive-demo, 0-4 web-image). Manim spawns follow the build-pipeline file contract in `agents/manim-agent.md`: the stem is the plan's `media_id` snake_cased, the scene renders into the staging area and is promoted to `public/videos/<stem>.mp4`, and the source is promoted to `<lesson_root>/<stem>.py` — the persisted `.py` is what keeps future refines possible. Every spawn's brief carries the lesson root and its `media_id` so it can call `stage` and `promote`. Wait for all returns.
 
 ### Step 2: collect scratch outputs
 
@@ -95,7 +116,7 @@ Each specialist writes its assigned portion into `<lesson_root>/.build-scratch/`
   ...
 ```
 
-**Exceptions to scratch collection**: manim writes no scratch — its `.py` lands at `<lesson_root>/<stem>.py` and MP4 at `public/videos/<stem>.mp4` per its file contract, and it returns a JSON manifest (`mp4_path`, `py_path`, `effective_action`) that assembly consumes directly. web-image likewise writes straight to `public/images/` and returns paths + provenance.
+**Exceptions to scratch collection**: manim and web-image produce files the lesson serves, not text to splice, so they stage and promote instead (§ The run staging area). Manim promotes its `.py` to `<lesson_root>/<stem>.py` and its MP4 to `public/videos/<stem>.mp4`, and returns a JSON manifest (`mp4_path`, `py_path`, `sha256`, `effective_action`) that assembly consumes directly; web-image promotes into `public/images/` and returns paths, hashes and provenance. Neither ever writes into `public/` itself.
 
 Main Claude reads each scratch file after the specialist returns and checks for obvious corruption (truncation, unclosed JSX, missing function signature) before moving to assembly. Corrupt output triggers a single respawn of that specialist with the same brief.
 
@@ -187,8 +208,9 @@ Matplotlib outputs arrive pre-verified by the specialist's own PNG self-view; fu
 After the assembled `src/<slug>.jsx` is written:
 
 1. Delete `<lesson_root>/.build-scratch/` recursively.
-2. Log specialists spawned, files written, and the lesson file line count.
-3. Hand off to Phase 4.
+2. Delete `<lesson_root>/.lesson-builder/staging/<run_id>/` recursively — every artifact that was going to be promoted has been. Leave it in place if Phase 3 failed, so a refused artifact can be inspected; the record names each one and why.
+3. Log specialists spawned, files written, and the lesson file line count.
+4. Hand off to Phase 4.
 
 **New-mode log format** — write under `## Phase 3 — Execution`:
 
@@ -283,11 +305,11 @@ Each specialist receives different inputs depending on the action verdict from P
 
 #### manim-agent
 
-**refine**: existing `.py` source + existing `.mp4` under `<lesson_root>/public/videos/` + `refine_brief`. Specialist **overwrites the `.py` and `.mp4` at the same paths**, so the JSX `<video src>` reference does not need to change. No scratch file; the splice step simply re-reads the existing `src` attribute and leaves it alone.
+**refine**: existing `.py` source + existing `.mp4` under `<lesson_root>/public/videos/` + `refine_brief`. Specialist re-renders into the staging area and promotes **to the same two paths**, so the JSX `<video src>` reference does not need to change. No scratch file; the splice step simply re-reads the existing `src` attribute and leaves it alone. A refine that fails or renders something incomplete promotes nothing: the existing `.mp4` stays exactly as it was and the failure is on the media row.
 
-**Source-to-video name mismatch**: if the `.py` for a given `.mp4` cannot be located (e.g., the original Python file was never committed, or the `.mp4` was hand-copied from another lesson), degrade the refine to a replace: spawn a fresh manim-agent with the replace brief instead of the refine brief, write a new `.py` + new `.mp4`, and update the JSX `<video src>` during the splice. Record the degradation as a `phases.3.notes` entry — `Degradations: <old-filename>: refine → replace (reason: missing source .py)` — and update that item's `media` row.
+**Source-to-video name mismatch**: if the `.py` for a given `.mp4` cannot be located (e.g., the original Python file was never committed, or the `.mp4` was hand-copied from another lesson), degrade the refine to a replace: spawn a fresh manim-agent with the replace brief instead of the refine brief, promote a new `.py` + new `.mp4`, and update the JSX `<video src>` during the splice. Record the degradation as a `phases.3.notes` entry — `Degradations: <old-filename>: refine → replace (reason: missing source .py)` — and update that item's `media` row.
 
-**replace**: new `.py` + new `.mp4` with a **new filename** (even if the old one is removed). The agent's returned manifest (`mp4_path`, `py_path`, `effective_action`) carries the new paths — no scratch file; main Claude updates the JSX `<video src>` from the manifest during the splice and removes the old `.mp4` from disk.
+**replace**: new `.py` + new `.mp4` with a **new filename** (even if the old one is removed). The agent's returned manifest (`mp4_path`, `py_path`, `sha256`, `effective_action`) carries the promoted paths — no scratch file; main Claude updates the JSX `<video src>` from the manifest during the splice and removes the old `.mp4` from disk.
 
 **add**: same as new-mode manim — fresh `.py` + fresh `.mp4` with a fresh filename. The splice step inserts a new `<video src>` reference in the topic's content function.
 
@@ -299,9 +321,9 @@ Each specialist receives different inputs depending on the action verdict from P
 
 #### web-image-agent
 
-**refine**: existing image path + `refine_brief` (e.g., "find a clearer labeled version"). Specialist searches the web, downloads, and either replaces the file at the same path on disk or returns `null` (keep original). If the return is `null`, main Claude treats the refine as a no-op. Output (if successful): file at same path, plus provenance (source URL, license) in the return for the log.
+**refine**: existing image path + `refine_brief` (e.g., "find a clearer labeled version"). Specialist searches the web, downloads into the staging area, and either promotes to the same path or returns `null` (keep original). If the return is `null`, main Claude treats the refine as a no-op. A half-finished download is refused at the promote step, so the existing image survives a broken fetch. Output (if successful): the promoted path and its hash, plus provenance (source URL, license) in the return for the log.
 
-**replace / add**: specialist fetches the new image and writes it under `<lesson_root>/public/images/`. Main Claude deletes the old file during the splice step (replace) or leaves existing files alone (add). Output: new filename + provenance in `.build-scratch/replace/` or `.build-scratch/add/`.
+**replace / add**: specialist downloads into the staging area and promotes to `public/images/<new-filename>`. Main Claude deletes the old file during the splice step (replace) or leaves existing files alone (add). Output: new filename, its hash + provenance in `.build-scratch/replace/` or `.build-scratch/add/`.
 
 ### Step 4: splice assembly algorithm
 
@@ -466,9 +488,9 @@ Apply the "Private-by-default `.gitignore`" shared convention from the top of th
 
 Log `.gitignore updated: <N entries appended>` or `.gitignore already covers all private paths` under drift-repairs for trace.
 
-#### 4.12 Clean up .build-scratch/
+#### 4.12 Clean up .build-scratch/ and the run staging area
 
-Delete `<lesson_root>/.build-scratch/` recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing).
+Delete `<lesson_root>/.build-scratch/` and `<lesson_root>/.lesson-builder/staging/<run_id>/` recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing). A staged file that was never promoted is the same warning in the other direction: the record's media row says why it was refused. Both directories stay in place if Phase 3 failed.
 
 ### What NOT to touch in update mode
 
