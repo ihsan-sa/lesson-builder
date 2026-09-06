@@ -4,7 +4,7 @@ Proof that the Phase 3 boundary refuses a specialist's return before the splice 
 or web-image agent stages and promotes its own artifact and then returns a JSON manifest —
 `mp4_path`, `py_path`, `sha256`, `effective_action` — that assembly reads the `<video src>` out of
 (`references/phase-3-execution.md` § Step 3, § Step 4). The gate is `run-manifest.cjs check-return`;
-its rule is in that script's header.
+its rule is `references/run-record.md` § The Phase 3 return boundary.
 
 ```
 node tests/agent-return/check.cjs     # or ./check.cjs

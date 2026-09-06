@@ -53,6 +53,16 @@ EXCLUDED=(
   "teaching evals|graded by a model, per evals/teaching/rubric.md|see evals/teaching/README.md"
 )
 
+# The two fixtures that start real proxies never run beside EACH OTHER. Both cancel a turn by
+# signalling a process group — `kill(-pid)` on the CLI they spawned detached — and a detached
+# child's pid is just a number: two fixtures started seconds apart have pids close together, so
+# one fixture's group kill lands on the other fixture's process group and takes its proxy down
+# with it. Measured: side by side, `thread-actors` died at the same case in 2 of 3 runs with the
+# proxy gone (ECONNREFUSED on the next request) and in 1 of 1 with nothing else on the box; run
+# in this chain, and alone, it passes. They still run BESIDE the parallel ones — the chain is
+# 57s against the batch's 96s, so it costs the gate nothing.
+SERIAL=(cancellation thread-actors)
+
 # A free port from the kernel rather than a fixed one: cc-land gates several PRs at once
 # (CC_LAND_PREPARE), and two gates sharing 3901 would each kill the other's proxy.
 free_port() {
@@ -85,23 +95,38 @@ trap 'rm -rf "$LOGS"' EXIT
 
 echo "gate: ${#selected[@]} deterministic fixtures, node $(node -v), $(git --version)"
 
+run_one() {
+  local name=$1 cmd=$2 s e rc
+  s=$(date +%s)
+  PORT=$(free_port) KEEP= timeout "$PER_FIXTURE_TIMEOUT" $cmd >"$LOGS/$name.log" 2>&1
+  rc=$?
+  echo "$rc" >"$LOGS/$name.rc"
+  e=$(date +%s)
+  [ "$rc" -eq 124 ] && echo "  (killed: no result in ${PER_FIXTURE_TIMEOUT}s)" >>"$LOGS/$name.log"
+  printf '  %s %-18s %ss\n' "$([ "$rc" -eq 0 ] && echo '✓' || echo '✗')" "$name" "$((e - s))"
+}
+is_serial() { for n in "${SERIAL[@]}"; do [ "$n" = "$1" ] && return 0; done; return 1; }
+
 # Parallel, capped at the cores there are: serially these are minutes, and every fixture builds
-# its own temp state so none can see another's.
+# its own temp state so none can see another's. The SERIAL ones are one background chain instead
+# — beside the batch, never beside each other.
 JOBS="${CHECK_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 started=$(date +%s)
 running=0
+chain=()
+for f in "${selected[@]}"; do
+  name=${f%%|*}
+  if is_serial "$name"; then chain+=("$f"); fi
+done
+if [ ${#chain[@]} -gt 0 ]; then
+  ( for f in "${chain[@]}"; do run_one "${f%%|*}" "${f#*|}"; done ) &
+  running=$((running + 1))
+fi
 for f in "${selected[@]}"; do
   name=${f%%|*}; cmd=${f#*|}
+  is_serial "$name" && continue
   while [ "$running" -ge "$JOBS" ]; do wait -n 2>/dev/null || true; running=$((running - 1)); done
-  (
-    s=$(date +%s)
-    PORT=$(free_port) KEEP= timeout "$PER_FIXTURE_TIMEOUT" $cmd >"$LOGS/$name.log" 2>&1
-    rc=$?
-    echo "$rc" >"$LOGS/$name.rc"
-    e=$(date +%s)
-    [ "$rc" -eq 124 ] && echo "  (killed: no result in ${PER_FIXTURE_TIMEOUT}s)" >>"$LOGS/$name.log"
-    printf '  %s %-18s %ss\n' "$([ "$rc" -eq 0 ] && echo '✓' || echo '✗')" "$name" "$((e - s))"
-  ) &
+  run_one "$name" "$cmd" &
   running=$((running + 1))
 done
 wait

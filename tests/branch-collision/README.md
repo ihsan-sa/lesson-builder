@@ -4,7 +4,8 @@ Proof that an update run whose branch name is already taken lands on a determini
 worktree, and that the name Phase 5 merges is the name that was created. The rule:
 `references/checklists.md` § Update-mode pre-flight ("increment with a suffix (`-a`, `-b`) …
 Collision handling must be deterministic so the Phase 5 merge target is unambiguous"), the format
-`references/update-mode.md` § Branch name format, the command `run-manifest.cjs branch`.
+`references/update-mode.md` § Branch name format, the command `run-manifest.cjs branch` and what it
+refuses `references/run-record.md` § The run's branch.
 
 ```
 node tests/branch-collision/check.cjs     # or ./check.cjs
