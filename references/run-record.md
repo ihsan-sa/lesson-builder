@@ -253,6 +253,11 @@ never by omission: **an artifact with no valid attestation is reviewed.** Phase 
   in the review any more; a ref the review now names that the verdict never attested to; or the
   reviewer's model changed. Bytes are re-hashed **from disk**, not read back off the media row, so
   an artifact edited without its record being updated is never reused.
+- **Only a `pass` is reused.** An `issue` or a `fail` stands on findings that were open when it was
+  made — a `keep` medium's are logged rather than auto-fixed — so carrying it forward would drop
+  them out of the next run's issue list and its final report without the reviewer ever running.
+  A prior non-pass verdict therefore lands in the `review` set for the reason
+  `prior verdict was <v>`, exactly as it would have been re-reviewed before any of this existed.
 - **`unavailable` is not a verdict.** A reviewer that could not run is a coverage gap Phase 4 logs
   as a finding; `attest record` refuses it (exit 1) rather than let a gap look like proof.
 - **A lesson with no prior attestations behaves exactly as it did before this existed**: every

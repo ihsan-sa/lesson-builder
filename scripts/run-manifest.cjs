@@ -71,7 +71,9 @@
  * with a valid verdict in this run's record. An attestation is invalid the moment any ref it names
  * hashes differently, is gone, is not in the review any more, or the reviewer model changed, and
  * bytes are re-hashed from disk, so an artifact edited without its record being updated is never
- * reused. Coverage is preserved by proof, never by omission: no attestation means review.
+ * reused. Only a `pass` is ever reused: an `issue` or a `fail` stands on findings that are still
+ * open, so it is reviewed again rather than carried past this run's issue list. Coverage is
+ * preserved by proof, never by omission: no attestation means review.
  *
  * Exit codes:
  *   0  ok
@@ -978,6 +980,19 @@ function attestReuse(lessonRoot, runId, flags) {
     const stale = staleReason(prior.attestation, entry, now.get(reviewKey(entry.media_id, entry.reviewer)));
     if (stale) {
       review.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: stale });
+      continue;
+    }
+    // Only a clean verdict is proof that nothing needs doing. An `issue` or a `fail` stands on
+    // findings that were open when it was made — a `keep` medium's are logged rather than
+    // auto-fixed — and reusing it would drop them out of this run's issue list, out of the final
+    // report, and past the coverage gate, all without the reviewer ever running. So it is
+    // reviewed again, which is what happened before any of this existed.
+    if (prior.attestation.verdict !== 'pass') {
+      review.push({
+        media_id: entry.media_id,
+        reviewer: entry.reviewer,
+        reason: `prior verdict was ${prior.attestation.verdict}`,
+      });
       continue;
     }
     const from = prior.attestation.from_run || prior.run_id;

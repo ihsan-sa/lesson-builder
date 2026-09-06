@@ -142,9 +142,14 @@ attestation is reviewed. The mechanism, the record schema and the exit codes are
    ```
 
    It prints `{"reuse":[…],"review":[{media_id,reviewer,reason}]}` and carries every still-valid
-   prior verdict into this run's record. **Spawn exactly the `review` set.** A first run, and a
+   prior **`pass`** into this run's record. **Spawn exactly the `review` set.** A first run, and a
    lesson whose records predate attestations, put everything in `review` — the batch is then
    exactly what it always was.
+
+   Only a clean verdict is reusable. A prior `issue` or `fail` is in the `review` set for the
+   reason `prior verdict was <v>`: it stands on findings that were open when it was made, and on a
+   `keep` medium those are logged rather than auto-fixed, so reusing it would drop them out of this
+   run's issue list and out of Phase 5's final report without the reviewer ever running.
 
 3. **Record each verdict as its reviewer returns**, alongside mapping its findings into issue
    records:
@@ -410,14 +415,19 @@ Unresolved items end up in the `### UNRESOLVED` block and are surfaced to the us
 
 ## Handoff to Phase 5
 
-Phase 4 hands off to Phase 5 when **both** conditions hold:
+Phase 4 hands off to Phase 5 when **all three** conditions hold:
 
 1. Local build verification passed (`build-all.sh` clean AND headless Playwright check clean).
 2. No fundamental-flaw halt fired inside the fix loop.
+3. `run-manifest.cjs attest verify --lesson "<lesson_root>" --spec <spec>` exits 0 — every review
+   the spec asked for ended this run with a valid verdict in this run's record. This is the machine
+   check that coverage did not shrink, and it is the only one: reviewers are now spawned for the
+   `review` set rather than for everything, so nothing else would notice a medium that was neither
+   reviewed nor covered by a verdict that still holds.
 
-If either fails, Phase 4 does not hand off. The log captures the failure state, the final report surfaces the blocker to the user, and the branch (update mode) or working tree (new mode) is left in its current state so the user can inspect and either abort or resume manually.
+If any of them fails, Phase 4 does not hand off. The log captures the failure state, the final report surfaces the blocker to the user, and the branch (update mode) or working tree (new mode) is left in its current state so the user can inspect and either abort or resume manually.
 
-If both conditions hold, Phase 5 proceeds to commit / merge / deploy. Unresolved items from the fix loop and any regression-watch entries (update mode) are passed forward to Phase 5 so they appear in the final report to the user alongside the deploy confirmation.
+If all three hold, Phase 5 proceeds to commit / merge / deploy. Unresolved items from the fix loop and any regression-watch entries (update mode) are passed forward to Phase 5 so they appear in the final report to the user alongside the deploy confirmation.
 
 ### What counts as "unresolved"
 
@@ -428,5 +438,6 @@ Unresolved = **every issue still open when Phase 4 exits**, whatever its origin:
 - A **blocker** severity issue that the fix loop could not clear (e.g., T1 Babel parse still failing after 3 iterations). Shipping a lesson that does not parse is not an option.
 - A **fundamental flaw** (the fix loop halted because the Phase 2 plan was wrong). This requires re-running Phase 2, not continuing to Phase 5.
 - A **local build verification failure** (either `build-all.sh` or the headless Playwright check fails).
+- **`attest verify` exit 8** — a medium the spec covers ended the run without a valid verdict. Its stdout names each gap and why; the answer is to review those, never to drop them from the spec.
 
 Major and minor unresolved issues do not halt the handoff by themselves; they are forwarded as known-issue flags. The judgment call of whether the lesson is good enough to ship with known majors belongs to the user, who sees them in the final report and can either approve the deploy or abort.

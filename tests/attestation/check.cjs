@@ -280,6 +280,40 @@ function caseChangedArtifact() {
     'and this run does not report its own verdict as reused from itself');
 }
 
+// ---------- 2b. a verdict that was not clean ----------
+
+function caseNonPassVerdict() {
+  process.stdout.write('2b a verdict that was not clean is reviewed again, not carried forward\n');
+  const { root, spec, runA } = firstRun('nonpass-verdict');
+  // How run A would have ended if those two reviewers had not been happy. On a `keep` medium a
+  // major is logged rather than auto-fixed, so the verdict stands and the finding stays open.
+  eq(record(root, runA, spec, 'm1', 'visual-qa-agent', 'fail', '2026-04-01T09:25:00Z').code, 0,
+    'the first run ends with a fail on m1');
+  eq(record(root, runA, spec, 'm4', 'visual-qa-agent', 'issue', '2026-04-01T09:25:00Z').code, 0,
+    'and an issue on m4');
+  eq(verify(root, runA, spec).code, 0, 'both are valid verdicts, so that run is still covered');
+
+  const { runB, decision } = secondRun(root, spec, null);
+  eq(pairs(decision.review), ['m1/visual-qa-agent', 'm4/visual-qa-agent'],
+    'with nothing touched, the two unclean verdicts are still reviewed again');
+  eq(decision.review.map((r) => r.reason).sort(),
+    ['prior verdict was fail', 'prior verdict was issue'], 'because they were not clean');
+  eq(pairs(decision.reuse),
+    ['m1/scientific-accuracy-agent', 'm2/visual-qa-agent', 'm3/scientific-accuracy-agent',
+      'm3/visual-qa-agent', 'm4/scientific-accuracy-agent', 'm5/visual-qa-agent'],
+    'and the clean verdicts on the very same media are reused');
+  ok(!rowOf(readRecord(root, runB), 'm1').attestations.some((a) => a.verdict === 'fail'),
+    'the fail is not carried into this run as covered');
+  eq(verify(root, runB, spec).code, 8, 'so the gate refuses until those two are judged again');
+
+  reviewAll(root, runB, spec, decision, '2026-04-02T09:20:00Z');
+  eq(verify(root, runB, spec).code, 0, 'and passes once they are');
+  const fixed = rowOf(readRecord(root, runB), 'm1').attestations
+    .find((a) => a.reviewer === 'visual-qa-agent');
+  eq(fixed.verdict, 'pass', 'this run\'s own verdict replaces the old one');
+  ok(!fixed.from_run, 'and is not marked reused');
+}
+
 // ---------- 3. a shared helper, and one declaration in a shared file ----------
 
 function caseSharedHelper() {
@@ -516,9 +550,9 @@ function caseRender() {
 
 process.stdout.write(`attestation fixture (${SCRIPT})\n`);
 const started = Date.now();
-for (const c of [caseFirstRun, caseChangedArtifact, caseSharedHelper, caseOneDeclaration,
-  caseDeletedDependency, caseRubric, caseReviewer, caseTampered, caseLegacyRecord, caseRefusals,
-  caseRender]) c();
+for (const c of [caseFirstRun, caseChangedArtifact, caseNonPassVerdict, caseSharedHelper,
+  caseOneDeclaration, caseDeletedDependency, caseRubric, caseReviewer, caseTampered,
+  caseLegacyRecord, caseRefusals, caseRender]) c();
 
 if (process.env.KEEP) process.stdout.write(`\nkept: ${tmpRoot}\n`);
 else fs.rmSync(tmpRoot, { recursive: true, force: true });
