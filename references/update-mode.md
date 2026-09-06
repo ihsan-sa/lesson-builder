@@ -151,7 +151,10 @@ Phase 2 gate leaves no branch behind — only a directory git already ignores.
 ### Branch name format
 
 `lesson-update/<slug>-YYYYMMDD`. Example: `lesson-update/intro-derivatives-20260415`. One branch per
-update run. Created in Phase 3 (not earlier), **inside the worktree**, never in the user's checkout.
+update run. Created in Phase 3 (not earlier), **inside the worktree**, never in the user's checkout,
+by `run-manifest.cjs branch` — which dates it from the run record's own `started` stamp, takes the
+first free `-a`…`-z` suffix when the name is already a local branch, and records the name it created
+on `git.branch`. Evidence: `tests/branch-collision`.
 
 ### Merge
 

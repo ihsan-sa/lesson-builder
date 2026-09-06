@@ -60,6 +60,7 @@ import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
+import { createNdjsonReader } from "./ndjson.js";
 
 // Can we spawn the CLI WITHOUT a shell?
 //
@@ -414,30 +415,15 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
   // detached: the CLI leads its own process group so /chat/cancel can take
   // the whole tree down with one signal (see killTree).
   const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, detached: !IS_WIN, env: { ...process.env, MPLBACKEND: "agg" } });
-  let buffer = "";
+  // Chunk boundaries fall wherever the pipe puts them — mid-object and mid-character both.
+  // createNdjsonReader carries each across; server/ndjson.js has the why.
+  const reader = createNdjsonReader(onEvent);
   let stderr = "";
-  proc.stdout.on("data", (d) => {
-    buffer += d.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed);
-        onEvent(parsed);
-      } catch (_) {}
-    }
-  });
+  proc.stdout.on("data", (d) => reader.push(d));
   proc.stderr.on("data", (d) => (stderr += d.toString()));
   proc.on("error", (err) => onError(err));
   proc.on("close", (code) => {
-    if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer.trim());
-        onEvent(parsed);
-      } catch (_) {}
-    }
+    reader.end();
     if (code !== 0) onError(new Error(stderr.trim() || `claude exited with code ${code}`));
     else onDone();
   });

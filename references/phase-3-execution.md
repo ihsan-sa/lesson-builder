@@ -120,6 +120,14 @@ Each specialist writes its assigned portion into `<lesson_root>/.build-scratch/`
 
 Main Claude reads each scratch file after the specialist returns and checks for obvious corruption (truncation, unclosed JSX, missing function signature) before moving to assembly. Corrupt output triggers a single respawn of that specialist with the same brief.
 
+A returned **manifest** is not read by eye: it is what the splice takes the `<video src>` and the image path out of, so every manim and web-image return goes through the boundary check before assembly sees it.
+
+```bash
+run-manifest.cjs check-return --lesson <lesson_root> --media-id <id> --from <the agent's return>
+```
+
+It refuses (exit 10, nothing recorded) a return that does not parse, one that is not a manifest object, one whose `effective_action` is not in the 5-way taxonomy, and one that disagrees with the record: the paths it claims must be exactly the artifacts this run promoted for that media id — no more, so a file written into the lesson tree behind the staging area's back is never spliced in, and no fewer, so a manifest that names the MP4 and forgets the `.py` beside it is caught — and a `sha256` it states must be the hash of one of those files as they are on disk now. A bare `null` is the documented web-image `refine` no-op and passes. A refusal is answered by the same single respawn as corrupt scratch output.
+
 ### Step 3: assemble from skeleton
 
 Read `references/template.md` to pull the skeleton. Fill in each `REPLACE` marker using the Phase 2 Lesson Plan and the collected specialist outputs:
@@ -249,14 +257,10 @@ WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)   # exit 3 → Ph
                                                                  # Phase 0 had — before building
 cd "$(git -C "$WT" rev-parse --show-toplevel)"   # the worktree's own workspace root
 git status --short                 # a fresh checkout of the base SHA: expect it clean
-git checkout -b lesson-update/<slug>-YYYYMMDD   # collision → append -a/-b per the pre-flight checklist
+run-manifest.cjs branch --lesson "$WT"          # creates it here, and records the name it created
 ```
 
-The worktree was checked out detached on `git.base_sha`, so the branch starts exactly there and no unrelated commits ride along — the check that the user's checkout was on the default branch is gone with the reason for it. Record the ACTUAL branch name, collision suffix included; Phase 5 reads this recorded value back verbatim and never reconstructs it:
-
-```bash
-run-manifest.cjs set --lesson "$WT" git.branch "$(git rev-parse --abbrev-ref HEAD)"
-```
+The worktree was checked out detached on `git.base_sha`, so the branch starts exactly there and no unrelated commits ride along — the check that the user's checkout was on the default branch is gone with the reason for it. `branch` names it `lesson-update/<slug>-YYYYMMDD` from the run record's own `started` stamp, takes the first free `-a`…`-z` suffix when that name is already a local branch, and writes the name it actually created to `git.branch` — do not `git checkout -b` by hand and do not `set git.branch` after it. Phase 5 reads that recorded value back verbatim and never reconstructs it from the pattern. Called again on a run that already has a branch — a Phase 3 resuming after a crash — it checks that one out rather than opening a second beside it. Refusals: exit 3 with no live worktree or a recorded branch that is gone, exit 9 when the plain name and every suffix are taken.
 
 `git.base_sha` is already recorded — Phase 0 set it, and it is what the worktree was made from. Do not re-record it here.
 
