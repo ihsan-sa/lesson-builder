@@ -19,8 +19,10 @@ cleanup() {
   # `npx vite` runs Vite as a grandchild, so VITE_PID is npm's and the line
   # above leaves the dev server holding $PORT with a cwd this trap is about to
   # delete. Same belt as tests/resume-metadata/run.sh: clear whatever still has
-  # the port. Reliable rather than a sleep — nothing else is listening on it,
-  # because the run bound it with --strictPort.
+  # the port. By port and not by pid, unlike the two proxy fixtures: Vite
+  # writes no identity file, so the port is the only handle on it. PORT here is
+  # a fixed one this fixture owns and held exclusively (--strictPort), not one
+  # tests/check.sh handed out — this fixture is not in that gate.
   fuser -k -TERM "${PORT}/tcp" 2>/dev/null || true
   if [ -n "${KEEP:-}" ]; then echo "kept $WS"; else rm -rf "$WS"; fi
 }

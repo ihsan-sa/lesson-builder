@@ -25,11 +25,20 @@ stop_proxy() {
 }
 cleanup() {
   stop_proxy
-  # Belt and brace, as in tests/resume-metadata/run.sh: .proxy-port exists only
-  # while a proxy is alive (it removes it on exit), so this reaches something
-  # only when the line above failed to — never a stranger holding a free port.
-  local bp=""; [ -n "$L" ] && bp=$(cat "$L/server/.proxy-port" 2>/dev/null || true)
-  [ -n "$bp" ] && { fuser -k -TERM "${bp}/tcp" 2>/dev/null || true; }
+  # Belt and brace: .proxy.json exists only while a proxy is alive (it removes
+  # it on exit) and records that proxy's own pid, so this reaches something
+  # only when the line above failed to. By pid and not by port, unlike
+  # tests/resume-metadata/run.sh: tests/check.sh gives each fixture a free
+  # ephemeral port, which another process on the box may hold by the time this
+  # runs, and the argv check keeps the signal off a stranger that inherited the
+  # pid number. Every step is failure-proof on purpose: under `set -e` one
+  # non-zero command in an EXIT trap abandons the rest of it and becomes the
+  # script's exit status, and a missing .proxy.json is the NORMAL case.
+  local bpid=""
+  if [ -n "$L" ] && [ -r "$L/server/.proxy.json" ]; then
+    bpid=$(sed -n 's/.*"pid": *\([0-9]*\).*/\1/p' "$L/server/.proxy.json") || bpid=""
+  fi
+  case $(ps -p "${bpid:-0}" -o args= 2>/dev/null || true) in *server/proxy.js*) kill "$bpid" 2>/dev/null || true ;; esac
   if [ -n "${KEEP:-}" ]; then echo "kept $WS"; else rm -rf "$WS"; fi
 }
 trap cleanup EXIT
