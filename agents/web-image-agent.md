@@ -45,8 +45,32 @@ When the brief says `mode: "pre-flight"`, search and license-verify ONLY — dow
 
 ## Return format
 
-On success: the promoted file path, its `sha256` from the promote receipt, AND the lesson-relative served URL (`/images/<name>.<ext>` — what a `<img src>` or the tutor actually renders), plus a one-line provenance note (`source URL, license, author`).
-On failure after a reasonable search: `null` with a one-line reason.
+Return one JSON object. `run-manifest.cjs check-return` reads it before assembly does
+(`references/phase-3-execution.md` § Step 2), so the keys are fixed:
+
+```json
+{
+  "image_path": "public/images/<name>.<ext>",
+  "sha256": "<the hash from the promote receipt>",
+  "served_url": "/images/<name>.<ext>",
+  "provenance": "<source URL, license, author>"
+}
+```
+
+`image_path` is lesson-relative and is the path you promoted to — the boundary checks it against
+what this run actually promoted, so it must name every promoted file and nothing else. `served_url`
+is what an `<img src>` or the tutor renders; it is a URL, not a path, and is named as one so the
+boundary does not read it as a second file.
+
+- **No change** — a refine that found nothing better: `null`, or
+  `{"action": "keep_existing", "reason": "<why>"}`. Either passes as a no-op, provided this run
+  promoted nothing for that media id.
+- **Format change** — a better candidate in another encoding, under a new filename: the success
+  object above plus `"action": "format_change"`, so the caller updates the `<img src>`.
+- **Failure after a reasonable search**: record it with `run-manifest.cjs fail --lesson
+  <lesson_root> --media-id <media_id> --reason "<why>"` and return `null` with that one-line
+  reason. The recorded failure is what the run reads; the boundary refuses the return and Phase 3
+  respawns once.
 
 ## Constraints
 

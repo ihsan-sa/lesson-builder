@@ -85,12 +85,17 @@
  *
  * `check-return` is the Phase 3 boundary between a specialist's returned JSON manifest and the
  * splice that consumes it. It reads the return from `--from <file>` or stdin and refuses one that
- * does not parse, is not a manifest object, states no known `effective_action`, or disagrees with
- * the record: the paths it claims must be exactly the artifacts this run promoted for that media
- * id -- no more, so nothing written behind the staging area's back is spliced in, and no fewer, so
- * a manifest that forgot half of what it produced is caught -- and a `sha256` it states must be the
- * hash of one of those files as they are on disk now. A bare `null` return is the documented
- * web-image no-op. It writes nothing: a refusal is answered by respawning that specialist.
+ * does not parse, is not a manifest object, reports its own failure (`ok: false`), states an action
+ * outside what the two agent files specify, or disagrees with the record: the paths it claims must
+ * be exactly the artifacts this run promoted for that media id -- no more, so nothing written
+ * behind the staging area's back is spliced in, and no fewer, so a manifest that forgot half of
+ * what it produced is caught -- and a `sha256` it states must be the hash of one of those files as
+ * they are on disk now. The action is stated as `effective_action` (manim) or `action` (web image)
+ * or not at all, and its vocabulary is the agents' -- `as-briefed`, `degraded-to-replace`,
+ * `keep_existing`, `format_change` -- NOT the plan's 5-way media taxonomy, which is a different
+ * axis: the plan's word is what the run was asked to do, an agent's is what it did about that. A
+ * bare `null`, and a return that names no path while the run promoted nothing for that media id,
+ * are the documented no-ops. It writes nothing: a refusal is answered by respawning that specialist.
  *
  * Exit codes:
  *   0  ok
@@ -1246,7 +1251,17 @@ function worktreeRemove(lessonRoot, rec) {
 //
 // Read-only on purpose: a refusal here is answered by respawning that specialist once with the
 // same brief (§ Step 4), and a respawn that succeeds should not have to clear a flag this left.
-const AGENT_ACTIONS = ['keep', 'refine', 'replace', 'remove', 'add'];
+//
+// The action vocabulary is READ OFF THE AGENT FILES, not the plan's 5-way media taxonomy. They are
+// different axes and conflating them refused every correct return: the plan's `keep|refine|replace|
+// remove|add` is what the run was ASKED to do (it is the media row's `intent`), while what an agent
+// states is what it DID relative to that brief — `as-briefed` or `degraded-to-replace` for manim
+// (agents/manim-agent.md § Stage 4), `keep_existing` or `format_change` for web images
+// (agents/web-image-agent.md § Return format). Neither agent is specified to state the plan's word.
+const AGENT_ACTIONS = ['as-briefed', 'degraded-to-replace', 'keep_existing', 'format_change'];
+// manim states it as `effective_action`, web-image as `action`, and web-image's success return
+// states neither — so the key is looked for under both names and its absence is not a refusal.
+const ACTION_KEYS = ['effective_action', 'action'];
 
 function cmdCheckReturn(flags) {
   const lessonRoot = requireLesson(flags);
@@ -1276,13 +1291,12 @@ function cmdCheckReturn(flags) {
     // The two ways a real return arrives unparseable: cut off part-way, or wrapped in prose.
     refuse(`it is not JSON (${e.message}) — first 200 bytes: ${JSON.stringify(raw.slice(0, 200))}`);
   }
-  // A web-image `refine` that found nothing better returns a bare `null`, which is the documented
-  // no-op and not a failure (§ Step 3, refine). Anything else that is not an object is one.
-  if (ret === null) {
-    process.stdout.write(`${JSON.stringify({ media_id: mediaId, effective_action: 'no-op', artifacts: [] })}\n`);
-    return;
-  }
-  if (typeof ret !== 'object' || Array.isArray(ret))
+  // A web-image refine that found nothing better returns a bare `null` (agents/web-image-agent.md
+  // § Refine behavior). It is not a failure — but it is not a free pass either, so it goes to the
+  // same question as a manifest that names no path: it is a no-op only if the run really promoted
+  // nothing for this media id. Anything else that is not an object is a malformed return.
+  const isNull = ret === null;
+  if (!isNull && (typeof ret !== 'object' || Array.isArray(ret)))
     refuse(`it is a ${Array.isArray(ret) ? 'JSON array' : typeof ret}, not a manifest object`);
 
   const row = (rec.media || []).find((m) => m && m.media_id === mediaId);
@@ -1291,16 +1305,23 @@ function cmdCheckReturn(flags) {
     refuse(`the run recorded a failed production for it (${row.artifact_failure.reason || 'no reason'}), `
       + 'so there is nothing for a manifest to describe');
 
-  if (!Object.prototype.hasOwnProperty.call(ret, 'effective_action'))
-    refuse('it states no `effective_action`, so which of the plan\'s verdicts it carried out is a guess');
-  if (!AGENT_ACTIONS.includes(ret.effective_action))
-    refuse(`\`effective_action\` is ${JSON.stringify(ret.effective_action)}, not one of ${AGENT_ACTIONS.join(', ')}`);
+  // A return that says outright that it failed is not a manifest to check — it is the respawn case,
+  // and saying so is more use than letting it fall through to "it names no path".
+  if (!isNull && ret.ok === false)
+    refuse(`it reports its own failure (\`ok: false\`${ret.reason_if_failed ? `, ${ret.reason_if_failed}` : ''})`);
+
+  // Stated under either key, or not at all. Checked when stated, because a word outside the two
+  // agents' vocabularies means the return came from something that was briefed differently.
+  const actionKey = isNull ? undefined : ACTION_KEYS.find((k) => Object.prototype.hasOwnProperty.call(ret, k));
+  const action = actionKey ? ret[actionKey] : null;
+  if (actionKey && !AGENT_ACTIONS.includes(action))
+    refuse(`\`${actionKey}\` is ${JSON.stringify(action)}, not one of ${AGENT_ACTIONS.join(', ')}`);
 
   // Every string value whose key ends in `_path`, plus `path`/`paths`, is a path claim. Named by
   // shape rather than by a list of the two agents' key names, so an agent that returns a third
   // file is checked too instead of slipping past an allow-list.
   const claims = [];
-  for (const [key, value] of Object.entries(ret)) {
+  for (const [key, value] of Object.entries(isNull ? {} : ret)) {
     const isPathKey = key === 'path' || key === 'paths' || key.endsWith('_path') || key.endsWith('_paths');
     if (!isPathKey) continue;
     for (const v of Array.isArray(value) ? value : [value]) {
@@ -1310,12 +1331,23 @@ function cmdCheckReturn(flags) {
       claims.push({ key, raw: v });
     }
   }
-  if (!claims.length)
-    refuse('it names no path at all, so the splice has nothing to point the lesson at');
-
   const lessonAbs = path.resolve(lessonRoot);
   const promoted = new Map();
   for (const a of Array.isArray(row.artifacts) ? row.artifacts : []) if (a && a.path) promoted.set(a.path, a);
+
+  // Naming no path is the documented NO-OP — `{"action":"keep_existing"}` from a web-image refine
+  // that found nothing better (agents/web-image-agent.md § Refine behavior), the same case as the
+  // bare `null` above. It is only a no-op if the run really promoted nothing: a return that names
+  // no path while this media id holds a promoted artifact is a manifest that dropped its own work,
+  // which is the "no fewer" rule seen from the empty end.
+  if (!claims.length) {
+    if (promoted.size)
+      refuse(`${isNull ? 'it is `null`' : 'it names no path'}, but this run promoted `
+        + `${[...promoted.keys()].join(', ')} for ${mediaId} — `
+        + 'a no-change return cannot be the answer to a production that happened');
+    process.stdout.write(`${JSON.stringify({ media_id: mediaId, effective_action: action || 'no-op', artifacts: [] })}\n`);
+    return;
+  }
 
   const claimed = new Map();
   for (const c of claims) {
@@ -1338,7 +1370,7 @@ function cmdCheckReturn(flags) {
 
   // A hash it states is checked against the bytes on disk, not against the record: the record is
   // where the run said the bytes were, and this is the question of whether they still are.
-  if (Object.prototype.hasOwnProperty.call(ret, 'sha256') && ret.sha256 !== null) {
+  if (!isNull && Object.prototype.hasOwnProperty.call(ret, 'sha256') && ret.sha256 !== null) {
     if (typeof ret.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(ret.sha256))
       refuse(`\`sha256\` is ${JSON.stringify(ret.sha256)}, which is not a SHA-256`);
     const stated = ret.sha256.toLowerCase();
@@ -1352,7 +1384,7 @@ function cmdCheckReturn(flags) {
 
   process.stdout.write(`${JSON.stringify({
     media_id: mediaId,
-    effective_action: ret.effective_action,
+    effective_action: action,
     artifacts: [...claimed.keys()].map((rel) => ({ path: rel, sha256: promoted.get(rel).sha256 })),
   })}\n`);
 }

@@ -11,11 +11,13 @@
 # CHECK_JOBS caps how many run at once (default: the cores there are). CHECK_TIMEOUT is the
 # seconds one fixture may take before it is killed and counted failed (default 600).
 #
-# Environment: node and git, from a clean checkout. Two fixtures install `@babel/parser` and
-# two copy `_lesson-core` and `npm install` its express/cors — all with `--prefer-offline`, so
-# a warm npm cache serves them and nothing is fetched. Nothing here calls a model, opens a
-# browser or reaches the network on its own account. Every fixture builds its own temp state
-# and cleans it up; the checkout is not written to.
+# Environment: node and git, from a clean checkout. Nothing here calls a model or opens a browser.
+# Four fixtures do need packages: `ast-inventory` and `attestation` install `@babel/parser`,
+# `cancellation` and `thread-actors` copy `_lesson-core` and install its express/cors. All four use
+# `npm install --prefer-offline`, so a WARM npm cache serves them without asking the registry — that
+# is the one dependency this gate has beyond node and git, and on a cold cache those four fetch and
+# the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it. Every fixture
+# builds its own temp state and cleans it up; the checkout is not written to.
 #
 # Fixtures that DO need a browser or a real model are excluded by name below, each printed with
 # the exact command that runs it — an excluded fixture is listed, never silently skipped.
@@ -53,14 +55,13 @@ EXCLUDED=(
   "teaching evals|graded by a model, per evals/teaching/rubric.md|see evals/teaching/README.md"
 )
 
-# The two fixtures that start real proxies never run beside EACH OTHER. Both cancel a turn by
-# signalling a process group — `kill(-pid)` on the CLI they spawned detached — and a detached
-# child's pid is just a number: two fixtures started seconds apart have pids close together, so
-# one fixture's group kill lands on the other fixture's process group and takes its proxy down
-# with it. Measured: side by side, `thread-actors` died at the same case in 2 of 3 runs with the
-# proxy gone (ECONNREFUSED on the next request) and in 1 of 1 with nothing else on the box; run
-# in this chain, and alone, it passes. They still run BESIDE the parallel ones — the chain is
-# 57s against the batch's 96s, so it costs the gate nothing.
+# The two fixtures that start real proxies run as one chain rather than side by side. They are the
+# only two that boot servers, bind ports and kill process trees, and they are the two whose
+# assertions are about how long a process lives — so they get the box to themselves in turn. This
+# is insurance, not the fix for anything: `thread-actors` really was dying here with its proxy gone
+# (ECONNREFUSED on the request after a cancel), and the cause was in the proxy — `kill(-pid)` on a
+# group it no longer led — fixed in `_lesson-core/server/proxy.js` § signalTree. The chain costs
+# the gate nothing: it is shorter than `attestation`, which is the critical path on its own.
 SERIAL=(cancellation thread-actors)
 
 # A free port from the kernel rather than a fixed one: cc-land gates several PRs at once

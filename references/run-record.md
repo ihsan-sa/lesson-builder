@@ -255,8 +255,20 @@ promoted.
   outside the lesson root and paths that are not on disk are all refusals.
 - **A `sha256` it states is checked against the bytes on disk**, not against the record: the record
   is where the run said the bytes were, and this is the question of whether they still are.
-- **`effective_action` must be one of `keep`, `refine`, `replace`, `remove`, `add`**, and a bare
-  `null` return is the documented web-image `refine` no-op, which passes.
+- **The action is the agents' vocabulary, not the plan's.** `agents/manim-agent.md` § Stage 4
+  states `effective_action: "as-briefed" | "degraded-to-replace"`; `agents/web-image-agent.md`
+  § Return format states `action: "keep_existing" | "format_change"`, or no action key at all on a
+  plain success. Those are what is accepted, under either key, and a return that states none is
+  fine. The plan's `keep|refine|replace|remove|add` is a different axis — it is what the run was
+  ASKED to do, and it lives on the media row as `intent`; an agent says what it did about that.
+  Two of those five could never reach here anyway: a `keep` or a `remove` verdict spawns no agent
+  (`references/phase-2-plan.md` § Update mode), so there is no return for them to be the word of.
+- **A return that names no path is the documented no-op** — a bare `null`, or web-image's
+  `{"action":"keep_existing","reason":…}` from a refine that found nothing better — and it passes
+  only while the run promoted nothing for that media id. If it did promote something, a no-change
+  return is the "no fewer" rule seen from the empty end, and is refused.
+- **A return that reports its own failure (`ok: false`) is refused** with that as the reason: it is
+  the respawn case, not a manifest to check.
 - **It writes nothing.** A refusal is exit 10 with the reason on stderr, answered by respawning that
   specialist once with the same brief — a respawn that succeeds should not have to clear a flag this
   left. A pass prints one JSON line: `{"media_id","effective_action","artifacts":[{path,sha256}]}`.

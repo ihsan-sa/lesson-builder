@@ -17,7 +17,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cp -r "$B/_lesson-core" "$WS/_lesson-core"; (cd "$WS/_lesson-core" && npm install --silent)
+# --prefer-offline: a warm npm cache serves express/cors without asking the registry, which is
+# what lets this fixture run in tests/check.sh. Same flag as the two @babel/parser fixtures.
+cp -r "$B/_lesson-core" "$WS/_lesson-core"; (cd "$WS/_lesson-core" && npm install --silent --prefer-offline)
 cp "$B/workspace-root/gitignore.template" "$WS/.gitignore"; cp "$B/workspace-root/env.local.example" "$WS/.env.local"
 L="$WS/course/claude_lessons/cancel-demo"; mkdir -p "$L"; cp -r "$B/lesson-template/." "$L/"
 mv "$L/src/__SLUG_SNAKE__.jsx" "$L/src/cancel_demo.jsx"
