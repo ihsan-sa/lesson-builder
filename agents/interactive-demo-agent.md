@@ -59,7 +59,7 @@ Those two files are the run staging area for text the assembly splices, and they
 
 Under `mode: "update"` the brief may include:
 
-- **refine**: existing JSX fragment (by line range) + referenced useState hooks (main Claude Greps these) + `refine_brief` (e.g., "add a second slider", "tighten animation loop", "fix label positions").
+- **refine**: existing JSX fragment (by line range) + the referenced useState hooks, which main Claude forwards from the inventory's `state_hooks` for this demo + `refine_brief` (e.g., "add a second slider", "tighten animation loop", "fix label positions").
 - **replace**: the old medium was NOT an interactive demo (e.g., static SVG → interactive demo). You get the old source for context plus a `replace_brief`. Build a fresh demo.
 - **add**: same as new-mode — build from scratch.
 

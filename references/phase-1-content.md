@@ -144,63 +144,56 @@ GAPS_REMAINING: [...]
 
 ### Existing-media inventory pre-scan (main Claude)
 
-Before spawning `content-orchestrator-agent`, run a deterministic Grep/Glob sweep to produce a structured inventory. The orchestrator consumes the dict; it does not re-discover media.
+Before spawning `content-orchestrator-agent`, run one command to produce a structured inventory.
+The orchestrator consumes the dict; it does not re-discover media.
 
-Paths below are relative to `<lesson_root> = <workspace_root>/<course>/claude_lessons/<slug>/`.
-
-**1. Graph function definitions** — names and line ranges:
 ```
-grep -nE "^function [A-Z][a-zA-Z0-9_]*Graph|^function [A-Z][a-zA-Z0-9_]*\(" src/<slug>.jsx
-```
-Captures both the `SomethingGraph` naming convention and any bare `function Foo(` top-level definition.
-
-**2. `DEFAULT_GRAPH_PARAMS` keys** — parse the object block:
-```
-grep -n "const DEFAULT_GRAPH_PARAMS" src/<slug>.jsx
-```
-Then Read the file from that line forward and parse keys until the matching `};`. Each top-level key corresponds to one interactive graph and its initial parameter set.
-
-**3. `GRAPH_SCHEMA` keys** — parse the object block (may be absent in older lessons):
-```
-grep -n "const GRAPH_SCHEMA\|export.*GRAPH_SCHEMA" src/<slug>.jsx
-```
-Then Read forward and parse keys. If this constant is missing, flag `graph_schema_backfill_needed: true` in the inventory — Phase 2's update plan must surface this as a `STRUCTURAL DRIFT REPAIR` item. The backfill depends on the graph-schema feature being present in `_lesson-core/chat/graphSchema.js`; see `references/graph-schema-guide.md`.
-
-**4. `RefImg` base64 constants** — names only (the blobs are huge, never include them in the inventory dict):
-```
-grep -n "const IMG_[A-Z0-9_]* =" src/<slug>.jsx
+node <skill_root>/scripts/lesson-ast.cjs inventory --lesson <lesson_root>
 ```
 
-**5. Static images**:
-```
-grep -nE "<img[^>]*src=" src/<slug>.jsx
-```
-Resolve each `src=` value to a concrete path under `<lesson_root>/public/images/` when it matches that prefix.
+Paths below are relative to `<lesson_root> = <workspace_root>/<course>/claude_lessons/<slug>/`. The
+script Babel-parses `src/<slug>.jsx` (`--file` names it when the slug does not) and prints the dict
+below on stdout. Every field comes from the parse: nothing is grepped, no brace is matched by hand,
+no filename is trusted. A lesson the parser cannot read exits **2** with the parse error, its line
+and its column, and prints no inventory — there is no regex fallback, and a parse failure here is
+the same halt the update-mode pre-flight already calls for. `@babel/parser` is the lesson
+template's own devDependency and is resolved from the lesson's `node_modules`; if the lesson has
+never been installed, `npm install` in the lesson root first.
 
-**6. Videos**:
-```
-grep -nE "<video[^>]*src=" src/<slug>.jsx
-```
-Resolve to `<lesson_root>/public/videos/`.
+Three derivations changed when this moved off Grep, and each fixed a misclassification the old
+sweep made. The field meanings are unchanged, so Phase 2 and Phase 3 read the dict exactly as
+before.
 
-**7. Interactive demos**:
-```
-grep -nE "<InteractiveDemo[^>]*title=" src/<slug>.jsx
-```
-The `title` prop is the stable identifier used to track a demo across updates. `interactive-demo-agent` must not rename it in refine mode.
+**1. A graph component is a signature, not a capital letter.** A top-level function is a graph
+component when its first parameter is an object pattern carrying `params` — the
+`({ params, mid = "" })` shape every graph in `references/template.md` has. A capitalised
+lesson-local function without it (`HWQuestion`) is a **helper**, not a graph: it lands in
+`lesson_helpers`, not `graph_components`. The old `^function [A-Z]...` pattern could not tell them
+apart and put helpers in the plan as media.
 
-**8. Manim source scripts**:
-```
-Glob <lesson_root>/*.py
-```
-Pair each `.py` with its matching `.mp4` under `public/videos/` by filename stem.
+**2. `default_params_key` is the key the component reads.** It comes from the
+`DEFAULT_GRAPH_PARAMS.<key>` the component's own body spreads, falling back to the `graphKey` on
+the `<LiveGraph>` that wraps its call site. `graph_schema_key` is that same key when `GRAPH_SCHEMA`
+declares it, and `null` when it does not — which is how a params/schema mismatch shows up in the
+inventory itself.
 
-**9. Orphan assets** — files on disk not referenced anywhere in the JSX:
-```
-Glob <lesson_root>/public/images/*
-Glob <lesson_root>/public/videos/*
-```
-Cross-reference each filename against the JSX src= hits from steps 5-6 and the manim pairings from step 8. Orphans get flagged in the inventory under `orphans: [...]` so main Claude can surface them to the user at review time.
+**3. A manim source is paired on evidence, and the evidence is named.** Manim names its output
+after the `Scene` class, not the script, so a stem match is not the only pairing and cannot be
+trusted on its own. A `.py` in the lesson root is the source of a referenced video when the stems
+match, when a `class <Name>(...)` in it normalises to the video's stem, or when the video's
+filename appears in its text; `manim_source_evidence` on the video row says which of the three it
+was. Only a `.py` with none of that evidence is an orphan. The old sweep paired on the stem alone
+and flagged every correctly-named-by-Scene source as an orphan.
+
+Everything else the old sweep did, the parse does too, from the same tree: `DEFAULT_GRAPH_PARAMS`
+and `GRAPH_SCHEMA` keys (absent `GRAPH_SCHEMA` still sets `graph_schema_backfill_needed: true`,
+which Phase 2's update plan must surface as a `STRUCTURAL DRIFT REPAIR` item — the backfill depends
+on the graph-schema feature being present in `_lesson-core/chat/graphSchema.js`; see
+`references/graph-schema-guide.md`), `const IMG_*` base64 constants by name with their blobs left
+out, `<img>` and `<video>` `src` values resolved through the `IMG`/`VID` prefixes to concrete paths
+under `public/`, `<InteractiveDemo title>` blocks with the `useState` names their bodies read, the
+`.py` files in the lesson root, and the files under `public/images/` and `public/videos/` that no
+`src` resolves to.
 
 ### Inventory schema (structured dict passed to the orchestrator)
 
@@ -215,6 +208,13 @@ Cross-reference each filename against the JSX src= hits from steps 5-6 and the m
       "line_range": [142, 210],
       "default_params_key": "exampleGraph",
       "graph_schema_key": "exampleGraph" }
+  ],
+  "lesson_helpers": [
+    { "name": "HWQuestion",
+      "kind": "lesson-helper",
+      "source_file": ".../src/<slug>.jsx",
+      "line_range": [96, 108],
+      "used_by": ["TOPICS"] }
   ],
   "default_graph_params_keys": ["exampleGraph", "secondGraph", ...],
   "graph_schema_keys": ["exampleGraph", "secondGraph", ...],
@@ -238,7 +238,8 @@ Cross-reference each filename against the JSX src= hits from steps 5-6 and the m
       "resolved_path": ".../public/videos/example-animation.mp4",
       "source_file": ".../src/<slug>.jsx",
       "line_range": [342, 342],
-      "manim_source": ".../example_animation.py" }
+      "manim_source": ".../example_animation.py",
+      "manim_source_evidence": "stem" | "scene-class" | "filename-in-source" }
   ],
   "interactive_demos": [
     { "title": "Example Parameter Explorer",
@@ -260,8 +261,10 @@ Two contract notes that matter when `references/phase-2-plan.md` hands items to 
 
 1. **Every media entry carries a `kind` field** matching the `medium-decider-agent` enum: `"svg-graph" | "matplotlib-ref" | "manim-video" | "static-image" | "interactive-demo"`. Main Claude passes the entries verbatim; no translation step needed.
 1b. **Every media entry gains a `purpose` field** — one line on what the medium teaches. The mechanical pre-scan leaves it `null`; the orchestrator fills it during its end-to-end read of the JSX (from surrounding prose, captions, and the component itself). Phase 2 forwards it to the decider as `current_purpose` and it seeds the plan's `original_intent` for kept media.
-2. **Every media entry carries `source_file` and `line_range`**. `source_file` is the absolute path to the JSX file containing the reference (identical to `lesson_file` for all entries in the current single-file lesson architecture, but included per-entry so specialists can extract source without an extra lookup). `line_range` is `[start, end]` — for components (graph_components, interactive_demos) it spans the full definition; for constants (ref_img_constants) it spans the `const IMG_X = "..."` declaration; for JSX-embedded references (static_images, videos) it is `[line, line]` marking the `<img>` / `<video>` tag.
-3. **`interactive_demos` entries also carry `state_hooks`**: a list of `useState` state variable names referenced inside the `<InteractiveDemo>` body. Main Claude Greps the surrounding LessonApp for these when building the `interactive-demo-agent` refine brief (so the agent knows which state is in scope and must not be renamed).
+2. **Every media entry carries `source_file` and `line_range`**. `source_file` is the absolute path to the JSX file containing the reference (identical to `lesson_file` for all entries in the current single-file lesson architecture, but included per-entry so specialists can extract source without an extra lookup). `line_range` is `[start, end]`, and it is now the parsed node's own range rather than a Grep hit — for components (graph_components, interactive_demos) it spans the full definition, from the `function` keyword to its closing brace; for constants (ref_img_constants) it spans the `const IMG_X = "..."` declaration; for JSX-embedded references (static_images, videos) it is the `<img>` / `<video>` tag's own start and end line, which is `[line, line]` for the single-line tags these almost always are.
+3. **`interactive_demos` entries also carry `state_hooks`**: the `useState` state variable names the `<InteractiveDemo>` body reads, taken from the `const [x, setX] = useState(...)` bindings in the file rather than Grepped out of the surrounding LessonApp. Main Claude forwards them in the `interactive-demo-agent` refine brief, so the agent knows which state is in scope and must not be renamed.
+4. **`lesson_helpers` is not media and never enters the plan as an item.** It is the lesson's own top-level functions that are neither graph components nor exported — the capitalised ones a Grep used to file as graphs, and the utilities a graph leans on. `used_by` names the top-level declarations that reference the helper; an empty `used_by` is a helper nothing calls. Phase 3 uses it, with `lesson-ast.cjs reachability`, to decide what a removal strands (`references/phase-3-execution.md` § 4.4). Shadowing is not resolved, so a local binding of the same name counts as a use: the report errs toward keeping code.
+5. **`orphans` stays files on disk.** Every entry has a `path` Phase 3 § 4.9 may `rm` after the user approves it: an image or video no `src` resolves to, or a `.py` no referenced video came from. An unused in-file helper is never an orphan — it has no path, and it is reported in `lesson_helpers` instead.
 
 ### Inputs to `content-orchestrator-agent` in update mode
 

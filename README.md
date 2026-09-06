@@ -41,9 +41,9 @@ flowchart TD
 | Phase | New mode | Update mode |
 |---|---|---|
 | 0 — Scoping | Interview: course, slug, audience, depth, materials, **materials scope** (course-only / fill-gaps / extensions), **deploy destination** (GitHub / custom service / commit-only / skip). Reads `<course>/COURSE.md` first when one exists, so stated course conventions replace questions. | Confirm detected lesson, working-tree check, research-depth, scope-of-change, media hints, deploy destination (defaults to last recorded). Consolidate scopes this to the whole affected lesson set. |
-| 1 — Content Analysis | Main Claude fans out extraction/research workers (they persist evidence to `.build-scratch/evidence/`, capped by `materials_scope`); `content-orchestrator-agent` synthesizes the package from the evidence files. | Pre-scan existing media inventory (Grep/Glob), worker spawns per research depth, orchestrator diffs against concerns and classifies drift / gaps / redundancies. |
+| 1 — Content Analysis | Main Claude fans out extraction/research workers (they persist evidence to `.build-scratch/evidence/`, capped by `materials_scope`); `content-orchestrator-agent` synthesizes the package from the evidence files. | Pre-scan existing media inventory (`lesson-ast.cjs inventory`), worker spawns per research depth, orchestrator diffs against concerns and classifies drift / gaps / redundancies. |
 | 2 — Plan | One whole-lesson `medium-decider-agent` spawn ranks media per topic with a cross-topic diversity check; web images get a license pre-flight; plan surfaces a `DEPLOY:` block (action / service / materials-in-commit). | Emit a 5-way change-list: `keep / refine / replace / remove / add`, plus structural drift repairs and the `DEPLOY:` block. Consolidate emits one course plan of per-lesson change-lists under a single approval. |
-| 3 — Execution | Parallel specialists write to `.build-scratch/`; main Claude assembles `src/<slug>.jsx` from the skeleton. Writes private-by-default `.gitignore` covering `materials/`, `source/`, `notes/`, `*.local`, `.env*`. | Name the `lesson-update/<slug>-YYYYMMDD` branch inside the run's own build worktree, splice specialist outputs into the existing JSX using pattern anchors, run post-splice sanity pass. Ensures the lesson `.gitignore` covers any newly attached private paths. |
+| 3 — Execution | Parallel specialists write to `.build-scratch/`; main Claude assembles `src/<slug>.jsx` from the skeleton. Writes private-by-default `.gitignore` covering `materials/`, `source/`, `notes/`, `*.local`, `.env*`. | Name the `lesson-update/<slug>-YYYYMMDD` branch inside the run's own build worktree, splice specialist outputs into the existing JSX by parsing it and rewriting named nodes (`lesson-ast.cjs`), run post-splice sanity pass. Ensures the lesson `.gitignore` covers any newly attached private paths. |
 | 4 — Review + Fix | Parallel code / content / test reviewers plus two independent lenses per artifact (`visual-qa-agent` rubric + `scientific-accuracy-agent`). Progress-aware fix loop, deterministic failures first, hard stop rules. | Same mechanism. Two extra rules: **no-grandfathering** (every final medium runs through visual-QA, including `keep`) and **regression-watch** (halt a fix thread if a refine regresses a previously-clean `keep` medium). |
 | 5 — Deploy | Branches on `deploy_action`. `build-all.sh` + headless Playwright smoke check always runs (sanity check). Ask **override the gitignore for this commit?** (default: no — private paths stay out). Commit, then push-to-github / push-to-custom / commit-only per plan. | Same build gate, commit to update branch, `git merge --no-ff` to the base branch, push per `deploy_action` — all inside the worktree — then prune it. Branch and worktree are preserved on any failure. |
 
@@ -122,9 +122,9 @@ references/
   course-curation.md           Course layer: COURSE.md context, committed course materials
                                inbox, chunk triage, batching, consolidate plan format
   phase-0-scoping.md           Scoping interview + scoping artifact format + resource-mode detection
-  phase-1-content.md           Content orchestration + existing-media inventory pre-scan
+  phase-1-content.md           Content orchestration + existing-media inventory pre-scan (parsed)
   phase-2-plan.md              Plan compilation + 5-way media taxonomy + approval gate
-  phase-3-execution.md         New-mode assembly + update-mode splice algorithm
+  phase-3-execution.md         New-mode assembly + update-mode splice targets and algorithm
   phase-4-review.md            Parallel reviews + progress-aware fix loop
   phase-5-deploy.md            Build verify + commit/merge/push + rollback
   template.md                  Lesson JSX skeleton (new-mode starting point) + exposition exemplars
@@ -145,6 +145,10 @@ scripts/run-manifest.cjs       Writes, reads, hashes and renders the run record;
 tests/run-manifest/            Fixture for it: write, read, hash, render, pre-record logs (node only)
 tests/stage-promote/           Fixture for stage-validate-promote: killed and truncated productions,
                                atomic promotion, the manim pipeline on stubs (node only)
+scripts/lesson-ast.cjs         Babel-parses the lesson: the media inventory, the splice of a named
+                               node, and what a removal leaves unreachable
+tests/ast-inventory/           Fixture for it: helper-vs-graph, evidence-based manim pairing, a
+                               byte-exact splice, stranded helpers (node + @babel/parser)
 ```
 
 ## Installation
