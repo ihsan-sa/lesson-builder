@@ -1062,7 +1062,7 @@ function unreviewedMedia(rec, reviews) {
   return rec.media
     .filter((row) => {
       if (!row || !row.media_id || named.has(row.media_id)) return false;
-      if (row.intent === 'remove' || row.status === 'failed') return false;
+      if (row.intent === 'remove') return false;
       // A failed production leaves the previous artifacts on disk, so a row that still holds
       // promoted bytes is still shipping them and still needs a verdict.
       if (Array.isArray(row.artifacts) && row.artifacts.length) return true;
