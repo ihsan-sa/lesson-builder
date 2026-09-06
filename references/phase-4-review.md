@@ -104,14 +104,78 @@ Two reviewers per artifact, spawned in parallel, chosen for **independent failur
 - **Interactive demos additionally get `interaction-agent`** — drives the running demo via Playwright: controls respond, extremes behave, keyboard reachability. Its spawn brief must include the dev-server URL (+ tab), the control list from the demo's wiring, and the expected behavior per control — it cannot discover these itself.
 - **Static images (web-sourced)** are artifacts too: `visual-qa-agent` (readability/colour as applicable) plus `scientific-accuracy-agent` when the image carries scientific content (a spectrum, a micrograph scale bar); provenance/license is re-checked against the record's media entry, not re-derived.
 
-So a lesson with 3 SVG graphs + 2 RefImgs + 1 manim video fires 12 QA spawns (6 visual-qa + 6 scientific-accuracy), all in the same parallel batch.
+So a lesson with 3 SVG graphs + 2 RefImgs + 1 manim video fires 12 QA spawns (6 visual-qa + 6 scientific-accuracy), all in the same parallel batch — unless a previous run already judged some of those artifacts and nothing they depend on has changed since, in which case those verdicts are reused rather than re-bought (§ Reusing a verdict that still holds).
 
 Each reviewer judges its artifact against the **original stated intent** as captured by the orchestrator, not against the user's most recent concerns. A refined graph must be evaluated against what the graph was always supposed to show, otherwise refinements get graded on a shifting rubric. Main Claude's spawn brief must include the original intent string, not the update user-concerns string.
 
 **Scope depends on mode**:
 
 - **New mode**: every built medium runs through the full specialist team for its type.
-- **Update mode (no-grandfathering)**: every medium in the post-update lesson — `keep`, `refine`, `replace`, `add` — runs through its full visual-QA team. Pre-existing drift does not get a free pass. Rationale: the user decided once (by approving the Lesson Plan at the Phase 2 gate); visual-QA then covers all final media equally so the lesson that ships matches the plan that was approved. Skipping `keep` media would make update-mode reviews strictly weaker than new-mode reviews, and the user would have no way to know when they shipped a lesson whose unchanged media silently fails a quality dimension that would have blocked a new build.
+- **Update mode (no-grandfathering)**: every medium in the post-update lesson — `keep`, `refine`, `replace`, `add` — is covered by its full visual-QA team, and ends the run with a verdict from each of them. Pre-existing drift does not get a free pass. Coverage is what the rule protects, not spend: a medium whose verdict still holds is covered by that verdict rather than by a fresh spawn (§ Reusing a verdict that still holds), and a medium with no valid verdict is reviewed. Rationale: the user decided once (by approving the Lesson Plan at the Phase 2 gate); visual-QA then covers all final media equally so the lesson that ships matches the plan that was approved. Skipping `keep` media would make update-mode reviews strictly weaker than new-mode reviews, and the user would have no way to know when they shipped a lesson whose unchanged media silently fails a quality dimension that would have blocked a new build.
+
+#### Reusing a verdict that still holds
+
+Re-running a reviewer on bytes nothing has touched buys nothing: the same model, scoring the same
+rubric, against the same file. So a verdict is **recorded with what it attests to** and reused when
+that still holds. Coverage is preserved by proof, never by omission — an artifact with no valid
+attestation is reviewed. The mechanism, the record schema and the exit codes are in
+`references/run-record.md` § Attested verdicts; this is the Phase 4 procedure.
+
+1. **Write the spec.** One entry per (artifact, reviewer) pair this phase must cover — the same set
+   § 4 has always fired, so writing it is also the coverage list. It declares what each review
+   depends on, and the dependency list is not guesswork: it is what this skill already names.
+
+   | Ref | Where it comes from |
+   |---|---|
+   | `rubric` | `skill:agents/<reviewer>.md` — the reviewer's own prompt is the rubric it scores. |
+   | `artifacts` | Omit it for a medium with a promoted file (the record already holds the path). Name `<lesson file>#<Component>` for an SVG graph, `<lesson file>#<demo title>` for an interactive demo — the declaration's own bytes, so refining one graph does not invalidate the rest of the file. |
+   | `deps` | Every shared helper, component or style the medium uses — `lesson-ast.cjs inventory`'s `lesson_helpers[].used_by` and the graph rows say which; name each as `<lesson file>#<name>`. Plus the teaching spec the reviewer judges against (`plan.artifact`), and any artifact this one is derived from. |
+
+   Write it to `.lesson-builder/attest-<run_id>.json`. It is gitignored with the rest of the run's
+   state, and `reuse`, `record` and `verify` all read it, so what was checked and what was attested
+   cannot drift apart.
+
+2. **Decide, before the spawn batch.**
+
+   ```bash
+   run-manifest.cjs attest reuse --lesson "<lesson_root>" --spec .lesson-builder/attest-<run_id>.json
+   ```
+
+   It prints `{"reuse":[…],"review":[{media_id,reviewer,reason}]}` and carries every still-valid
+   prior verdict into this run's record. **Spawn exactly the `review` set.** A first run, and a
+   lesson whose records predate attestations, put everything in `review` — the batch is then
+   exactly what it always was.
+
+3. **Record each verdict as its reviewer returns**, alongside mapping its findings into issue
+   records:
+
+   ```bash
+   run-manifest.cjs attest record --lesson "<lesson_root>" --spec <spec> \
+     --media-id m3 --reviewer visual-qa-agent --verdict pass|issue|fail
+   ```
+
+   A reviewer that came back `unavailable` has no verdict to record: that is a coverage gap, logged
+   as a finding with its origin, and `attest record` refuses the word.
+
+4. **Re-record after a fix.** A fix iteration changes the artifact, so its attestation is already
+   invalid — the re-review § the fix loop requires happens anyway, and its verdict replaces the old
+   one. The loop's widening rule ("affected includes any medium that shares a helper, component or
+   style with the changed code") is the same relation the spec's `deps` declare, so `attest reuse`
+   after a fix iteration names the widened set rather than leaving main Claude to remember it.
+
+5. **Gate before the handoff.**
+
+   ```bash
+   run-manifest.cjs attest verify --lesson "<lesson_root>" --spec <spec>
+   ```
+
+   Exit 0 means every review the spec asks for ended this run with a valid verdict in this run's
+   record. Exit 8 names the gaps and Phase 5 does not start: a run never reaches deploy having
+   quietly covered less than the spec said it would.
+
+The rendered log shows which verdicts were bought and which were reused, so a reader can see what
+the run paid for. The calibration re-check keeps its meaning: it re-reviews on purpose, so it names
+its own reviewer and rubric in the spec and always lands in the `review` set.
 
 **Spawn brief template** (main Claude passes this to each specialist):
 
@@ -124,6 +188,9 @@ mode: new | update
 update_action: keep | refine | replace | add   (update mode only)
 previous_verdict: <specialist verdict from prior review if any, else null>
 ```
+
+A brief is only written for an artifact in the `review` set: an artifact whose verdict was reused
+is not spawned for, and its verdict is already in this run's record.
 
 ### 5. Headed Playwright testing via `@playwright/mcp`
 

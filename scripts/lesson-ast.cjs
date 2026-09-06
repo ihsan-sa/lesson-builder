@@ -10,6 +10,7 @@
  * Usage:
  *   lesson-ast.cjs inventory    --lesson <dir> [--file <jsx>]
  *   lesson-ast.cjs reachability --file <jsx> [--removing <Name>[,<Name>...]]
+ *   lesson-ast.cjs digest       --file <jsx> --name <X> [--name <Y> ...]
  *   lesson-ast.cjs replace      --file <jsx> <target> --with <file> [--write]
  *   lesson-ast.cjs remove       --file <jsx> <target> [<target>...] [--write]
  *
@@ -44,6 +45,11 @@
  * the video's stem (manim names its output after the Scene, not the script), or when the video's
  * filename appears in the source text. Only a `.py` with no such evidence is an orphan.
  *
+ * `digest` hashes each named thing's own source bytes, not the file's: a top-level declaration
+ * (its `export` wrapper included) or an `<InteractiveDemo title="X">` block. That is what lets a
+ * Phase 4 verdict attest to one graph inside a shared lesson file, so refining one graph does not
+ * invalidate the other five (`references/run-record.md` § Attestations).
+ *
  * @babel/parser is resolved from the lesson's own `node_modules` — it is already a devDependency
  * of the lesson template — then from this skill and the ambient environment.
  *
@@ -54,7 +60,9 @@
  *   0  ok
  *   1  usage or I/O error
  *   2  the lesson does not parse — the message carries the parse error, line and column
- *   3  a target matched nothing; nothing was spliced and the file is untouched
+ *   3  a target matched nothing; nothing was spliced and the file is untouched. `digest`: a
+ *      `--name` is neither a top-level declaration nor a demo title in that file — its JSON still
+ *      goes to stdout, with those names under `missing` and the rest hashed
  *   4  the splice is refused: the result does not parse, or it would have changed or removed a
  *      top-level declaration no target named. Nothing was written either way.
  */
@@ -63,6 +71,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 function die(msg, code) {
   process.stderr.write(`lesson-ast: ${msg}\n`);
@@ -564,6 +573,44 @@ function cmdReachability(flags) {
   out(JSON.stringify({ file, removing, unreachable }, null, 2));
 }
 
+// ---------- digest ----------
+
+/**
+ * The SHA-256 of one named thing's own source bytes. A top-level declaration is hashed as the
+ * statement a splice would cut out — the `export` wrapper included — and a demo as its
+ * `<InteractiveDemo>` element, so the digest changes when and only when that thing's text does.
+ * A name that is both is the declaration: a demo title is prose and does not collide with one.
+ */
+function cmdDigest(flags) {
+  const file = requireFile(flags);
+  const code = read(file);
+  const ast = parse(loadParser(path.resolve(path.dirname(file), '..')), code, file);
+  const rows = topLevel(ast).rows;
+  const names = list(flags, 'name');
+  if (!names.length) die('name what to hash: --name <declaration or demo title>');
+
+  const digests = {};
+  const missing = [];
+  for (const name of names) {
+    const row = rows.find((r) => r.name === name);
+    let node = row ? row.decl : null;
+    if (!node)
+      walk(ast, (n) => {
+        if (node || n.type !== 'JSXElement' || elementName(n) !== 'InteractiveDemo') return;
+        const a = attr(n, 'title');
+        if (a && srcValue(a.value) === name) node = n;
+      });
+    if (!node) missing.push(name);
+    else digests[name] = crypto.createHash('sha256').update(code.slice(node.start, node.end)).digest('hex');
+  }
+  // Every name is answered in one pass — the ones that are there, and the ones that are not — so a
+  // caller asking about six names in a file does not have to ask again once per name to find out
+  // which one is gone. The exit code still says a target matched nothing.
+  out(JSON.stringify({ file, digests, missing }));
+  if (missing.length)
+    die(`no top-level declaration or <InteractiveDemo title="..."> named ${missing.join(', ')} in ${file}`, 3);
+}
+
 // ---------- splice ----------
 
 /** Resolve every `<target>` flag to one node, or exit 3 saying which one matched nothing. */
@@ -849,6 +896,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 const commands = {
   inventory: cmdInventory,
   reachability: cmdReachability,
+  digest: cmdDigest,
   replace: cmdReplace,
   remove: cmdRemove,
 };

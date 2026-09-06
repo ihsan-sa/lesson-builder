@@ -7,7 +7,7 @@ Reference for what the per-lesson build trail looks like. **The log is rendered,
 - Phase 0: the scoping artifact under `scoping` (incl. `lesson_file`, `course_name`, `working_tree`); update mode: `git.base_branch`, `git.base_sha`, and `git.worktree` + `git.worktree_state` from `worktree add`.
 - Phase 2: `plan.artifact`, `plan.hash` and `plan.approval` (`pending` → `approved`/`aborted`, with timestamp) in BOTH modes; per-media `media_id` + `intent` + `original_intent` in `media` (incl. `keep` rows). Per-topic `objectives:` and full `teaching_arc:` blocks live in the plan artifact the record points at — Phase 3 authors against them and Phase 4's `arc` check reads them from there, alongside any `Arc rejected (reorder test): …` lines.
 - Phase 3: `git.branch` (actual name incl. any collision suffix — Phase 5 reads it back verbatim) and `git.base_sha`.
-- Phase 4: `findings` covers EVERY open issue at exit with `origin` and an attempted/no-attempt `reason` (incl. never-attempted low-confidence minors, keep-media findings, coverage gaps). Anything still `state: "open"` renders under `UNRESOLVED`.
+- Phase 4: `findings` covers EVERY open issue at exit with `origin` and an attempted/no-attempt `reason` (incl. never-attempted low-confidence minors, keep-media findings, coverage gaps). Anything still `state: "open"` renders under `UNRESOLVED`. Every reviewer's verdict is a `media[].attestations` entry, rendered under its media row in Phase 2 — a verdict this run reused says `REUSED from run <id>`, one it paid for names the reviewer model.
 - Phase 5: `git.commit_sha`, and `deploy_code`, the base-branch line and the worktree line from `phases.5.notes`.
 
 ## Purpose

@@ -225,19 +225,19 @@ merged away and never dropped. Here it has to be kept by hand, which is why the 
 
 ## 6. No-grandfathering rule
 
-All media in the post-update lesson — `keep` + `refine` + `replace` + `add` — runs through the full Phase 4 visual-QA pipeline per medium kind. Pre-existing drift is not free-passed.
+All media in the post-update lesson — `keep` + `refine` + `replace` + `add` — is covered by the full Phase 4 visual-QA pipeline for its medium kind, and ends the run with a verdict from every reviewer that covers it. Pre-existing drift is not free-passed.
 
 - **Rationale**: the user approved the update plan once at the Phase 2 gate. Visual-QA covers all final media equally so semantic drift in "kept" media (which the user may never have actually verified) doesn't slip through just because no one asked to change it this run.
-- **Cost implication**: expensive visual-QA on lessons with many kept media. Worth it because semantic drift in kept media is invisible to the user until it breaks later.
+- **Coverage is what the rule protects, not spend.** A verdict from an earlier run is reused when it still holds — the artifact's bytes, the rubric, the reviewer and every declared dependency all unchanged — and an artifact with no valid verdict is reviewed. Nothing is skipped: `attest verify` refuses to hand off to Phase 5 while any medium lacks a valid verdict in this run's record. `references/phase-4-review.md` § Reusing a verdict that still holds.
 - **Specialist brief note**: visual-QA specialists receive the **original stated intent** (as captured by content-orchestrator in Phase 1), not the user's most recent concerns, so a refined graph is evaluated against what it was always supposed to show.
 
 ### What a small update actually costs
 
 State this plainly to any user who asks for a one-line change, because the bill does not scale with the size of the change:
 
-- **Phase 4 re-QAs everything, not just what changed.** No-grandfathering means every medium in the final lesson — every `keep` included — runs the full visual-QA pipeline. A lesson with twelve media pays twelve visual-QA spawns whether the run refined one graph or six.
+- **Phase 4 covers everything, not just what changed.** No-grandfathering means every medium in the final lesson — every `keep` included — ends the run with a verdict from its full visual-QA team. It pays for the ones whose verdicts no longer hold: a lesson with twelve media where the run refined one graph pays for that graph, for whatever shares a helper with it, and for anything whose rubric or reviewer changed. On the first run of a lesson, and on one whose records predate attested verdicts, that is all twelve.
 - **Phase 1 and Phase 2 are per-run, not per-change.** The research re-sweep (even at `light`), the whole-lesson `medium-decider-agent` spawn, and plan compilation happen once per run regardless of how small the change-list is.
-- **So the marginal cost of a run is nearly fixed.** Correcting one constant costs roughly what correcting eight costs. Ten small runs cost about ten times one run that carries all ten changes — plus ten branches, ten merges, and ten chances for the regression-watch rule (§7) to catch a newly-broken `keep`.
+- **So the marginal cost of a run is still nearly fixed.** Phase 1 and Phase 2 do not shrink with the change-list, and correcting one constant costs roughly what correcting eight costs. Ten small runs cost about ten times one run that carries all ten changes — plus ten branches, ten merges, and ten chances for the regression-watch rule (§7) to catch a newly-broken `keep`.
 
 **Therefore: batch small changes.** When material arrives in small chunks, file each one immediately and let the changes accumulate; start a run when the accumulated set changes a topic's substance (a claim is wrong, a derivation is new, an objective moved, real practice problems arrived) or when the user asks for the build. Cosmetic and corroborating material waits. The full batching rule, including where pending chunks are recorded, is in `references/course-curation.md` §5. Say what is pending rather than sitting on it silently — *"3 changes pending on `<slug>`; none changes a topic's substance yet — say build now to force it."*
 

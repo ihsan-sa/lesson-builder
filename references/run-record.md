@@ -8,6 +8,9 @@ Every lesson-builder run keeps its state in one versioned JSON record. The recor
 - Tool: `scripts/run-manifest.cjs` — the only writer and the only reader. Its fixture is `tests/run-manifest/`.
 - Staging area: `<lesson_root>/.lesson-builder/staging/<run_id>/<media_id>/`, where every producer writes
   before its artifact is validated and promoted (§ Artifacts, fixture `tests/stage-promote/`).
+- Attested verdicts: a Phase 4 verdict on a media row records the bytes, rubric and reviewer it
+  attests to, so a later run reuses it rather than re-reviewing (§ Attested verdicts, fixture
+  `tests/attestation/`).
 - Build worktree: `<lesson_root>/.lesson-builder/worktrees/<run_id>/`, where an update run builds
   (§ The build worktree, fixture `tests/worktree-per-run/`).
 
@@ -86,7 +89,18 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
       ],
       "artifact_failure": { "target": "public/videos/tangent.mp4",
                             "reason": "MP4 is truncated (a box runs past the end of the file)",
-                            "at": "2026-04-15T14:30:44Z" } }
+                            "at": "2026-04-15T14:30:44Z" },
+      // One Phase 4 verdict per reviewer, with everything it attests to (§ Attested verdicts).
+      // `from_run` + `reused_at` are on a verdict this run carried forward instead of paying for
+      // again; a verdict this run made has neither.
+      "attestations": [
+        { "reviewer": "visual-qa-agent", "model": "claude-opus-5", "verdict": "pass",
+          "at": "2026-04-15T14:44:10Z",
+          "from_run": "9d1c04", "reused_at": "2026-04-19T10:02:00Z",
+          "rubric":    { "ref": "skill:agents/visual-qa-agent.md", "sha256": "<64 hex>" },
+          "artifacts": [ { "ref": "public/videos/tangent.mp4", "sha256": "<64 hex>" } ],
+          "deps":      [ { "ref": "src/intro-derivatives.jsx#axisTicks", "sha256": "<64 hex>" } ] }
+      ] }
   ],
 
   // Every issue open at exit, with where it came from and what was attempted. `state: "resolved"`
@@ -105,7 +119,9 @@ so a future `lesson-run/2` cannot be half-read by today's tool.
 ## Commands
 
 `run-manifest.cjs` below and in the phase docs is shorthand for `node <skill_root>/scripts/run-manifest.cjs`;
-it needs only node, no install. `--lesson <lesson_root>` is always required. `--run <id>` defaults to the
+it needs only node, no install — except an `attest` ref of the form `<file>#<Name>`, which goes
+through `lesson-ast.cjs` and so needs the `@babel/parser` the lesson template already pins.
+`--lesson <lesson_root>` is always required. `--run <id>` defaults to the
 newest record in that lesson, so a resumed session does not have to carry the id.
 
 | Command | Does |
@@ -120,6 +136,9 @@ newest record in that lesson, so a resumed session does not have to carry the id
 | `stage --media-id <id> --name <file>` | Creates this run's staging directory for that media id and prints the path the producer writes to. |
 | `promote --media-id <id> --from <staged> --to <lesson-relative> [--min-bytes <n>]` | Validates the staged bytes and moves them into the lesson tree. Prints a JSON receipt; exits 6 on refusal. See below. |
 | `fail --media-id <id> --reason <text>` | Records a production that produced nothing. Touches no file. |
+| `attest reuse --spec <file> [--at <iso>]` | Decides every review the spec asks for and carries each still-valid prior attestation into this run's record. Prints `{"reuse":[…],"review":[{media_id,reviewer,reason}]}`. See below. |
+| `attest record --spec <file> --media-id <id> --reviewer <name> --verdict pass\|issue\|fail [--at <iso>]` | Records a fresh verdict with what it attests to. Prints the attestation as one JSON line. |
+| `attest verify --spec <file>` | Coverage gate: every review the spec asks for has a valid attestation in **this** run's record. Exits 8 naming the gaps otherwise. |
 | `worktree add` | Creates this run's build worktree from `git.base_sha`, records `git.worktree` + `git.worktree_state`, and prints the lesson root inside it. Takes the **user's** lesson root, never the worktree's — given one carrying the pointer it refuses (exit 1). Idempotent: a resumed run calls it again and gets its worktree back. |
 | `worktree remove` | Prunes it. Same root as `add`: a worktree does not remove itself. Exits 7 and removes nothing while it holds uncommitted work or a commit no ref keeps; exits 3 when the record names no worktree. |
 | `render` | Rewrites `lesson_build.log.md` from every record in the lesson. |
@@ -199,6 +218,51 @@ truncated or simply wrong therefore leaves the lesson exactly as it was, and say
   the full 64 characters and is the artifact's identity in the record.
 
 Fixture: `tests/stage-promote/`.
+
+## Attested verdicts
+
+A Phase 4 verdict is recorded with what it attests to — the artifact's bytes, the rubric that
+judged it, the reviewer and its model, and every dependency the review declares — so a later run
+can reuse it instead of re-reviewing bytes nothing has touched. Coverage is preserved by proof,
+never by omission: **an artifact with no valid attestation is reviewed.** Phase 4 runs this;
+`references/phase-4-review.md` § 4 is where the spawn set comes from.
+
+- **The spec is the one declaration of what a review depends on.** Main Claude writes it in
+  Phase 4 (`.lesson-builder/attest-<run_id>.json` by convention) and all three commands read it,
+  so what was checked and what was attested cannot drift:
+
+  ```jsonc
+  { "reviews": [
+      { "media_id": "m1", "reviewer": "visual-qa-agent", "model": "claude-opus-5",
+        "rubric": "skill:agents/visual-qa-agent.md",
+        "artifacts": ["public/videos/tangent.mp4"],          // optional; see below
+        "deps": ["src/intro-derivatives.jsx#axisTicks", "plan.md"] } ] }
+  ```
+
+- **A ref** is a lesson-relative path, `skill:<path>` for one of the skill's own files (a rubric, a
+  reviewer prompt — they move with the skill, not the lesson, and a record never holds a path that
+  is only true on one machine), or `<file>#<Name>` for one top-level declaration or
+  `<InteractiveDemo title="…">` inside a file, hashed by `lesson-ast.cjs digest`. That last form is
+  what lets a verdict attest to one graph in a shared lesson file: refining one graph does not
+  invalidate the other five, or the demo beside them.
+- **`artifacts` defaults** to the paths `promote` recorded for that media id, from the newest record
+  that has any, and then to the media row's planned `path`. A `keep` medium's bytes therefore come
+  from the run that built it. A review that resolves to no artifact at all is refused (exit 1) —
+  a verdict over no bytes proves nothing, so it is never recorded and never reused.
+- **What makes an attestation invalid**: any ref it names now hashes differently, is gone, or is not
+  in the review any more; a ref the review now names that the verdict never attested to; or the
+  reviewer's model changed. Bytes are re-hashed **from disk**, not read back off the media row, so
+  an artifact edited without its record being updated is never reused.
+- **`unavailable` is not a verdict.** A reviewer that could not run is a coverage gap Phase 4 logs
+  as a finding; `attest record` refuses it (exit 1) rather than let a gap look like proof.
+- **A lesson with no prior attestations behaves exactly as it did before this existed**: every
+  review is in the `review` set, for the reason `no attestation`. That includes a record written
+  before attestations existed — its findings carry no artifact hash, so nothing is reusable from it.
+- **Reuse is visible in the log.** A carried-forward verdict renders as
+  `verdict: <reviewer> <v> — REUSED from run <id>, attested <iso>` under its media row; one this run
+  paid for names the model instead.
+
+Fixture: `tests/attestation/`.
 
 ## The approval gate
 
