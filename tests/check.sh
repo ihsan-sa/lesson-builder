@@ -21,12 +21,17 @@
 # registry — that is the one dependency this gate has beyond node and git, and on a cold cache those
 # five fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
 # Every fixture builds its own temp state and cleans it up; the checkout is not written to.
+# The run points TMPDIR at one directory of its own, so after the last fixture finishes any
+# process still sitting in a directory under it is a proxy or dev server that fixture started
+# and did not stop. That is a failure of this gate, reported with the pid and the command line
+# and then ended — a leaked server holds memory for hours with its cwd already deleted.
 #
 # Fixtures that DO need a browser or a real model are excluded by name below, each printed with
 # the exact command that runs it — an excluded fixture is listed, never silently skipped.
 #
-# Exit code 0 only when every fixture passes. The last line reports "<n> passed, <n> failed",
-# which is what cc-land reads besides the exit code.
+# Exit code 0 only when every fixture passes AND none left a server behind. The last line reports
+# "<n> passed, <n> failed", which is what cc-land reads besides the exit code; a leak counts one
+# failed on its own, over and above the fixtures.
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -95,8 +100,27 @@ if [ ${#selected[@]} -eq 0 ]; then
   exit 2
 fi
 
-LOGS=$(mktemp -d "${TMPDIR:-/tmp}/lesson-gate.XXXXXX")
-trap 'rm -rf "$LOGS"' EXIT
+# One temp root per run, exported as TMPDIR. Every fixture makes its workspace with
+# `mktemp -d "${TMPDIR:-/tmp}/<name>-ws.XXXX"`, so they all land inside it — which is what lets
+# the leak check below be exact rather than a match on fixture names: a process whose cwd is
+# under this root can only have been started by this run. Per run, not per box, so two gates
+# going at once never see each other's (cc-land prepares several PRs at a time).
+RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/lesson-gate.XXXXXX")
+export TMPDIR="$RUN_TMP"
+LOGS="$RUN_TMP/logs"; mkdir -p "$LOGS"
+trap 'rm -rf "$RUN_TMP"' EXIT
+
+# Pids whose working directory is inside this run's temp root. readlink still answers for a
+# directory that has been deleted (it appends " (deleted)"), which is the usual state of a leak:
+# the fixture removed its workspace on the way out and the server it forgot is still in it.
+leaked_servers() {
+  local proc pid cwd
+  for proc in /proc/[0-9]*; do
+    pid=${proc#/proc/}
+    cwd=$(readlink "$proc/cwd" 2>/dev/null) || continue
+    case "$cwd" in "$RUN_TMP"/*) echo "$pid" ;; esac
+  done
+}
 
 echo "gate: ${#selected[@]} deterministic fixtures, node $(node -v), $(git --version)"
 
@@ -135,6 +159,11 @@ for f in "${selected[@]}"; do
   running=$((running + 1))
 done
 wait
+# Read straight after the last fixture returned and before anything is cleaned up: every fixture
+# has finished by here, so there is no live one to mistake for a leak, and the record of one that
+# leaked is still on /proc.
+leaked=$(leaked_servers)
+
 # Reported in table order, not in the order they happened to finish, so two runs read the same.
 passed=0; failed=0; failures=()
 for f in "${selected[@]}"; do
@@ -148,6 +177,23 @@ for name in "${failures[@]}"; do
   echo "=== $name failed (exit $(cat "$LOGS/$name.rc" 2>/dev/null || echo '?')) ==="
   tail -40 "$LOGS/$name.log" 2>/dev/null
 done
+
+# A fixture that boots a proxy or a dev server must stop it. One that does not leaves it orphaned
+# on the box, holding memory, with its cwd deleted along with the workspace that made it — and it
+# never recovers, so the count climbs run after run. Red, with the pid and the command line so the
+# fixture is obvious, and then ended: the box should not carry it either way.
+if [ -n "$leaked" ]; then
+  failed=$((failed + 1))
+  echo
+  echo "=== leaked servers: $(echo "$leaked" | wc -w) process(es) outlived the fixture that started them ==="
+  for pid in $leaked; do
+    printf '  pid %-8s %s\n' "$pid" "$(readlink "/proc/$pid/cwd" 2>/dev/null)"
+    printf '  %-12s %s\n' "" "$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)"
+  done
+  # shellcheck disable=SC2086
+  kill $leaked 2>/dev/null || true
+  echo "  ended them; the gate stays red — the fixture that started one has to stop it."
+fi
 
 echo
 echo "not in this gate — run each by hand:"

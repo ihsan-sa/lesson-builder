@@ -43,10 +43,12 @@ Each case opens its own chat and its own thread; none reads state a previous cas
 | 9 | the fold rules | `chat/turnState.js` run against its own fixtures: a fold that lands while the main tutor is streaming is inserted **before** that bubble (appending past it splits the reply and strands the first half `_streaming`), and is simply appended when nothing is in flight; a restored transcript re-queues only an undelivered fold; a turn settles the folds whose text it actually drained and leaves a fold enqueued after that drain pending for the next turn. |
 | 10 | the fold takes its turn | With a thread turn streaming, `/thread/fold` waits in that thread's queue — no second CLI is spawned on the session — and runs once the turn is cancelled. Two CLIs resuming one session id is what the queue exists to prevent. |
 | 8 | client wiring, source checks | What this suite cannot drive headlessly (no DOM), read out of the workspace's core copy so a refactor that drops it is caught: exactly one `role: "fold"` message per fold, the summary queued onto the **main** session's next turn, the fold offered once, a resumed chat restoring its threads collapsed, thread observations queued against the thread's session, a thread's Stop naming the thread's session, the fold card placed by `insertFoldCard`, the ⤴ dead while the main turn streams, the thread composer gone while a fold runs, the pending fold re-queued on resume and persisted with the transcript, `prompts/thread-system.md` gone, and the system prompt telling the tutor a thread is its own session. |
+| 11 | the dev path carries the thread routes | Under `npm run dev` the browser reaches the proxy only through the Vite middleware in `_lesson-core/server/viteLessonProxy.js`; a route it does not list gets Vite's SPA fallback, and the chat client reads that `index.html` as a failed API call — which is how thread open and fold failed in a dev lesson while every other tutor feature worked. Static, both directions: the middleware's `ROUTES` carries every endpoint `constants/build.js` § `API` calls, and carries nothing no endpoint claims. Live: the real middleware, mounted in front of a stand-in for the fallback, takes `/thread/open` and `/thread/fold` to the running proxy and gets JSON with a handle and a summary — while `/whoami`, a real route on that same proxy that no client endpoint calls, falls through to the fallback instead of being forwarded. |
 
-`--real` (via `REAL_CLAUDE=1`) runs cases 1, 2, 4, 6, 7, 8 and 9 against the real CLI — the ones
-that prove `--fork-session` actually forks. Cases 3, 5 and 10 are fake-only (they need a killable
-tree and a CLI that refuses to fork).
+`--real` (via `REAL_CLAUDE=1`) runs cases 1, 2, 4, 6, 7, 8, 9 and the static half of 11 against the
+real CLI — the ones that prove `--fork-session` actually forks. Cases 3, 5, 10 and the live half of
+11 are fake-only (they need a killable tree, a CLI that refuses to fork, or a fold that costs no
+tokens).
 
 ## Transcripts
 

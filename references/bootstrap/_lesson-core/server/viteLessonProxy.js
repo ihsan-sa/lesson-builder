@@ -31,9 +31,14 @@ import fs from "fs";
 import path from "path";
 import http from "http";
 
-// Every Express route the chat client calls. A route missing here is served
-// Vite's index.html instead, which the client parses as a failed API call.
-const ROUTES = ["/chat", "/upload", "/session", "/sessions", "/commit"];
+// Every Express route the chat client calls, as a prefix: "/chat" also carries
+// /chat/cancel, "/session" the four /session/* calls, "/thread" the two the
+// thread panel makes (/thread/open, /thread/fold). A route missing here is
+// served Vite's index.html instead, which the client parses as a failed API
+// call — how opening or folding a thread failed in dev while every other
+// tutor feature worked. The list is exactly what constants/build.js § API
+// calls, no wider: tests/thread-actors case 11 fails if the two drift apart.
+const ROUTES = ["/chat", "/upload", "/session", "/sessions", "/thread", "/commit"];
 
 // Hop-by-hop headers belong to a single connection and must not be relayed:
 // passing `transfer-encoding` through would fight Node's own framing on the

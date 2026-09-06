@@ -7,6 +7,7 @@
 // failure understood — on its own.
 const { execFileSync } = require("child_process");
 const fs = require("fs");
+const http = require("http");
 const path = require("path");
 const BASE = process.env.PROXY_URL || "http://127.0.0.1:3901";
 const REAL = process.argv.includes("--real");
@@ -445,6 +446,88 @@ const newChat = async () => {
     const done = await Promise.race([foldP, sleep(10000).then(() => null)]);
     ok(done && done.status === 200 && /SUMMARY/.test(done.body.summary || ""), `10: once that turn is over the fold runs (${done && done.status})`);
     await post("/session/close", { sessionId: main, keepContext: false });
+  }
+
+  // --------------------------------------------------------------- case 11
+  // The dev path. Under `npm run dev` the browser never reaches the proxy
+  // directly: every tutor call goes through the Vite middleware in
+  // _lesson-core/server/viteLessonProxy.js, and a route that middleware does
+  // not list falls through to Vite's SPA fallback, which answers index.html —
+  // which the chat client then reports as a failed API call. That is exactly
+  // how opening and folding a thread failed in a dev lesson while every other
+  // tutor feature worked. Brief: "do not widen the dev path beyond the
+  // endpoints the client actually calls; a route nobody calls is not
+  // coverage" — so this case asserts the carried set from both sides.
+  {
+    // Static, both directions. A client endpoint the middleware does not
+    // carry is index.html at runtime; a route no client endpoint claims is a
+    // dev-only path nobody calls.
+    const routesSrc = fs.readFileSync(path.join(CORE_DIR, "server", "viteLessonProxy.js"), "utf8");
+    const routesLit = (routesSrc.match(/const ROUTES = \[([^\]]*)\]/) || [null, ""])[1];
+    const ROUTES = [...routesLit.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    // constants/build.js § API is the client's own list, one entry per call
+    // site: `chat: ${import.meta.env.BASE_URL}chat` and so on, base-relative.
+    const apiSrc = fs.readFileSync(path.join(CORE_DIR, "constants", "build.js"), "utf8");
+    const apiPaths = [...apiSrc.matchAll(/`\$\{import\.meta\.env\.BASE_URL\}([^`]+)`/g)].map((m) => "/" + m[1]);
+    // The middleware's own match, so the two cannot drift on prefix rules.
+    const claims = (r, u) => u === r || u.startsWith(`${r}/`) || u.startsWith(`${r}?`);
+    ok(ROUTES.length > 0 && apiPaths.length > 0, `11: read ${ROUTES.length} dev routes against ${apiPaths.length} client endpoints`);
+    const uncarried = apiPaths.filter((u) => !ROUTES.some((r) => claims(r, u)));
+    ok(uncarried.length === 0, `11: every endpoint the client calls is carried by the dev middleware (${uncarried.join(" ") || "none missing"})`);
+    const unclaimed = ROUTES.filter((r) => !apiPaths.some((u) => claims(r, u)));
+    ok(unclaimed.length === 0, `11: and it carries nothing the client never calls (${unclaimed.join(" ") || "none spare"})`);
+  }
+  if (!REAL) {
+    // Live, against the proxy this fixture is already running: the real
+    // middleware in front of a stand-in for the fallback Vite would apply.
+    const { lessonChatProxy } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "server", "viteLessonProxy.js")).href);
+    const stack = [];
+    lessonChatProxy(LESSON_DIR).configureServer({ middlewares: { use: (fn) => stack.push(fn) } });
+    const FALLBACK = '<!doctype html><html data-stand-in="vite-spa-fallback"></html>';
+    const dev = http.createServer((req, res) => {
+      let i = 0;
+      const next = () => {
+        if (i < stack.length) return stack[i++](req, res, next);
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(FALLBACK);
+      };
+      next();
+    });
+    await new Promise((r) => dev.listen(0, "127.0.0.1", r));
+    const DEV = `http://127.0.0.1:${dev.address().port}`;
+    const devPost = async (route, body) => {
+      const r = await fetch(DEV + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const text = await r.text();
+      let json = null; try { json = JSON.parse(text); } catch (_) {}
+      return { status: r.status, type: (r.headers.get("content-type") || "").split(";")[0], text, json };
+    };
+
+    const main = await newChat();
+    // Kept: /thread/open reaches the backend and answers with a real thread
+    // handle. Before /thread was carried this came back 200 text/html.
+    const opened = await devPost("/thread/open", { sessionId: main, threadId: "t5" });
+    const handle = opened.json && opened.json.threadSessionId;
+    ok(opened.status === 200 && opened.type === "application/json" && !!handle,
+      `11: /thread/open through the dev middleware reaches the backend (${opened.status} ${opened.type})`);
+    // Kept: and so does the fold — the only route by which a thread reaches
+    // the main conversation, and the second half of what was broken.
+    let folded = { status: 0, type: "", json: null };
+    if (handle) {
+      await turn(handle, threadMsg("t5", "seed the fork"));
+      folded = await devPost("/thread/fold", { sessionId: handle });
+    }
+    ok(folded.status === 200 && folded.type === "application/json" && /SUMMARY/.test((folded.json && folded.json.summary) || ""),
+      `11: and /thread/fold does too, with a summary (${folded.status} ${folded.type})`);
+    // Suppressed: /whoami is a real Express route on that same proxy, and no
+    // client endpoint calls it — so the dev path must NOT forward it. A
+    // forwarded request would answer JSON; the fallback answers index.html.
+    const who = await fetch(DEV + "/whoami");
+    const whoBody = await who.text();
+    ok(whoBody === FALLBACK, `11: a backend route the client never calls is not forwarded, it falls through to index.html (${whoBody.slice(0, 48)})`);
+
+    await post("/session/close", { sessionId: main, keepContext: false });
+    if (dev.closeAllConnections) dev.closeAllConnections();
+    dev.close();
   }
 
   console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
