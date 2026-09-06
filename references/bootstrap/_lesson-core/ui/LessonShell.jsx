@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { ShellContext } from "./shellContext.js";
 import { STYLES } from "../chat/chat.css.js";
 import { injectKatexStylesheet } from "../hooks/useKatex.js";
+import { TUTOR_ENABLED } from "../constants/build.js";
 
 // ───────────────────────────────────────────────────────────────
 // LessonShell — the frame every lesson renders inside.
@@ -311,10 +312,11 @@ export function LessonShell({
     })));
   }, [win]);
 
-  // Chatbot gates its own panel out of PROD builds (static hosts have no
-  // proxy). The shell must gate its affordances too, or a deployed lesson ships
-  // a Tutor button that does nothing and a pop-out that opens an empty window.
-  const tutorEnabled = !!tutor && !import.meta.env.PROD;
+  // Chatbot gates its own panel out of any build that carries no tutor (see
+  // constants/build.js). The shell must gate its affordances too, or such a
+  // build ships a Tutor button that does nothing and a pop-out that opens an
+  // empty window.
+  const tutorEnabled = !!tutor && TUTOR_ENABLED;
   const showTutor = chatOpen && tutorEnabled;
   const place = showTutor ? (popupHost ? "popup" : dock) : null;
 
@@ -438,7 +440,11 @@ export function LessonShell({
           </div>
         </div>
 
-        {import.meta.env.PROD && (
+        {/* "a build with nothing extra set emits no tutor UI at all" — so the
+            banner is the inverse of the tutor gate, not a test for a
+            production build: a hosted build is a production build WITH a
+            tutor and must not carry this line. */}
+        {!TUTOR_ENABLED && (
           <div className="prod-banner">
             The AI tutor is only available when running locally. See the repository README for setup instructions.
           </div>

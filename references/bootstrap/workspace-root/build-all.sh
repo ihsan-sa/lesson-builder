@@ -15,6 +15,12 @@
 #     are installed inline. Networked; budget ~2-3 minutes for 30+ lessons.
 #
 # Adding a course/lesson: duplicate a `build_course` call and edit the slugs.
+#
+# The AI tutor: these builds set no VITE_TUTOR, so they ship without one — the
+# static hosts this script targets have no proxy to answer a chat call. A site
+# that DOES run a per-lesson backend adds `VITE_TUTOR=1` to the `vite build`
+# below; the `--base` it already passes is what makes the bundle's chat calls
+# land on `/<code>/<slug>/chat` instead of the site root.
 # ---------------------------------------------------------------------------
 set -e
 

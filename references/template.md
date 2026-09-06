@@ -632,9 +632,9 @@ function LessonApp() {
       onContextMenu={handleContextMenu}
       /* Chatbot mount. All chat UI, session management, thread panel,
          system-prompt construction, and <<EDIT_GRAPH>> dispatch live inside
-         this component (imported from @core). It gates itself out of PROD
-         builds internally (static hosts have no proxy); no per-lesson gating
-         needed. Passed to the shell rather than rendered inline so the shell
+         this component (imported from @core). It gates itself out of any
+         build that does not set VITE_TUTOR (static hosts have no proxy); no
+         per-lesson gating needed. Passed to the shell rather than rendered inline so the shell
          can place it in the side dock, the bottom dock, a floating window, or
          a real browser window. */
       tutor={
@@ -864,7 +864,7 @@ What these model, move by move: the opening sentence is the first content-bearin
 - **No hardcoded hex colors** outside what already exists here. Use CSS variables from `_lesson-core/chat/chat.css.js`.
 - **No emojis** anywhere.
 - **Prose follows `references/teaching-communication.md`**: authored against the topic's `teaching_arc` in the Phase 3 assembly order (moves → explanation units → format → claim-before-support → bridges → definitions at first use → coherence pass → media at the move it serves), opening substantive, one controlling claim per paragraph, causal links in prose (bullet lint: no "because / therefore / however" inside `<ul>` items; procedures as `<ol className="info-list">`; no heading over one short paragraph; no nested lists), symbols defined at first use, `KeyConcept` stores a conclusion or decision rule and never replaces the explanation that earns it, in-domain examples with declared functions over analogies, no historical asides or trivia, the ending synthesizes to the `exit_model` and the `exit_evidence` lands as inline checks. The exemplars above are the model; the Phase 4 reviewer's discourse pass is the enforcement.
-- **Chatbot props**: the full prop list is the mount in the skeleton above. `institution` is the only optional identity prop — a plain string surfaced in the tutor system prompt; include it only when the lesson should name an institution, omit it otherwise. The chat panel and its toggle are PROD-gated inside `Chatbot` itself (dev-only); do not add per-lesson gating.
+- **Chatbot props**: the full prop list is the mount in the skeleton above. `institution` is the only optional identity prop — a plain string surfaced in the tutor system prompt; include it only when the lesson should name an institution, omit it otherwise. The chat panel and its toggle are build-gated inside `Chatbot` itself — dev, or a build with `VITE_TUTOR=1`; do not add per-lesson gating.
 - **Practice problems**: use `PracticeProblem` from `@core` — never a hand-rolled card. Statement visible, solution collapsed (`defaultOpen` false), provenance badge correct (`"official"` only for from-source solutions), `aiSources` populated for derived ones. See the canonical-pattern section in the skeleton.
 - **Desmos embeds** (`<DesmosGraph>`): pass a stable `state` prop — if the parent rebuilds the state object on every render, the calculator remounts on every render too. Wrap in `useMemo` if constructing from component state. The component strips `isPlaying:true` from any supplied state; animation is always student-initiated via Desmos's native per-slider Play button inside the expression panel (there is no custom overlay play button — the embed is student-drag-resizable instead). Confirm `VITE_DESMOS_KEY` is set in the workspace-root `.env.local` before relying on a Desmos embed (the template's `vite.config.js` points `envDir` at the workspace root, so the single root file serves every lesson). **Authoring the `state` object is the error-prone part** — `sliderBounds.{min,max,step}`, `lineWidth`, `lineOpacity`, `pointSize`, `pointOpacity`, `parametricDomain`/`polarDomain` bounds must be STRINGS (`"0.1"`, not `0.1`) or `setState` crashes silently with no on-screen error. Read `references/desmos-schema.md` before writing your first embed.
 - **See also**: `references/phase-3-execution.md`, `references/graph-schema-guide.md`, `references/phase-4-review.md`.

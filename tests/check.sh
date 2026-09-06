@@ -2,8 +2,9 @@
 # The release gate: every fixture under tests/ that needs no model call, no browser and no
 # network. One command, so a change that breaks the run record, staging, worktrees, the
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
-# branch collisions or the proxy's reader cannot land. `cc-land` runs this as a gate on every
-# PR (it treats an executable tests/check.sh as one), and a person runs it the same way.
+# branch collisions, the proxy's reader or the built bundle's tutor gate cannot land. `cc-land`
+# runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a person
+# runs it the same way.
 #
 #   tests/check.sh                 every deterministic fixture, in parallel
 #   tests/check.sh run-manifest …  only the named ones, for iterating on one
@@ -12,12 +13,14 @@
 # seconds one fixture may take before it is killed and counted failed (default 600).
 #
 # Environment: node and git, from a clean checkout. Nothing here calls a model or opens a browser.
-# Four fixtures do need packages: `ast-inventory` and `attestation` install `@babel/parser`,
-# `cancellation` and `thread-actors` copy `_lesson-core` and install its express/cors. All four use
-# `npm install --prefer-offline`, so a WARM npm cache serves them without asking the registry — that
-# is the one dependency this gate has beyond node and git, and on a cold cache those four fetch and
-# the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it. Every fixture
-# builds its own temp state and cleans it up; the checkout is not written to.
+# Five fixtures do need packages: `ast-inventory` and `attestation` install `@babel/parser`,
+# `cancellation` and `thread-actors` copy `_lesson-core` and install its express/cors, and
+# `hosted-build` scaffolds a lesson and installs the template's own devDeps (vite, react, the babel
+# pair; Playwright's browser download is skipped) because it asserts on real `vite build` output.
+# All five use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
+# registry — that is the one dependency this gate has beyond node and git, and on a cold cache those
+# five fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
+# Every fixture builds its own temp state and cleans it up; the checkout is not written to.
 #
 # Fixtures that DO need a browser or a real model are excluded by name below, each printed with
 # the exact command that runs it — an excluded fixture is listed, never silently skipped.
@@ -41,6 +44,7 @@ FIXTURES=(
   "agent-return|node tests/agent-return/check.cjs"
   "branch-collision|node tests/branch-collision/check.cjs"
   "sse-byte-split|node tests/sse-byte-split/check.cjs"
+  "hosted-build|tests/hosted-build/run.sh"
   "cancellation|tests/cancellation/run.sh"
   "thread-actors|tests/thread-actors/run.sh"
 )

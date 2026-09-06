@@ -507,9 +507,17 @@ Skill responsibility stops at `git push`:
 - Log the deploy dashboard URL when known.
 - Deploy-state MCP/API queries are optional, not required.
 
-### Chatbot in prod
+### Chatbot in a deployed build
 
-The chat panel is **PROD-gated out of static builds** — production bundles exclude it entirely, so hosted lessons ship without a chat panel rather than with a disabled one. Static hosts cannot run the Express proxy anyway; users run the chatbot locally via `node server/proxy.js` + `npx vite`. The final report should not flag the missing chat panel as an issue — it is the designed behavior. On Node-capable hosts the gate can be lifted.
+The chat panel is **gated out of a default build** — a plain `vite build` excludes it entirely, so a lesson deployed to a static host ships without a chat panel rather than with a disabled one. Static hosts cannot run the Express proxy anyway; users run the chatbot locally via `node server/proxy.js` + `npx vite`. The final report should not flag the missing chat panel as an issue — it is the designed behavior.
+
+The gate is `TUTOR_ENABLED` in `@core/constants/build.js`: dev, or a build that sets `VITE_TUTOR=1`. Whether the build is a production one is not the question — a lesson hosted on a Node-capable site behind a login is a production build that legitimately has a tutor. Such a site builds each lesson with **both** its base and the flag:
+
+```
+VITE_TUTOR=1 npx vite build --base="/<code>/<slug>/"
+```
+
+The base is what makes it work: every chat call is resolved against `import.meta.env.BASE_URL` at build time, so the bundle calls `/<code>/<slug>/chat` and reaches that lesson's own backend rather than the site root. A build with the flag but no base calls the root and will reach the wrong backend or none. `tests/hosted-build` asserts both bundles.
 
 ## Final report format
 
