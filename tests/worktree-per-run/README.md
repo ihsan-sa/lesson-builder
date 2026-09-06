@@ -19,7 +19,7 @@ repos and prints the path.
 
 | | Case | Must hold |
 | --- | --- | --- |
-| 1 | a whole update run — Phase 0, branch, build, commit, merge, push, prune — against a tree dirtied with an uncommitted edit and an untracked file | every file of the user's working tree hashes the same at the end as at Phase 0, and so do `git status`, HEAD, the branch, the index and the (empty) stash list; the branch is checked out in the worktree and never in their checkout; local `main` is not moved because their checkout holds it, while the merge is published to origin all the same and fast-forwards their `main` when they choose to |
+| 1 | a whole update run — Phase 0, branch, build, commit, merge, push, prune — against a tree dirtied with an uncommitted edit and an untracked file, with the log rendered between the phases as every phase renders it | every file of the user's working tree hashes the same at the end as at Phase 0, and so do `git status`, HEAD, the branch, the index and the (empty) stash list, apart from the rendered `lesson_build.log.md`: it is the only file the run puts in their checkout, and being untracked but not ignored it is the only line it adds to their `git status`; the branch is checked out in the worktree and never in their checkout; local `main` is not moved because their checkout holds it, while the merge is published to origin all the same and fast-forwards their `main` when they choose to |
 | 2 | `get`, `set`, `current`, `stage` and `render` given the worktree's lesson root, which cannot contain the records | each follows the `record-root` pointer to the one record; the staging area and the rendered log stay beside the records, not in the directory that gets pruned; the log names the worktree and carries no stash line; `worktree add` against a worktree, and a pointer naming another worktree, are both refused |
 | 3 | a phase `SIGKILL`ed part-way through writing into the worktree, at three phase boundaries, then the worktree directory deleted outright | the user's tree is byte-identical after every crash; the record still holds the base SHA and the worktree, so `worktree add` returns the same worktree with the half-finished build still in it; with the directory gone but the branch recorded, the resume re-creates it on that branch with the commits it already carried |
 | 4 | a record from the old flow — a real stash of the user's tree, an update branch, `git.stash_oid` set and no `git.worktree` | `set` refuses all three stash fields while `get` still reads them, and `worktree remove` exits 3 because there is no worktree — which is how recovery tells an old record from a new one |
@@ -39,3 +39,8 @@ the local base branch — which no run moves — is the wrong thing for lesson 2
 `.lesson-builder/` is left out of the byte comparison in every case — records, staging and the
 worktree are the run's own, in the directory the lesson's `.gitignore` covers. That the user never
 sees it is asserted directly instead: their `git status` is compared too, and it is unchanged.
+
+The rendered `lesson_build.log.md` is the only other exclusion, named explicitly where case 1
+compares. Each workspace copies the real `references/bootstrap/lesson-template/.gitignore`, which
+does not cover the log, so the fixture cannot hide it: case 1 asserts it is the one file added and
+the one `git status` line gained, and compares every other byte past it.

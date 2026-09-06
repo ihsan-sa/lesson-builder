@@ -132,9 +132,10 @@ An update never builds in the user's checkout. Phase 0 records the base SHA and 
 `run-manifest.cjs worktree add --lesson <lesson_root>` creates a git worktree of the run's own at
 `<lesson_root>/.lesson-builder/worktrees/<run_id>/`, checked out from that SHA, and prints the
 lesson root inside it — which the record keeps as `git.worktree`. Every later phase reads and
-writes there. The user's working tree is never switched, never stashed and never written to: it
-holds whatever it held when the run started, uncommitted and untracked files included, from Phase 0
-to the end of Phase 5.
+writes there. The user's working tree is never switched, never stashed and, apart from the run's own
+gitignored `.lesson-builder/` and the rendered `lesson_build.log.md`, never written to: it holds
+whatever it held when the run started, uncommitted and untracked files included, from Phase 0 to the
+end of Phase 5.
 
 `.lesson-builder/` is in the lesson's `.gitignore`, so the worktree is invisible to the user's
 `git status` — and so the checkout, being of the base SHA, does not contain the run's records

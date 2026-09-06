@@ -161,7 +161,7 @@ Phase 5 — Deploy             Branches on deploy_action. Build verify runs unde
 
 **One run record per run** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`), written and read only through `scripts/run-manifest.cjs`. It holds the run's state: scoping artifact, plan hash and approval, branch, base SHA and build worktree, media manifests with their intents, open findings. Phase 0 opens it (`run-manifest.cjs init`); every later phase writes its fields there and reads them back from there.
 
-**An update builds in a worktree of its own**, checked out from the recorded base SHA at `<lesson_root>/.lesson-builder/worktrees/<run_id>/` — so the user's working tree is never stashed, never switched and never written to, from Phase 0 to the end of Phase 5. `references/run-record.md` § The build worktree.
+**An update builds in a worktree of its own**, checked out from the recorded base SHA at `<lesson_root>/.lesson-builder/worktrees/<run_id>/` — so the user's working tree is never stashed, never switched and, apart from the run's own gitignored `.lesson-builder/` and the rendered `lesson_build.log.md`, never written to, from Phase 0 to the end of Phase 5. `references/run-record.md` § The build worktree.
 
 **One log document** at `<lesson_root>/lesson_build.log.md`, **rendered** from those records (`run-manifest.cjs render`) — not written by hand and never read back as state. It keeps its headings: update runs render a `## Update YYYY-MM-DD (run-id: <hash>)` section per record, and a log written before records existed is kept above the render marker, untouched. Schema, commands and gate outcomes: `references/run-record.md`.
 

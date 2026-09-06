@@ -131,7 +131,10 @@ An update run never builds in the user's checkout. Phase 0 records `git.base_bra
 from that SHA at `<lesson_root>/.lesson-builder/worktrees/<run_id>/`. Everything from Phase 1 on
 reads and writes the lesson root inside it, which the record holds as `git.worktree`. The user's
 working tree is therefore byte-identical from Phase 0 to the end of Phase 5, uncommitted and
-untracked files included: nothing stashes it, nothing switches its branch, nothing writes into it.
+untracked files included, apart from the run's own gitignored `.lesson-builder/` and the rendered
+`lesson_build.log.md`: nothing stashes it, nothing switches its branch, nothing else writes into it.
+The log is the one visible write — it is untracked but not ignored, so it does show in their
+`git status`.
 
 - **It is invisible to the user's `git status`.** `.lesson-builder/` is in the lesson's
   `.gitignore`, so the worktree sits inside a directory git already ignores.

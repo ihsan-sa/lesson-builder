@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Fixture for worktree-per-run: an update run builds in a git worktree of its own, checked out from
- * the base SHA the record holds, and the user's working tree comes out byte-identical.
+ * the base SHA the record holds, and the user's working tree comes out byte-identical apart from
+ * the run's own `.lesson-builder/` and the `lesson_build.log.md` its phases render there.
  *
  *   ./check.cjs            # exit 0 only when every case passes
  *   KEEP=1 ./check.cjs     # keep the temp repos and print their paths
@@ -25,6 +26,7 @@ const { spawnSync } = require('child_process');
 
 const SKILL = path.resolve(__dirname, '..', '..');
 const SCRIPT = path.join(SKILL, 'scripts', 'run-manifest.cjs');
+const TEMPLATE_GITIGNORE = path.join(SKILL, 'references', 'bootstrap', 'lesson-template', '.gitignore');
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'worktree-per-run-'));
 
 let failures = 0;
@@ -69,8 +71,10 @@ function workspace(name) {
   const lesson = path.join(repo, 'MATH101', 'claude_lessons', 'sample-lesson', 'src');
   fs.mkdirSync(lesson, { recursive: true });
   const root = path.dirname(lesson);
-  // The lesson's own .gitignore is what makes the worktree and the records invisible to git.
-  fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\ndist/\n.build-scratch/\n.lesson-builder/\nlesson_build.log.md\n');
+  // The lesson's own .gitignore is what makes the worktree and the records invisible to git — the
+  // real one the template ships, so the fixture cannot ignore more than a real lesson does. It
+  // covers `.lesson-builder/`; it does not cover the rendered `lesson_build.log.md`.
+  fs.copyFileSync(TEMPLATE_GITIGNORE, path.join(root, '.gitignore'));
   fs.writeFileSync(path.join(lesson, 'sample-lesson.jsx'), 'export const TOPICS = ["one"];\n');
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-qm', 'lesson: initial']);
@@ -106,6 +110,24 @@ function snapshot(repo) {
   };
 }
 
+/** Where the phases render the log inside the user's checkout, relative to the repo root. */
+const logPath = (ws) => path.relative(ws.repo, path.join(ws.root, 'lesson_build.log.md'));
+
+/**
+ * A snapshot with the run's own two outputs taken out. `.lesson-builder/` is already out of
+ * `snapshot`, and the lesson's .gitignore covers it. `lesson_build.log.md` is not covered: every
+ * phase re-renders it into the user's lesson root, so it is the one path the run writes there and
+ * the one line it adds to their `git status`. Those two are the whole of the exception the docs
+ * state (README § Key invariants, SKILL.md, `references/run-record.md` § The build worktree);
+ * everything else is byte-identical.
+ */
+function exceptRunOutput(snap, ws) {
+  const log = logPath(ws);
+  const files = { ...snap.files };
+  delete files[log];
+  return { ...snap, files, status: snap.status.split('\n').filter((l) => !l.includes(log)).join('\n') };
+}
+
 /** Phase 0: record the base branch + SHA and open the build worktree. Returns the build lesson root. */
 function phase0(ws, runId, dirty) {
   run(['init', '--lesson', ws.root, '--mode', 'update', '--session-mode', 'headless', '--run', runId]);
@@ -129,6 +151,7 @@ cases['an update run leaves the user’s working tree byte-identical, dirty file
   const before = snapshot(ws.repo);
   ok(before.status.includes('scratch-note.txt') && before.status.includes('sample-lesson.jsx'),
     'the case starts from a genuinely dirty tree');
+  run(['render', '--lesson', ws.root]);  // every phase renders the log; Phases 1-2 here
 
   // Phase 3: the branch is named inside the worktree, never in the user's checkout.
   const wtRepo = git(wt, ['rev-parse', '--show-toplevel']).out;
@@ -140,6 +163,7 @@ cases['an update run leaves the user’s working tree byte-identical, dirty file
   ok(git(ws.repo, ['branch', '--list', 'lesson-update/sample-lesson-20260905']).out.startsWith('+'),
     'the branch is checked out in the worktree (git marks it +), not in the user’s checkout');
   eq(snapshot(ws.repo).branch, 'main', 'the user’s checkout stayed on main the whole way through');
+  run(['render', '--lesson', ws.root]);  // Phase 4
 
   // Phase 5: commit, merge and push, all in the worktree.
   git(wtRepo, ['add', '-A']);
@@ -152,12 +176,18 @@ cases['an update run leaves the user’s working tree byte-identical, dirty file
   ok(held, 'the user’s checkout holds main, so the run must not move that ref');
   git(wtRepo, ['push', '-q', 'origin', `${merge}:main`]);
   run(['set', '--lesson', wt, 'git.commit_sha', merge]);
+  run(['render', '--lesson', wt]);  // Phase 5, given the worktree: the log still lands in ws.root
   eq(run(['worktree', 'remove', '--lesson', ws.root]).code, 0, 'the worktree prunes once its work is committed and kept by a ref');
 
   const after = snapshot(ws.repo);
-  eq(after, before, 'every byte of the user’s working tree, its HEAD, its index and its stash list are as Phase 0 found them');
-  eq(after.status, before.status,
-    'and `git status` still shows exactly the two dirty paths — the worktree it built in is invisible');
+  eq(exceptRunOutput(after, ws), exceptRunOutput(before, ws),
+    'apart from `.lesson-builder/` and the rendered log, every byte of the user’s working tree, its HEAD, its index and its stash list are as Phase 0 found them');
+  eq(Object.keys(after.files).filter((f) => !(f in before.files)), [logPath(ws)],
+    'and that log is the only file the run put in their checkout');
+  ok(after.status.split('\n').some((l) => l.startsWith('?? ') && l.includes(logPath(ws))),
+    'it is untracked and not ignored, which is why the invariant names it');
+  eq(exceptRunOutput(after, ws).status, before.status,
+    'past it `git status` still shows exactly the two dirty paths — the worktree it built in is invisible');
   eq(after.stashes, '', 'nothing was ever stashed');
   eq(git(ws.repo, ['rev-parse', 'refs/heads/main']).out, before.head,
     'local main was not moved under the checkout that holds it');
