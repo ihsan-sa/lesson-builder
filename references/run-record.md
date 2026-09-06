@@ -138,7 +138,7 @@ newest record in that lesson, so a resumed session does not have to carry the id
 | `fail --media-id <id> --reason <text>` | Records a production that produced nothing. Touches no file. |
 | `attest reuse --spec <file> [--at <iso>]` | Decides every review the spec asks for and carries each still-valid prior attestation into this run's record. Prints `{"reuse":[…],"review":[{media_id,reviewer,reason}]}`. See below. |
 | `attest record --spec <file> --media-id <id> --reviewer <name> --verdict pass\|issue\|fail [--at <iso>]` | Records a fresh verdict with what it attests to. Prints the attestation as one JSON line. |
-| `attest verify --spec <file>` | Coverage gate: every review the spec asks for has a valid attestation in **this** run's record. Exits 8 naming the gaps otherwise. |
+| `attest verify --spec <file>` | Coverage gate: every review the spec asks for has a valid attestation in **this** run's record, and the spec names a review of every medium the record carries. Exits 8 naming the gaps otherwise. |
 | `worktree add` | Creates this run's build worktree from `git.base_sha`, records `git.worktree` + `git.worktree_state`, and prints the lesson root inside it. Takes the **user's** lesson root, never the worktree's — given one carrying the pointer it refuses (exit 1). Idempotent: a resumed run calls it again and gets its worktree back. |
 | `worktree remove` | Prunes it. Same root as `add`: a worktree does not remove itself. Exits 7 and removes nothing while it holds uncommitted work or a commit no ref keeps; exits 3 when the record names no worktree. |
 | `render` | Rewrites `lesson_build.log.md` from every record in the lesson. |
@@ -236,7 +236,7 @@ never by omission: **an artifact with no valid attestation is reviewed.** Phase 
       { "media_id": "m1", "reviewer": "visual-qa-agent", "model": "claude-opus-5",
         "rubric": "skill:agents/visual-qa-agent.md",
         "artifacts": ["public/videos/tangent.mp4"],          // optional; see below
-        "deps": ["src/intro-derivatives.jsx#axisTicks", "plan.md"] } ] }
+        "deps": ["src/intro-derivatives.jsx#axisTicks"] } ] }  // deps: bytes that outlive the run
   ```
 
 - **A ref** is a lesson-relative path, `skill:<path>` for one of the skill's own files (a rubric, a
@@ -258,6 +258,14 @@ never by omission: **an artifact with no valid attestation is reviewed.** Phase 
   them out of the next run's issue list and its final report without the reviewer ever running.
   A prior non-pass verdict therefore lands in the `review` set for the reason
   `prior verdict was <v>`, exactly as it would have been re-reviewed before any of this existed.
+- **A dep is bytes that outlive the run.** The plan artifact is not one: it is per-run
+  (`.lesson-builder/runs/<run_id>-plan.md`), so naming it in `deps` would strand every verdict on
+  every run. What the plan changed reaches the review through the medium's own bytes.
+  `references/phase-4-review.md` § 4 is the recipe for which refs to name.
+- **`verify` walks this run's media rows too**, not only the spec: a medium the spec names no
+  review of is a gap like any other, so the coverage the gate proves cannot be narrowed by editing
+  the spec. Two rows have nothing to review and are not gaps — one the plan removes, and one whose
+  production failed leaving nothing promoted (Phase 4 logs that as its own finding).
 - **`unavailable` is not a verdict.** A reviewer that could not run is a coverage gap Phase 4 logs
   as a finding; `attest record` refuses it (exit 1) rather than let a gap look like proof.
 - **A lesson with no prior attestations behaves exactly as it did before this existed**: every

@@ -68,12 +68,13 @@
  * verdict attest to one graph in a shared lesson file. `attest reuse` decides and carries
  * every still-valid prior attestation into this run's record; `attest record` writes a fresh
  * verdict; `attest verify` is the coverage gate — every review the spec asks for must end this run
- * with a valid verdict in this run's record. An attestation is invalid the moment any ref it names
- * hashes differently, is gone, is not in the review any more, or the reviewer model changed, and
- * bytes are re-hashed from disk, so an artifact edited without its record being updated is never
- * reused. Only a `pass` is ever reused: an `issue` or a `fail` stands on findings that are still
- * open, so it is reviewed again rather than carried past this run's issue list. Coverage is
- * preserved by proof, never by omission: no attestation means review.
+ * with a valid verdict in this run's record, and the spec must name a review of every medium the
+ * run ships, so a medium left out of it is a gap rather than an exemption. An attestation is
+ * invalid the moment any ref it names hashes differently, is gone, is not in the review any more,
+ * or the reviewer model changed, and bytes are re-hashed from disk, so an artifact edited without
+ * its record being updated is never reused. Only a `pass` is ever reused: an `issue` or a `fail`
+ * stands on findings that are still open, so it is reviewed again rather than carried past this
+ * run's issue list. Coverage is preserved by proof, never by omission: no attestation means review.
  *
  * Exit codes:
  *   0  ok
@@ -87,8 +88,8 @@
  *      lesson tree is unchanged and the reason is on the media row
  *   7  worktree remove: refused — the worktree holds uncommitted work, or commits no branch keeps;
  *      nothing is removed
- *   8  attest verify: a review the spec asks for has no valid verdict in this run's record; the
- *      gaps are named on stdout
+ *   8  attest verify: a review the spec asks for has no valid verdict in this run's record, or a
+ *      medium the run ships is one the spec names no review of; the gaps are named on stdout
  */
 
 'use strict';
@@ -1050,29 +1051,63 @@ function attestRecord(lessonRoot, runId, flags) {
 }
 
 /**
- * Coverage by proof: every review the spec asks for has a valid attestation in THIS run's record.
- * Exit 8 with the gaps named, so a run cannot reach Phase 5 having quietly reviewed less.
+ * A medium this run ships that the spec names no review of. The spec is hand-written, so without
+ * this walk the gate is only as complete as whoever wrote it: leave a medium out and every review
+ * the spec does name passes, Phase 5 starts, and that medium ends the run with no verdict at all.
+ * Two rows have nothing to review and are not gaps: one the plan removes from the lesson, and one
+ * whose production failed leaving nothing promoted — Phase 4 logs that as a finding of its own.
+ */
+function unreviewedMedia(rec, reviews) {
+  const named = new Set(reviews.map((r) => r.media_id));
+  return rec.media
+    .filter((row) => {
+      if (!row || !row.media_id || named.has(row.media_id)) return false;
+      if (row.intent === 'remove' || row.status === 'failed') return false;
+      // A failed production leaves the previous artifacts on disk, so a row that still holds
+      // promoted bytes is still shipping them and still needs a verdict.
+      if (Array.isArray(row.artifacts) && row.artifacts.length) return true;
+      return !row.artifact_failure;
+    })
+    .map((row) => ({
+      media_id: row.media_id,
+      reviewer: null,
+      reason: 'the spec names no review of this medium',
+    }));
+}
+
+/**
+ * Coverage by proof: every review the spec asks for has a valid attestation in THIS run's record,
+ * and the spec asks for a review of every medium this run ships. Exit 8 with the gaps named, so a
+ * run cannot reach Phase 5 having quietly reviewed less — neither by a verdict it never bought nor
+ * by a medium it never listed.
  */
 function attestVerify(lessonRoot, runId, flags) {
   const reviews = loadSpec(flags);
   const rec = readRecord(lessonRoot, runId);
   const now = attestedNow(lessonRoot, listRecords(lessonRoot), reviews);
-  const gaps = [];
+  const unjudged = [];
   for (const entry of reviews) {
     const row = rec.media.find((m) => m && m.media_id === entry.media_id);
     const a = row && attestationsOf(row).find((x) => x && x.reviewer === entry.reviewer);
     if (!a) {
-      gaps.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: 'no verdict this run' });
+      unjudged.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: 'no verdict this run' });
       continue;
     }
     const stale = staleReason(a, entry, now.get(reviewKey(entry.media_id, entry.reviewer)));
-    if (stale) gaps.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: stale });
+    if (stale) unjudged.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: stale });
   }
-  process.stdout.write(`${JSON.stringify({ run_id: runId, reviews: reviews.length, gaps }, null, 2)}\n`);
+  const unreviewed = unreviewedMedia(rec, reviews);
+  const gaps = unjudged.concat(unreviewed);
+  process.stdout.write(
+    `${JSON.stringify({ run_id: runId, reviews: reviews.length, media: rec.media.length, gaps }, null, 2)}\n`,
+  );
   if (gaps.length) {
-    process.stderr.write(
-      `run-manifest: ${gaps.length} of ${reviews.length} review(s) end this run without a valid verdict\n`,
-    );
+    const said = [];
+    if (unjudged.length)
+      said.push(`${unjudged.length} of ${reviews.length} review(s) end this run without a valid verdict`);
+    if (unreviewed.length)
+      said.push(`${unreviewed.length} medium(s) in this run's record the spec names no review of`);
+    process.stderr.write(`run-manifest: ${said.join('; ')}\n`);
     process.exit(8);
   }
 }

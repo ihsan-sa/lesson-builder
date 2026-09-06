@@ -133,6 +133,18 @@ function produce(root, runId, mediaId, dest, body) {
   if (r.code !== 0) throw new Error(`promote ${dest} failed: ${r.err}`);
 }
 
+/**
+ * Phase 2's plan artifact: a file of this run's own, hashed into the record. Every run writes its
+ * own — a new path and new bytes — which is why a review never names it as a dependency (case 10).
+ */
+function planArtifact(root, runId, body) {
+  const rel = path.join('.lesson-builder', 'runs', `${runId}-plan.md`);
+  fs.writeFileSync(path.join(root, rel), body);
+  const r = run(['plan-hash', '--lesson', root, '--run', runId, '--file', path.join(root, rel)]);
+  if (r.code !== 0) throw new Error(`plan-hash failed: ${r.err}`);
+  return rel;
+}
+
 /** The five media rows the plan carries, written the way Phase 2 writes them. */
 function plannedMedia(root, runId) {
   const rows = [['m1', 'matplotlib', DECAY], ['m2', 'matplotlib', SPECTRUM], ['m3', 'svg', null],
@@ -546,13 +558,99 @@ function caseRender() {
     're-rendering an unchanged record is byte-identical');
 }
 
+// ---------- 10. the teaching spec a review judges against ----------
+
+const PLAN_BODY = 'topic 1 objectives: predict damping.\nteaching_arc: amplitude decays.\n';
+
+function caseTeachingSpecDep() {
+  process.stdout.write('10 the teaching spec is a dep; the per-run plan file is not\n');
+  const { root } = lesson('teaching-spec');
+  // The teaching spec a reviewer judges a medium against, named as a dep: the lesson's own
+  // `TOPIC_CONTEXT`, which is the same ref in every run.
+  const ARC = `${LESSON_JSX}#TOPIC_CONTEXT`;
+  const spec = path.join(root, 'attest-spec-arc.json');
+  const withArc = (extra) => ({
+    reviews: SPEC.reviews.map((r) =>
+      r.media_id === 'm3' ? { ...r, deps: [...r.deps, ARC, ...(extra ? [extra] : [])] } : r),
+  });
+  fs.writeFileSync(spec, `${JSON.stringify(withArc(null), null, 2)}\n`);
+
+  const runA = init(root, '2026-04-01T09:00:00Z');
+  plannedMedia(root, runA);
+  produce(root, runA, 'm1', DECAY, DECAY_V1);
+  produce(root, runA, 'm2', SPECTRUM, SPECTRUM_JSON);
+  planArtifact(root, runA, PLAN_BODY);
+  reviewAll(root, runA, spec, reuse(root, runA, spec, '2026-04-01T09:10:00Z'), '2026-04-01T09:20:00Z');
+  const attested = rowOf(readRecord(root, runA), 'm3').attestations[0].deps;
+  ok(attested.some((d) => d.ref === ARC && /^[0-9a-f]{64}$/.test(d.sha256)),
+    'the verdict attests to the teaching spec it judged against');
+
+  // A second run over an untouched lesson. Phase 2 wrote its own plan file, as every run does.
+  const { runB, decision } = secondRun(root, spec, (id) => planArtifact(root, id, PLAN_BODY));
+  eq(decision.review, [], 'a run of its own plan file strands nothing');
+  eq(pairs(decision.reuse), ALL_REVIEWS, 'every verdict, the ones that name the teaching spec too, is reused');
+  eq(verify(root, runB, spec).code, 0, 'and the run is covered without buying a review');
+
+  // Why the recipe names the teaching spec and not the plan artifact: name the plan file and the
+  // same untouched medium goes back to review, on every run, forever.
+  const planSpec = path.join(root, 'attest-spec-plan.json');
+  const runC = init(root, '2026-04-03T09:00:00Z');
+  plannedMedia(root, runC);
+  const planRel = planArtifact(root, runC, PLAN_BODY);
+  fs.writeFileSync(planSpec, `${JSON.stringify(withArc(planRel), null, 2)}\n`);
+  const naive = reuse(root, runC, planSpec, '2026-04-03T09:10:00Z');
+  eq(pairs(naive.review), ['m3/scientific-accuracy-agent', 'm3/visual-qa-agent'],
+    'the medium whose review names this run\'s plan file is reviewed again');
+  eq(naive.review[0].reason, `dependency ${planRel} is not one the verdict attests to`,
+    'because that file did not exist when the verdict was made');
+}
+
+// ---------- 11. a medium the spec leaves out ----------
+
+function caseSpecDropsMedium() {
+  process.stdout.write('11 a medium the spec names no review of is a gap, not an exemption\n');
+  const { root, spec } = firstRun('spec-drops-medium');
+  const partial = path.join(root, 'attest-spec-no-m5.json');
+  fs.writeFileSync(partial, `${JSON.stringify(
+    { reviews: SPEC.reviews.filter((r) => r.media_id !== 'm5') }, null, 2)}\n`);
+
+  const { runB, decision } = secondRun(root, partial, null);
+  eq(decision.review, [], 'every review the spec does name is reusable');
+  const gate = verify(root, runB, partial);
+  eq(gate.code, 8, 'and the gate refuses anyway');
+  eq(JSON.parse(gate.out).gaps,
+    [{ media_id: 'm5', reviewer: null, reason: 'the spec names no review of this medium' }],
+    'naming the medium the spec dropped, which would otherwise end the run with no verdict at all');
+  ok(/names no review of/.test(gate.err), 'and says so');
+
+  // The way past is the spec that covers the lesson, not the one that covers less.
+  eq(pairs(reuse(root, runB, spec, '2026-04-02T09:20:00Z').reuse), ALL_REVIEWS, 'm5 included');
+  eq(verify(root, runB, spec).code, 0, 'which is what the gate wants');
+
+  // Two rows have nothing to review, and neither is a gap: one the plan takes out of the lesson,
+  // and one whose production produced nothing — Phase 4 logs that as a finding of its own.
+  run(['append', '--lesson', root, '--run', runB, 'media', JSON.stringify(
+    { media_id: 'm6', intent: 'remove', medium: 'svg', path: null, status: 'built' })]);
+  run(['append', '--lesson', root, '--run', runB, 'media', JSON.stringify(
+    { media_id: 'm7', intent: 'add', medium: 'manim', path: 'public/videos/decay.mp4', status: 'built' })]);
+  run(['fail', '--lesson', root, '--run', runB, '--media-id', 'm7', '--reason', 'manim exited 1']);
+  eq(verify(root, runB, spec).code, 0, 'a removed medium and a failed production are not gaps');
+
+  // A medium that shipped, though, is one — whatever the spec says.
+  run(['append', '--lesson', root, '--run', runB, 'media', JSON.stringify(
+    { media_id: 'm8', intent: 'add', medium: 'svg', path: null, status: 'built' })]);
+  const late = verify(root, runB, spec);
+  eq(late.code, 8, 'a medium added after the spec was written still has to be reviewed');
+  eq(pairs(JSON.parse(late.out).gaps), ['m8/null'], 'and is named');
+}
+
 // ---------- run ----------
 
 process.stdout.write(`attestation fixture (${SCRIPT})\n`);
 const started = Date.now();
 for (const c of [caseFirstRun, caseChangedArtifact, caseNonPassVerdict, caseSharedHelper,
   caseOneDeclaration, caseDeletedDependency, caseRubric, caseReviewer, caseTampered,
-  caseLegacyRecord, caseRefusals, caseRender]) c();
+  caseLegacyRecord, caseRefusals, caseRender, caseTeachingSpecDep, caseSpecDropsMedium]) c();
 
 if (process.env.KEEP) process.stdout.write(`\nkept: ${tmpRoot}\n`);
 else fs.rmSync(tmpRoot, { recursive: true, force: true });

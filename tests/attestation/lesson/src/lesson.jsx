@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { InteractiveDemo, LiveGraph } from '@core';
 
+// The shipped teaching spec: what each topic is for and the arc a reviewer judges its media
+// against. It lives in the lesson, so it is the same ref in every run.
+const TOPIC_CONTEXT = {
+  '1': {
+    objective: 'predict how damping changes a waveform',
+    arc: 'amplitude decays; frequency does not',
+  },
+};
+
 const DEFAULT_GRAPH_PARAMS = {
   waveGraph: { amplitude: 1, damping: 0.2 },
   spectrumGraph: { peak: 540 },

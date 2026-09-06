@@ -129,7 +129,7 @@ attestation is reviewed. The mechanism, the record schema and the exit codes are
    |---|---|
    | `rubric` | `skill:agents/<reviewer>.md` — the reviewer's own prompt is the rubric it scores. |
    | `artifacts` | Omit it for a medium with a promoted file (the record already holds the path). Name `<lesson file>#<Component>` for an SVG graph, `<lesson file>#<demo title>` for an interactive demo — the declaration's own bytes, so refining one graph does not invalidate the rest of the file. |
-   | `deps` | Every shared helper, component or style the medium uses — `lesson-ast.cjs inventory`'s `lesson_helpers[].used_by` and the graph rows say which; name each as `<lesson file>#<name>`. Plus the teaching spec the reviewer judges against (`plan.artifact`), and any artifact this one is derived from. |
+   | `deps` | Every shared helper, component or style the medium uses — `lesson-ast.cjs inventory`'s `lesson_helpers[].used_by` and the graph rows say which; name each as `<lesson file>#<name>` — plus any artifact this one is derived from, and the shipped teaching spec (`<lesson file>#TOPIC_CONTEXT`) when the reviewer judges against it. **Not the plan artifact**: it is a per-run file (`.lesson-builder/runs/<run_id>-plan.md`), so its ref and its bytes are new every run and naming it would strand every verdict on every run — and a `<file>#<Name>` ref reaches one topic's `teaching_arc:` block no better, because `lesson-ast.cjs digest` parses JS/JSX, not the markdown plan. A rewritten arc reaches the review through the medium's own bytes anyway: Phase 3 authors from the plan, so the declaration or a helper it uses changes with it. |
 
    Write it to `.lesson-builder/attest-<run_id>.json`. It is gitignored with the rest of the run's
    state, and `reuse`, `record` and `verify` all read it, so what was checked and what was attested
@@ -174,9 +174,10 @@ attestation is reviewed. The mechanism, the record schema and the exit codes are
    run-manifest.cjs attest verify --lesson "<lesson_root>" --spec <spec>
    ```
 
-   Exit 0 means every review the spec asks for ended this run with a valid verdict in this run's
-   record. Exit 8 names the gaps and Phase 5 does not start: a run never reaches deploy having
-   quietly covered less than the spec said it would.
+   Exit 0 means two things: every review the spec asks for ended this run with a valid verdict in
+   this run's record, and the spec names a review for every medium the record carries. Exit 8 names
+   the gaps and Phase 5 does not start — a medium left out of the spec is a gap, not an exemption,
+   so a run never reaches deploy having quietly covered less than its own media rows.
 
 The rendered log shows which verdicts were bought and which were reused, so a reader can see what
 the run paid for. The calibration re-check keeps its meaning: it re-reviews on purpose, so it names
@@ -420,10 +421,12 @@ Phase 4 hands off to Phase 5 when **all three** conditions hold:
 1. Local build verification passed (`build-all.sh` clean AND headless Playwright check clean).
 2. No fundamental-flaw halt fired inside the fix loop.
 3. `run-manifest.cjs attest verify --lesson "<lesson_root>" --spec <spec>` exits 0 — every review
-   the spec asked for ended this run with a valid verdict in this run's record. This is the machine
-   check that coverage did not shrink, and it is the only one: reviewers are now spawned for the
-   `review` set rather than for everything, so nothing else would notice a medium that was neither
-   reviewed nor covered by a verdict that still holds.
+   the spec asked for ended this run with a valid verdict in this run's record, and the spec names a
+   review for every medium the record carries. This is the machine check that coverage did not
+   shrink, and it is the only one: reviewers are now spawned for the `review` set rather than for
+   everything, so nothing else would notice a medium that was neither reviewed nor covered by a
+   verdict that still holds. It walks the record's media as well as the spec, so dropping a medium
+   from the spec is a gap too, not a way past the gate.
 
 If any of them fails, Phase 4 does not hand off. The log captures the failure state, the final report surfaces the blocker to the user, and the branch (update mode) or working tree (new mode) is left in its current state so the user can inspect and either abort or resume manually.
 
@@ -438,6 +441,6 @@ Unresolved = **every issue still open when Phase 4 exits**, whatever its origin:
 - A **blocker** severity issue that the fix loop could not clear (e.g., T1 Babel parse still failing after 3 iterations). Shipping a lesson that does not parse is not an option.
 - A **fundamental flaw** (the fix loop halted because the Phase 2 plan was wrong). This requires re-running Phase 2, not continuing to Phase 5.
 - A **local build verification failure** (either `build-all.sh` or the headless Playwright check fails).
-- **`attest verify` exit 8** — a medium the spec covers ended the run without a valid verdict. Its stdout names each gap and why; the answer is to review those, never to drop them from the spec.
+- **`attest verify` exit 8** — a medium ended the run without a valid verdict, or the spec names no review of it at all. Its stdout names each gap and why; the answer is to review those, never to drop them from the spec.
 
 Major and minor unresolved issues do not halt the handoff by themselves; they are forwarded as known-issue flags. The judgment call of whether the lesson is good enough to ship with known majors belongs to the user, who sees them in the final report and can either approve the deploy or abort.
