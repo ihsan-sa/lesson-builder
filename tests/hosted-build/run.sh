@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hosted-build evidence. Bootstraps a throwaway workspace per
 # references/bootstrap.md, scaffolds the template lesson with this directory's
-# demo body, and builds it THREE ways, then asserts on the built bundles:
+# demo body, and builds it FOUR ways, then asserts on the built bundles:
 #
 #   default   npx vite build                                    (nothing extra set)
 #   hosted    VITE_TUTOR=1 npx vite build --base=/demo101/hosted-demo/
@@ -11,7 +11,7 @@
 #
 # No browser, no proxy, no model: the whole check is `grep` over dist/. See
 # README.md for the case table.
-#   KEEP=1  keep the temp workspace (and its three dist trees) for inspection
+#   KEEP=1  keep the temp workspace (and its four dist trees) for inspection
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); SKILL=$(cd "$HERE/../.." && pwd); B="$SKILL/references/bootstrap"
 

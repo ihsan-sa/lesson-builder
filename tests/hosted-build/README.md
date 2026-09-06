@@ -1,6 +1,6 @@
 # Hosted-build evidence
 
-Proof that one lesson source builds three ways, and that each build's BUNDLE — not its source —
+Proof that one lesson source builds four ways, and that each build's BUNDLE — not its source —
 carries what it should:
 
 - a plain `vite build` still ships no tutor (what the lessons repo's `docs/publishing.md` promises
@@ -17,15 +17,14 @@ production build that legitimately has a tutor.
 
 ```
 tests/hosted-build/run.sh          # part of tests/check.sh
-KEEP=1 tests/hosted-build/run.sh   # keep the workspace and its three dist trees
+KEEP=1 tests/hosted-build/run.sh   # keep the workspace and its four dist trees
 ```
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md`, scaffolds the template
 lesson with `lesson/hosted_demo.jsx` (the shipped placeholder renders `null`, so a real
 `LessonShell` + `Chatbot` body is needed to exercise anything), builds it four times into
 `dist-default/`, `dist-hosted/`, `dist-dev-mode/` and `dist-no-slash/`, and runs `check.cjs` over
-them. No browser,
-no proxy, no model — the whole check is a read of the emitted JavaScript. Exit code 0 only when
+them. No browser, no proxy, no model — the whole check is a read of the emitted JavaScript. Exit code 0 only when
 every case passes.
 
 ## What `check.cjs` asserts
@@ -71,6 +70,6 @@ authoring routes — is a separate milestone. This change is the client only.
 ## Sync to the lessons workspace
 
 `lessons/_lesson-core` must stay byte-identical to `references/bootstrap/_lesson-core`. This change
-adds `constants/build.js` and touches `chat/Chatbot.jsx` and `ui/LessonShell.jsx` — sync all three,
-or the lessons-side hosted build ships no tutor and the dev build calls a `/chat` that a hosted
-lesson's URL prefix never reaches.
+adds `constants/build.js` and touches `chat/Chatbot.jsx`, `ui/LessonShell.jsx` and one comment in
+`chat/chat.css.js` — sync all four, or the lessons-side hosted build ships no tutor and the dev
+build calls a `/chat` that a hosted lesson's URL prefix never reaches.

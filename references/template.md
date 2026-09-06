@@ -634,9 +634,9 @@ function LessonApp() {
          system-prompt construction, and <<EDIT_GRAPH>> dispatch live inside
          this component (imported from @core). It gates itself out of any
          build that does not set VITE_TUTOR (static hosts have no proxy); no
-         per-lesson gating needed. Passed to the shell rather than rendered inline so the shell
-         can place it in the side dock, the bottom dock, a floating window, or
-         a real browser window. */
+         per-lesson gating needed. Passed to the shell rather than rendered
+         inline so the shell can place it in the side dock, the bottom dock,
+         a floating window, or a real browser window. */
       tutor={
         <Chatbot
           // Identity + lesson-scoping
