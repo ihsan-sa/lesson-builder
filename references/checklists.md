@@ -463,7 +463,7 @@ Main Claude runs this after assembly, before Phase 4. Cheap gate catching common
 - [ ] Babel parse passes. This is the coarsest gate and must pass before any other post-splice check runs. Every `lesson-ast.cjs --write` already re-parsed its own result, so what this catches is the edits made by hand.
 - [ ] A fresh `lesson-ast.cjs inventory` agrees with itself: `default_graph_params_keys` equals the `default_params_key` set on `graph_components`, and `graph_schema_keys` equals it too.
 - [ ] Every `<ComponentName />` call site (for lesson-defined components — not `@core` primitives) has a definition, in `graph_components` or `lesson_helpers` of that same inventory.
-- [ ] The splice receipts account for the change: one target per planned action, every receipt `outside_unchanged`, and no receipt without a planned action behind it. The splice knows exactly what it replaced, so a file line-count delta is no longer the evidence.
+- [ ] The splice receipts account for the change: one target per planned action, no receipt without a planned action behind it, and every `declarations.added` name one the plan asked for. The splice knows exactly what it replaced, so a file line-count delta is no longer the evidence.
 - [ ] No stray `<<< >>> ===` conflict markers from any merge or rebase that may have been in-flight.
 - [ ] Every graph component defined in the file has at least one call site — a graph with none is on the `reachability` report.
 - [ ] The `TOPIC_CONTEXT` object has the same number of keys as the `TOPICS` array has entries (quick sanity on T14 before Phase 4 runs the full check).

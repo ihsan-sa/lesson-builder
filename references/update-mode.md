@@ -23,14 +23,15 @@ Update mode operates on an existing lesson rather than building from scratch. Sa
 
 ### Inventory pre-scan (Phase 1 prerequisite)
 
-Before spawning `content-orchestrator-agent`, main Claude runs a deterministic Grep/Glob pre-scan so the orchestrator sees a fixed inventory rather than re-parsing the JSX itself. Capture:
+Before spawning `content-orchestrator-agent`, main Claude runs one command, so the orchestrator sees a fixed inventory rather than re-parsing the JSX itself:
 
-- Graph components: function names, line ranges, `DEFAULT_GRAPH_PARAMS` keys, `GRAPH_SCHEMA` keys.
-- `RefImg` base64 constants: names (without the blob body).
-- Static images (`<img src>`) and videos (`<video src>`) with resolved paths under `<lesson_root>/public/images/` and `<lesson_root>/public/videos/`.
-- Interactive primitives (`<InteractiveDemo title="...">`) with line locations.
-- Manim source scripts globbed at `<lesson_root>/*.py`.
-- Orphan assets: files on disk with no JSX reference (flagged for user action in Phase 2).
+```
+node <skill_root>/scripts/lesson-ast.cjs inventory --lesson <lesson_root>
+```
+
+It Babel-parses `src/<slug>.jsx` and prints the inventory dict: graph components with their line ranges and `DEFAULT_GRAPH_PARAMS` / `GRAPH_SCHEMA` keys, `lesson_helpers` (the lesson's own functions that are not graphs, with the declarations that use each), `RefImg` base64 constants by name without the blob, `<img>` and `<video>` references resolved under `public/`, `<InteractiveDemo>` blocks with their titles and `state_hooks`, the manim sources with the `manim_source_evidence` that paired each to its video, and the orphan files on disk that no reference resolves to. A lesson the parser cannot read halts with the parse error; there is no fallback.
+
+The dict, its field-by-field derivation and the three classifications that changed when this moved off Grep are owned by `references/phase-1-content.md` § Existing-media inventory pre-scan. Do not restate them here.
 
 ## 3. Mode detection decision tree
 

@@ -364,9 +364,14 @@ Rules that hold for every call:
   call site, its `DEFAULT_GRAPH_PARAMS` entry and its `GRAPH_SCHEMA` entry go together. It takes the
   blank line a removed declaration would otherwise leave doubled, and no other whitespace.
 - **`--write` prints a receipt**: the target, the line range it touched, the bytes it removed and
-  inserted, the file size before and after, and `outside_unchanged` — which the script proves by
-  comparing the bytes on both sides of every spliced range, not by asserting it. Log the receipts;
-  they are what § 4.6 checks instead of a whole-file line-count delta.
+  inserted, the file size before and after, the size read back off disk, and `declarations` —
+  `verified_unchanged`, the count of top-level declarations no target named that were re-parsed out
+  of the result and found byte-identical, plus any `changed`, `removed` or `added`. That check runs
+  through the parser and compares declaration source by name, not through the offsets the splice
+  used, so a range that ran into its neighbour surfaces as that neighbour changed or gone. A
+  `changed` or `removed` declaration exits 4 and writes nothing; an `added` one is reported, because
+  a scratch file may legitimately bring a helper with it — check it against the plan. Log the
+  receipts; they are what § 4.6 checks instead of a whole-file line-count delta.
 - Without `--write` the new file goes to stdout and nothing on disk changes, which is how to see a
   splice before taking it.
 
@@ -459,7 +464,7 @@ This is the backstop against silent splice corruption. Run all checks; fail loud
 2. **Call-site to definition**: re-run `lesson-ast.cjs inventory`. Every component the JSX calls must be in `graph_components` or `lesson_helpers`; a call site with no definition is a hard render error. Fail if any lacks one.
 3. **DEFAULT_GRAPH_PARAMS to usage**: `default_graph_params_keys` in the fresh inventory must equal the set of `default_params_key` values on `graph_components`. A key no component reads is an incomplete remove splice.
 4. **GRAPH_SCHEMA to DEFAULT_GRAPH_PARAMS key match**: extract the top-level keys of both and diff. Fail if the sets are not identical. Chatbot `<<EDIT_GRAPH>>` relies on this invariant.
-5. **Splice receipts account for the change**: the splice knows what it replaced, so the file size is not evidence about it. Sum the receipts from § 4.2 and check the total against the change-list: one target per planned action, each `outside_unchanged`, and the bytes in and out of the same order as the scratch files that produced them. A receipt with no planned action behind it, or a planned action with no receipt, is the failure the ±25% line-count heuristic used to approximate.
+5. **Splice receipts account for the change**: the splice knows what it replaced, so the file size is not evidence about it. Sum the receipts from § 4.2 and check the total against the change-list: one target per planned action, the bytes in and out of the same order as the scratch files that produced them, and every `declarations.added` name expected by the plan — a helper a scratch file brought with it is fine when the brief called for one, and is a specialist exceeding its brief when it did not. `changed` and `removed` are always empty in a receipt that exists at all, because a splice that would have produced one exited 4 and wrote nothing. A receipt with no planned action behind it, or a planned action with no receipt, is the failure the ±25% line-count heuristic used to approximate.
 6. **Prose self-check on rewritten topics**: for every `modify` / `add` topic, run the same self-check as new-mode Step 7 (substantive opening, one controlling claim per paragraph, bullet/heading lint, symbols defined, no uncalled-for analogy, no cross-component restatement, ending synthesizes to the exit model, exit evidence present). Untouched `keep` topics are not rewritten to the new rules in this pass — Phase 4 may still flag them, and those findings are logged as known-issues per the keep-media rule.
 
 #### 4.7 GRAPH_SCHEMA backfill if missing

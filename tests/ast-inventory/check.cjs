@@ -79,6 +79,9 @@ function lesson(name) {
 }
 
 const inventory = (root) => JSON.parse(run(['inventory', '--lesson', root]).out);
+// Top-level bindings in lesson/src/sample_lesson.jsx: 16 imported, 8 consts, 7 functions. The
+// receipts count the ones a splice left alone, so this is what they are checked against.
+const TOP_LEVEL_DECLARATIONS = 31;
 const byName = (rows, name) => rows.find((r) => r.name === name);
 
 // ---------- 1. the inventory ----------
@@ -188,7 +191,12 @@ function caseReplace() {
   const receipt = JSON.parse(r.out);
   eq(receipt.targets.map((t) => t.target), ['component:WaveGraph'], 'the receipt names what it hit');
   eq(receipt.targets[0].line_range, range, 'and the range it replaced');
-  eq(receipt.outside_unchanged, true, 'and says nothing outside it moved');
+  eq(receipt.declarations.changed, [], 'no declaration it did not name changed');
+  eq(receipt.declarations.removed, [], 'and none went missing');
+  eq(receipt.declarations.added, [], 'and none appeared');
+  eq(receipt.declarations.verified_unchanged, TOP_LEVEL_DECLARATIONS - 1,
+    'every other top-level declaration was re-parsed out of the result and matched byte for byte');
+  eq(receipt.bytes_on_disk, receipt.bytes_after, 'and the bytes were read back off disk');
 
   // The same file, rebuilt here from the line range and the replacement text. Byte for byte.
   const lines = before.split('\n');
@@ -254,6 +262,61 @@ function caseReplaceDemo() {
   eq(missing.code, 3, 'a title that is not there exits 3');
 }
 
+// ---------- 3c. a scratch file that brings more than the component ----------
+
+function caseScratchBringsMore() {
+  process.stdout.write('3c a scratch file that brings more than the component it replaces\n');
+
+  // A helper alongside the component is legitimate — it is reported, not refused.
+  {
+    const { root, file } = lesson('scratch-extra');
+    const withFile = path.join(root, 'extra.jsx');
+    fs.writeFileSync(withFile, [
+      'function waveEnvelope(x, sigma) {',
+      '  return Math.exp(-((x / sigma) ** 2));',
+      '}',
+      '',
+      'function WaveGraph({ params, mid = "" }) {',
+      '  const p = { ...DEFAULT_GRAPH_PARAMS.waveGraph, ...params };',
+      '  return <div className="eq-block">{waveEnvelope(p.k0, p.sigma)}{mid}</div>;',
+      '}',
+      '',
+    ].join('\n'));
+
+    const r = run(['replace', '--file', file, '--component', 'WaveGraph', '--with', withFile, '--write']);
+    eq(r.code, 0, 'it lands');
+    const decls = JSON.parse(r.out).declarations;
+    eq(decls.added, ['waveEnvelope'], 'and the receipt names the declaration it brought with it');
+    eq([decls.changed, decls.removed], [[], []], 'while nothing else changed or vanished');
+    eq(decls.verified_unchanged, TOP_LEVEL_DECLARATIONS - 1, 'the rest verified byte for byte');
+  }
+
+  // Redeclaring a binding that is already there is not: it would quietly replace lesson code no
+  // target named, which is the whole failure class the declaration check exists to catch.
+  {
+    const { root, file } = lesson('scratch-clobber');
+    const before = fs.readFileSync(file, 'utf8');
+    const withFile = path.join(root, 'clobber.jsx');
+    fs.writeFileSync(withFile, [
+      'function WaveGraph({ params, mid = "" }) {',
+      '  return <div className="eq-block">{axisTicks(0, 1, 1)}{mid}</div>;',
+      '}',
+      '',
+      'function axisTicks(min, max, n) {',
+      '  return [min, max, n];',
+      '}',
+      '',
+    ].join('\n'));
+
+    const r = run(['replace', '--file', file, '--component', 'WaveGraph', '--with', withFile, '--write']);
+    eq(r.code, 4, 'exit 4');
+    ok(/axisTicks/.test(r.err) && /nothing written/.test(r.err),
+      'naming the declaration it would have changed');
+    eq(fs.readFileSync(file, 'utf8'), before, 'and the lesson is byte-identical');
+    ok(!fs.existsSync(`${file}.lesson-ast.part`), 'with no .part file left behind');
+  }
+}
+
 // ---------- 4. a replacement that would not parse ----------
 
 function caseBadReplacement() {
@@ -281,7 +344,13 @@ function caseRemove() {
     '--component', 'SpectrumGraph', '--call-site', 'SpectrumGraph',
     '--params-key', 'spectrumGraph', '--schema-key', 'spectrumGraph', '--write']);
   eq(r.code, 0, 'the remove succeeds');
-  eq(JSON.parse(r.out).outside_unchanged, true, 'the receipt says nothing else moved');
+  const decls = JSON.parse(r.out).declarations;
+  eq([decls.changed, decls.removed, decls.added], [[], [], []],
+    'no declaration outside the four it named changed, vanished or appeared');
+  // The four it may touch: the component, the TOPICS array holding the call site, and the two
+  // objects holding the keys.
+  eq(decls.verified_unchanged, TOP_LEVEL_DECLARATIONS - 4,
+    'and every one of the rest was re-parsed and matched byte for byte');
 
   const after = fs.readFileSync(file, 'utf8');
   ok(!/SpectrumGraph|spectrumGraph/.test(after), 'no mention of the graph or its key survives');
@@ -368,8 +437,8 @@ function caseRefusals() {
 // ---------- run ----------
 
 const started = Date.now();
-for (const c of [caseInventory, caseBackfill, caseReplace, caseReplaceDemo, caseBadReplacement,
-                 caseRemove, caseReachability, caseRefusals]) c();
+for (const c of [caseInventory, caseBackfill, caseReplace, caseReplaceDemo, caseScratchBringsMore,
+                 caseBadReplacement, caseRemove, caseReachability, caseRefusals]) c();
 
 const secs = ((Date.now() - started) / 1000).toFixed(1);
 process.stdout.write(`\n${checks - failures}/${checks} checks passed in ${secs}s\n`);

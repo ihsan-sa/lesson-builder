@@ -24,10 +24,16 @@
  * `remove` takes several and applies them back to front in one pass; `replace` takes one — so a
  * `--call-site` that matches more than one element is a removal, never a replacement.
  * Without `--write` the new file goes to stdout and nothing on disk changes. With `--write` the
- * file is replaced through a `.part` name and a receipt goes to stdout: the ranges touched, the
- * bytes each target removed and inserted, and `outside_unchanged`, which the script proves by
- * comparing the bytes before and after every spliced range. That receipt is what makes a
- * whole-file line-count delta check unnecessary — the splice knows exactly what it replaced.
+ * file is replaced through a `.part` name and the bytes are read back, and a receipt goes to
+ * stdout: the ranges touched, the bytes each target removed and inserted, and `declarations` —
+ * how many top-level declarations no target named were re-parsed out of the result and found
+ * byte-identical, plus any that were `changed`, `removed` or `added`. That check does not go
+ * through the splice's own offset arithmetic: it compares declaration source text by name across
+ * two parses, so a range that ran into its neighbour shows up as that neighbour changed or gone.
+ * A changed or removed declaration no target named exits 4 and writes nothing; an added one is
+ * reported, because a scratch file may legitimately bring a helper with it. That receipt is what
+ * makes a whole-file line-count delta check unnecessary — the splice knows what it replaced, and
+ * says what it left alone.
  *
  * Graph or helper: a graph component is a top-level function whose first parameter is an object
  * pattern carrying `params` — the `({ params, mid = "" })` shape every graph in the template has.
@@ -49,7 +55,8 @@
  *   1  usage or I/O error
  *   2  the lesson does not parse — the message carries the parse error, line and column
  *   3  a target matched nothing; nothing was spliced and the file is untouched
- *   4  the spliced result does not parse; nothing was written
+ *   4  the splice is refused: the result does not parse, or it would have changed or removed a
+ *      top-level declaration no target named. Nothing was written either way.
  */
 
 'use strict';
@@ -666,52 +673,90 @@ function removalRange(code, target) {
 function splice(code, edits) {
   // Back to front, so an earlier edit never moves a later one's offsets.
   const ordered = [...edits].sort((a, b) => b.start - a.start);
-  let outText = code;
-  for (const e of ordered) outText = outText.slice(0, e.start) + e.text + outText.slice(e.end);
-
-  // The claim the receipt makes, proved rather than asserted: every byte outside the spliced
-  // ranges is the byte that was there before.
-  let shift = 0;
-  let cursor = 0;
-  const forward = [...edits].sort((a, b) => a.start - b.start);
-  let outsideUnchanged = true;
-  for (const e of forward) {
-    if (code.slice(cursor, e.start) !== outText.slice(cursor + shift, e.start + shift))
-      outsideUnchanged = false;
-    shift += e.text.length - (e.end - e.start);
-    cursor = e.end;
-  }
-  if (code.slice(cursor) !== outText.slice(cursor + shift)) outsideUnchanged = false;
-  return { text: outText, outsideUnchanged };
+  let text = code;
+  for (const e of ordered) text = text.slice(0, e.start) + e.text + text.slice(e.end);
+  return text;
 }
 
-function finish(flags, file, code, result, receipt, parser) {
-  parse(parserOrDie(parser, result.text, file), result.text, file);
-  if (!result.outsideUnchanged) die('the splice moved bytes outside the ranges it named', 4);
+/** Every top-level binding's own source text, keyed by name. */
+function declarationTexts(ast, code) {
+  const texts = new Map();
+  for (const r of topLevel(ast).rows) texts.set(r.name, code.slice(r.decl.start, r.decl.end));
+  return texts;
+}
+
+/**
+ * The top-level declarations the targets are entitled to change. A target inside one — a demo in
+ * `LessonApp`, a key in `DEFAULT_GRAPH_PARAMS` — names the declaration that contains it.
+ */
+function touchedNames(ast, targets) {
+  const rows = topLevel(ast).rows;
+  const named = new Set();
+  for (const t of targets)
+    for (const r of rows)
+      if (r.decl.start <= t.node.start && t.node.end <= r.decl.end) named.add(r.name);
+  return named;
+}
+
+/**
+ * The check that makes the receipt worth reading, and the one thing here that does not go through
+ * the splice's own offset arithmetic: re-parse the result and compare each top-level declaration's
+ * source text, by NAME, against the declaration of that name in the original parse. A range that
+ * ran into its neighbour shows up as that neighbour changed or gone — which offsets compared
+ * against the offsets that produced them can never show.
+ */
+function verifyDeclarations(beforeTexts, afterAst, afterText, touched) {
+  const after = declarationTexts(afterAst, afterText);
+  const changed = [];
+  const removed = [];
+  const added = [];
+  let verified = 0;
+  for (const [name, text] of beforeTexts) {
+    if (touched.has(name)) continue;
+    if (!after.has(name)) removed.push(name);
+    else if (after.get(name) !== text) changed.push(name);
+    else verified++;
+  }
+  for (const name of after.keys()) if (!beforeTexts.has(name)) added.push(name);
+  return { verified_unchanged: verified, changed, removed, added };
+}
+
+function finish(flags, file, code, text, receipt, parser, before) {
+  const afterAst = parseSpliced(parser, text, file);
+  const declarations = verifyDeclarations(before.texts, afterAst, text, before.touched);
+  const broken = [...declarations.changed, ...declarations.removed];
+  if (broken.length)
+    die(`the splice changed or removed a declaration no target named (${broken.join(', ')}) — nothing written`, 4);
+
   if (!flags.write) {
-    process.stdout.write(result.text);
+    process.stdout.write(text);
     return;
   }
   const part = `${file}.lesson-ast.part`;
-  fs.writeFileSync(part, result.text);
+  fs.writeFileSync(part, text);
   fs.renameSync(part, file);
+  // The bytes the lesson now holds, read back rather than assumed: a write that did not land whole
+  // is the one failure the in-memory checks above cannot see.
+  const onDisk = read(file);
+  if (onDisk !== text)
+    die(`${file} does not hold the bytes the splice produced — the write did not land whole`);
   out(JSON.stringify(Object.assign(receipt, {
     bytes_before: Buffer.byteLength(code),
-    bytes_after: Buffer.byteLength(result.text),
-    outside_unchanged: true,
+    bytes_after: Buffer.byteLength(text),
+    bytes_on_disk: Buffer.byteLength(onDisk),
+    declarations,
   }), null, 2));
 }
 
 // The result is parsed with the same parser the input was, and a failure is the splice's fault:
 // exit 4 with the error, and nothing written.
-function parserOrDie(parser, text, file) {
+function parseSpliced(parser, text, file) {
   try {
-    parser.parse(text, { sourceType: 'module', plugins: ['jsx'] });
+    return parser.parse(text, { sourceType: 'module', plugins: ['jsx'] });
   } catch (e) {
     const at = e.loc ? `${e.loc.line}:${e.loc.column + 1}` : '';
-    die(`the spliced result does not parse (${file} ${at}: ${e.message}) — nothing written`, 4);
+    return die(`the spliced result does not parse (${file} ${at}: ${e.message}) — nothing written`, 4);
   }
-  return parser;
 }
 
 function cmdReplace(flags) {
@@ -726,8 +771,8 @@ function cmdReplace(flags) {
   const t = targets[0];
   const text = read(path.resolve(flags.with)).replace(/\n+$/, '');
   const edit = { start: t.node.start, end: t.node.end, text };
-  const result = splice(code, [edit]);
-  finish(flags, file, code, result, {
+  const before = { texts: declarationTexts(ast, code), touched: touchedNames(ast, targets) };
+  finish(flags, file, code, splice(code, [edit]), {
     file,
     targets: [{
       target: t.label,
@@ -735,7 +780,7 @@ function cmdReplace(flags) {
       bytes_removed: edit.end - edit.start,
       bytes_inserted: Buffer.byteLength(text),
     }],
-  }, parser);
+  }, parser, before);
 }
 
 function cmdRemove(flags) {
@@ -759,7 +804,8 @@ function cmdRemove(flags) {
     bytes_removed: range[1] - range[0],
     bytes_inserted: 0,
   }));
-  finish(flags, file, code, splice(code, edits), { file, targets: rows }, parser);
+  const before = { texts: declarationTexts(ast, code), touched: touchedNames(ast, targets) };
+  finish(flags, file, code, splice(code, edits), { file, targets: rows }, parser, before);
 }
 
 // ---------- shared ----------
