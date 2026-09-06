@@ -292,7 +292,7 @@ The typical update run edits `<lesson_root>/src/<slug>.jsx` plus assets under `<
 Once oriented, dive into the specific phase doc for full procedures:
 
 - **Phase 0** (scoping): `references/phase-0-scoping.md` — update-mode scoping section (mode confirmation, working-tree report, research-depth, scope-of-change, media-hints questions + scoping artifact format), plus the base SHA and the build worktree the run opens.
-- **Phase 1** (content analysis): `references/phase-1-content.md` — update-mode content-orchestration section with the inventory pre-scan Grep patterns and the `light / targeted / full` research_depth branches.
+- **Phase 1** (content analysis): `references/phase-1-content.md` — update-mode content-orchestration section with the inventory pre-scan (one `lesson-ast.cjs inventory` call) and the `light / targeted / full` research_depth branches.
 - **Phase 2** (plan): `references/phase-2-plan.md` — `medium-decider-agent`'s 5-way taxonomy plus the change-list plan artifact format and approval-gate condensed-summary convention.
 - **Phase 3** (execution): `references/phase-3-execution.md` — update-mode assembly section with the in-worktree branch setup, scratch directory layout split by action, per-action specialist inputs, and the 10-step splice algorithm.
 - **Phase 4** (review + fix): `references/phase-4-review.md` — no-grandfathering and regression-watch subsections plus the update-mode change-list sanity grep.

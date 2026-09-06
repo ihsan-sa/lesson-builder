@@ -259,14 +259,8 @@ renders under the Phase 3 heading of the log.
 
 ## 6. Update-mode backfill procedure (main Claude)
 
-1. **Detection** — during the Phase 1 existing-media inventory pre-scan,
-   grep the lesson file for a `GRAPH_SCHEMA` export:
-
-   ```
-   grep -n "const GRAPH_SCHEMA\|export const GRAPH_SCHEMA\|GRAPH_SCHEMA =" src/<slug>.jsx
-   ```
-
-   Absent means the lesson predates the graph-schema feature.
+1. **Detection** — `graph_schema_backfill_needed` in the Phase 1 existing-media inventory. True
+   means the parsed lesson exports no `GRAPH_SCHEMA`, so it predates the graph-schema feature.
 2. **Surface at the approval gate** — Phase 2 writes
    `STRUCTURAL DRIFT REPAIRS: GRAPH_SCHEMA backfill: needed` in the
    change-list. See `references/phase-2-plan.md` line ~212 for the exact

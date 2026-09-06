@@ -122,9 +122,9 @@ references/
   course-curation.md           Course layer: COURSE.md context, committed course materials
                                inbox, chunk triage, batching, consolidate plan format
   phase-0-scoping.md           Scoping interview + scoping artifact format + resource-mode detection
-  phase-1-content.md           Content orchestration + existing-media inventory pre-scan
+  phase-1-content.md           Content orchestration + existing-media inventory pre-scan (parsed)
   phase-2-plan.md              Plan compilation + 5-way media taxonomy + approval gate
-  phase-3-execution.md         New-mode assembly + update-mode splice algorithm
+  phase-3-execution.md         New-mode assembly + update-mode splice targets and algorithm
   phase-4-review.md            Parallel reviews + progress-aware fix loop
   phase-5-deploy.md            Build verify + commit/merge/push + rollback
   template.md                  Lesson JSX skeleton (new-mode starting point) + exposition exemplars
@@ -145,6 +145,10 @@ scripts/run-manifest.cjs       Writes, reads, hashes and renders the run record;
 tests/run-manifest/            Fixture for it: write, read, hash, render, pre-record logs (node only)
 tests/stage-promote/           Fixture for stage-validate-promote: killed and truncated productions,
                                atomic promotion, the manim pipeline on stubs (node only)
+scripts/lesson-ast.cjs         Babel-parses the lesson: the media inventory, the splice of a named
+                               node, and what a removal leaves unreachable
+tests/ast-inventory/           Fixture for it: helper-vs-graph, evidence-based manim pairing, a
+                               byte-exact splice, stranded helpers (node + @babel/parser)
 ```
 
 ## Installation

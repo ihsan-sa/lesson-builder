@@ -321,7 +321,7 @@ git -C "$WT" add <name>.py
 git -C "$WT" add public/videos/<name>.mp4
 ```
 
-Manim source scripts (`.py`) live at the lesson root, not in a `src/manim/` subdirectory. The inventory pre-scan in Phase 1 Globs `<lesson_root>/*.py` to find them.
+Manim source scripts (`.py`) live at the lesson root, not in a `src/manim/` subdirectory. The inventory pre-scan in Phase 1 lists them from there and pairs each with the video it renders.
 
 Do not stage `lesson_build.log.md` or `.lesson-builder/` unless the user explicitly requested tracking them in git (by default the rendered log and the run records it comes from both stay untracked). In the worktree the only thing under `.lesson-builder/` is the pointer back to the record, and the lesson's `.gitignore` already covers it.
 

@@ -1,10 +1,10 @@
 # Phase 3 — Execution
 
-Contents: Shared conventions (scratch dir, the run staging area, private-by-default .gitignore, logging, parallel spawning, prose authoring against the teaching arc) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
+Contents: Shared conventions (scratch dir, the run staging area, private-by-default .gitignore, logging, parallel spawning, prose authoring against the teaching arc) · New-mode execution (steps 1-8) · Update-mode execution (git setup, scratch layout, per-specialist contracts, splice targets, splice algorithm 4.1-4.12) · What not to touch · Handoff to Phase 4.
 
 ## Purpose
 
-Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project files. It is the only phase that modifies `<lesson_root>/` content, hard-branched on mode: **new** spawns specialists in parallel, collects scratch outputs, assembles `src/<slug>.jsx` from `references/template.md`. **Update** names a branch inside the run's own build worktree, then splices specialist outputs into the existing file using edit anchors (function signatures, `DEFAULT_GRAPH_PARAMS` keys, `TOPICS` entries) while preserving `keep` items. Both end with a `.build-scratch/` cleanup and a post-assembly sanity pass.
+Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project files. It is the only phase that modifies `<lesson_root>/` content, hard-branched on mode: **new** spawns specialists in parallel, collects scratch outputs, assembles `src/<slug>.jsx` from `references/template.md`. **Update** names a branch inside the run's own build worktree, then splices specialist outputs into the existing file by parsing it and rewriting named nodes (`scripts/lesson-ast.cjs`) while preserving `keep` items. Both end with a `.build-scratch/` cleanup and a post-assembly sanity pass.
 
 ## Shared conventions (both modes)
 
@@ -333,30 +333,51 @@ Main Claude performs the splice against the **existing** `src/<slug>.jsx`. The a
 1. **Modify-owns-its-content-function.** For any topic marked `modify`, the 4.3 content-function rewrite must already include the topic's FINAL call sites per the approved media actions — apply it before, and instead of, any 4.2 call-site edit inside that topic's content function. For modify topics, 4.2 touches only the component block, `DEFAULT_GRAPH_PARAMS`/`GRAPH_SCHEMA`, and files on disk. (Otherwise a later content rewrite silently erases the call-site splices.) Topics not marked `modify` take 4.2 call-site edits as written.
 2. **Params/schema sub-steps are svg-graph-only.** In the replace/remove/add rules below, the `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA` steps apply only to `svg-graph` items (plus the `const IMG_*` swap for matplotlib-ref). Videos, static images, and interactive demos have no params/schema entries — for them the splice is call-site + file-on-disk only.
 
-#### Edit-anchor reference
+#### Splice-target reference
 
-The splice algorithm relies on pattern-based anchors rather than line numbers, so the algorithm is stable across small file edits between Phase 2 and Phase 3. Anchor patterns:
+The splice names nodes, not line numbers and not patterns: `scripts/lesson-ast.cjs` Babel-parses
+the lesson, finds the node a target names, and rewrites exactly its byte range. That is stable
+across any edit between Phase 2 and Phase 3, and it cannot run past the end of a component the way
+matching braces by hand could.
 
-| Anchor | Regex-ish pattern | Used for |
+```
+node <skill_root>/scripts/lesson-ast.cjs replace --file src/<slug>.jsx <target> --with <scratch file> --write
+node <skill_root>/scripts/lesson-ast.cjs remove  --file src/<slug>.jsx <target> [<target>...] --write
+```
+
+| Target | Names | Used for |
 |---|---|---|
-| Graph function definition | `^function <Name>\(\{ params, mid = "" \}\) \{` | refine / replace / remove of svg-graph components |
-| Lesson-specific helper definition | `^function <Name>\(` (no `{ params, mid }` signature) | lesson-local helpers (e.g., `HWQuestion`) |
-| DEFAULT_GRAPH_PARAMS entry | `  <key>: \{` inside `const DEFAULT_GRAPH_PARAMS = \{` block | parameter add / update / remove |
-| GRAPH_SCHEMA entry | `  <key>: \{` inside `export const GRAPH_SCHEMA = \{` block | schema add / update / remove |
-| matplotlib base64 constant | `^const IMG_<UPPER_NAME> = "` | matplotlib-ref refine |
-| TOPICS array entry | `\{ id: "topic-<N>", tab: "` | topic add / remove / reorder |
-| TOPIC_CONTEXT entry | `  "topic-<N>": \`` or `  "topic-<N>": "` | TOPIC_CONTEXT edit |
-| LESSON_CONTEXT constant | `^const LESSON_CONTEXT = \`` | Phase 1 LESSON_CONTEXT update |
-| Chatbot invocation | `<Chatbot$` (multiline) | props reconcile |
-| InteractiveDemo wrapper | `<InteractiveDemo title="<title>"` | interactive-demo refine / replace |
-| Video source tag | `<video[^>]*src=\{VID \+ "<filename>"\}` | manim replace src update |
-| Header title | `<h1>.*</h1>` inside the `.header` div | new-mode title fill-in, update-mode slug rename guard |
+| `--component <Name>` | the top-level `function <Name>` or `const <Name> = …` declaration, its `export` wrapper included | refine / replace / remove of svg-graph components and of lesson-local helpers |
+| `--call-site <Name>` | every `<Name …/>` element, with its `<LiveGraph>` wrapper when the wrapper holds nothing else | deleting a call site on replace / remove |
+| `--constant <NAME>` | a top-level `const <NAME> = …` declaration | matplotlib base64 constant, `LESSON_CONTEXT`, a missing-`GRAPH_SCHEMA` case |
+| `--demo "<title>"` | the `<InteractiveDemo title="<title>">…</InteractiveDemo>` element | interactive-demo refine / replace |
+| `--params-key <key>` | one entry of `DEFAULT_GRAPH_PARAMS` | parameter add / update / remove |
+| `--schema-key <key>` | one entry of `GRAPH_SCHEMA` | schema add / update / remove |
 
-Use these anchors as Grep patterns when walking the file. If an anchor fails to match (e.g., the file diverged from the template), surface the mismatch instead of blindly substituting.
+Rules that hold for every call:
+
+- **A target that matches nothing exits 3 and writes nothing.** That is the mismatch to surface —
+  the file diverged from the plan — not something to substitute around.
+- **A result that would not parse exits 4 and writes nothing.** The lesson on disk is never left in
+  a state Babel rejects, so a bad scratch file costs a re-spawn, not a repair.
+- **`remove` takes several targets and applies them in one pass**, back to front, so a graph, its
+  call site, its `DEFAULT_GRAPH_PARAMS` entry and its `GRAPH_SCHEMA` entry go together. It takes the
+  blank line a removed declaration would otherwise leave doubled, and no other whitespace.
+- **`--write` prints a receipt**: the target, the line range it touched, the bytes it removed and
+  inserted, the file size before and after, and `outside_unchanged` — which the script proves by
+  comparing the bytes on both sides of every spliced range, not by asserting it. Log the receipts;
+  they are what § 4.6 checks instead of a whole-file line-count delta.
+- Without `--write` the new file goes to stdout and nothing on disk changes, which is how to see a
+  splice before taking it.
+
+Things not spliced by node: the `TOPICS` array and `TOPIC_CONTEXT` entries (§ 4.3 rewrites content
+functions wholesale), the `<Chatbot>` props reconcile (§ 4.8), and files on disk. Those stay
+ordinary edits.
 
 #### 4.1 Read the lesson file into memory
 
-Full file read, no offset. A 2000–3000-line lesson is ~60–100 KB; well within budget. Keep the lesson file text as a single string and record its original line count for the delta log.
+Full file read, no offset. A 2000–3000-line lesson is ~60–100 KB; well within budget. The splice
+does not need the line count: each `--write` receipt says what that call changed.
 
 #### 4.2 Walk the existing media inventory
 
@@ -364,36 +385,24 @@ Iterate over the Phase 2 media inventory in the order the items appear in the JS
 
 **`keep`** (any kind): no edit.
 
-**`refine` svg-graph**: locate the component by function signature anchor:
+**`refine` svg-graph**: `replace --component <FunctionName> --with .build-scratch/refine/<media_id>.jsx`. The scratch file is the COMPLETE declaration — `graphics-agent` preserves the function name exactly (`agents/graphics-agent.md` § Update mode) — and the whole declaration's byte range is what gets rewritten. The name is preserved, so call sites like `<MyGraph params={gp.myGraph} />` stay valid without edits. Also `replace --params-key <key>` if the refine changed parameter shape, and `--schema-key <key>` to match.
 
-```
-function <FunctionName>({ params, mid = "" }) {
-```
-
-Replace the component body (from the opening `{` to the matching closing `}`) with the scratch file contents. Function name is preserved, so existing call sites like `<MyGraph params={gp.myGraph} />` remain valid without edits. Also update `DEFAULT_GRAPH_PARAMS[<key>]` if the refine changed parameter shape, and update `GRAPH_SCHEMA[<key>]` to match.
-
-**`refine` matplotlib-ref**: locate the base64 constant by anchor:
-
-```
-const IMG_<UPPER_NAME> = "iVBOR...";
-```
-
-Replace the string literal with the new base64. No other edits.
+**`refine` matplotlib-ref**: `replace --constant IMG_<UPPER_NAME> --with <the new declaration>`. The scratch file is the whole `const IMG_X = "…";` declaration with the new base64 in it; the name does not change. No other edits.
 
 **`refine` manim-video**: no JSX edit. The `.py` and `.mp4` were overwritten on disk in step 3. Verify the `<video src>` attribute still points at the existing file (grep for the filename in the JSX to confirm).
 
 **`refine` static-image**: same as manim-video — file replaced on disk, no JSX edit unless the file extension changed.
 
-**`refine` interactive-demo**: locate the `<InteractiveDemo title="...">` block in the topic's `content` function and replace the ENTIRE block (opening tag through closing tag) with the scratch file contents — the scratch file is always a complete `<InteractiveDemo>` block with the identical title; never insert it inside the existing wrapper. Apply the `-wiring.md` state-hook changes at the `LessonApp` level.
+**`refine` interactive-demo**: `replace --demo "<title>" --with .build-scratch/refine/<media_id>.jsx`. The target is the element from its opening tag through its closing tag, and the scratch file is always a complete `<InteractiveDemo>` block with the identical title, so the new block takes the old one's place instead of landing inside it. Apply the `-wiring.md` state-hook changes at the `LessonApp` level.
 
 **`replace`** (any kind): more invasive than refine because the function name or component kind may change. The steps dispatch on the OLD and NEW kinds — jsx-kinds (svg-graph, interactive-demo) come from scratch files; manim and web-image come from returned manifests/paths, not scratch:
-1. Remove the old medium: jsx-kinds → delete the component definition (function signature / `<InteractiveDemo title>` anchor) plus, for svg-graph, its `DEFAULT_GRAPH_PARAMS[<old_key>]` and `GRAPH_SCHEMA[<old_key>]` entries; manim → delete the old `.mp4` AND its paired `.py` from disk; web-image → delete the old file from disk.
-2. Delete the old call site (`<Component/>`, `<video src>`, or `<img src>`) in the topic's `content` function.
+1. Remove the old medium: jsx-kinds → one `remove` call naming the definition (`--component <OldName>` or `--demo "<title>"`) and, for svg-graph, `--params-key <old_key> --schema-key <old_key>`; manim → delete the old `.mp4` AND its paired `.py` from disk; web-image → delete the old file from disk.
+2. Delete the old call site: for a component, `--call-site <OldName>` in that same `remove` call, which takes its `<LiveGraph>` wrapper with it when the wrapper holds nothing else; a `<video src>` or `<img src>` goes with the topic's content-function edit.
 3. Insert the new medium: jsx-kinds → the scratch component into the component block (+ wiring note applied at LessonApp level for demos); manim/web-image → nothing to insert in the component block, the asset is already on disk.
 4. Insert the new call site at the same approximate position (component call, `<video src={VID + "<stem>.mp4"}>`, or `<img src>` per the new kind).
 5. svg-graph only: extend `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA` with the new key.
 
-**`remove`** (any kind): delete the component definition, delete the call site, delete the `DEFAULT_GRAPH_PARAMS[<key>]` entry, delete the `GRAPH_SCHEMA[<key>]` entry. For manim-video / static-image, also delete the file from disk.
+**`remove`** (any kind): one `remove` call naming the definition, the call site and, for svg-graph, both keys — `--component <Name> --call-site <Name> --params-key <key> --schema-key <key>`. For manim-video / static-image, also delete the file from disk.
 
 **`add`** (any kind): jsx-kinds → insert the new component from `.build-scratch/add/` (demos: apply the `-wiring.md` hooks at LessonApp level) and add the call site in the correct topic's `content` function; manim/web-image → the asset is on disk per the manifest, add only the `<video>`/`<img>` call site. svg-graph only: extend `DEFAULT_GRAPH_PARAMS` and `GRAPH_SCHEMA`.
 
@@ -403,7 +412,7 @@ Iterate over the Phase 2 topic change-list:
 
 - **`modify`**: update the TOPIC_CONTEXT entry for `topic-N` and rewrite the `content` function body — against the topic's `teaching_arc` when the approved plan gave it one (content-function rewrites do; media-only or equation-fix modifies do not), per "Prose authoring against the teaching arc" above. Preserve the `id`, `tab`, `title`, `subtitle` fields unless Phase 2 explicitly renamed them.
 - **`add`**: insert a new TOPICS array entry at the Phase 2-specified position, add a new TOPIC_CONTEXT entry keyed by the new `topic-N` id, insert any new components the topic references (these come from `.build-scratch/add/`). The new topic's prose is authored against its `teaching_arc` (every `add` topic has one).
-- **`remove`**: delete the TOPICS array entry and the matching TOPIC_CONTEXT entry. **Media referenced only by the removed topic and marked for removal** gets deleted from the component block; **media referenced by multiple topics** is preserved even if the current topic is gone. Track the cross-reference count as you walk. This is a common source of silent breakage.
+- **`remove`**: delete the TOPICS array entry and the matching TOPIC_CONTEXT entry. **Media referenced only by the removed topic and marked for removal** gets deleted from the component block; **media referenced by multiple topics** is preserved even if the current topic is gone. Do not count cross-references by hand — that is the silent breakage this used to cause. Delete the topic, then run § 4.4: what is still called is not on the list, and what the topic was the last user of is, by name.
 - **`reorder`**: reorder the TOPICS array entries in place. TOPIC_CONTEXT keys stay the same (they are IDs, not indices), so no reshuffle there.
 
 **Worked example — remove with media cascade**: user removes `topic-3`, which references `GraphA`, `GraphB`, `GraphC`, `GraphD`. Change-list marks all four for removal. Walking other topics, `GraphC` is also used in `topic-5`. Splice:
@@ -412,11 +421,31 @@ Iterate over the Phase 2 topic change-list:
 3. **Preserve `GraphC`** — def, params, schema, and its `topic-5` call site.
 4. Delete the `GraphC` call site inside `topic-3`.
 
-Post-splice sanity pass verifies `GraphC` still has a definition and call site, and no dangling `gp.graphA|B|D` references remain.
+§ 4.4 then reports nothing for `GraphC` — `topic-5` still calls it — and § 4.6 check 3 confirms no `gp.graphA|B|D` key outlived its component.
 
-#### 4.4 Verify every graph still has a call site
+#### 4.4 Verify nothing was left stranded
 
-Commonly missed. After refine/replace/add/remove, confirm each **final** graph (kept + refined + replaced + added, minus removed) is rendered in at least one topic, wrapped in `<LiveGraph graphKey renderId>`. A component with no call site is invisible to visual QA and escapes review; a call site whose component was removed is a hard render error.
+Commonly missed. Run:
+
+```
+node <skill_root>/scripts/lesson-ast.cjs reachability --file src/<slug>.jsx
+```
+
+It walks from the module's exports and reports every top-level declaration and import nothing
+reaches. After a splice the list must be empty, or every entry on it must be a deliberate keep:
+
+- A **graph with no call site** is unreachable. It is invisible to visual QA and escapes review, so
+  it is either called or removed. (A call site whose component was removed is the other direction
+  and fails the parse or § 4.6 check 2.)
+- A **helper the removed graph was the only user of** is unreachable, and the entry says which
+  removal stranded it — `remove --component <helper>` it. A helper that lost one of two users is
+  not reported, and is left alone. Run this **before** the removal too, with
+  `--removing <Name>[,<Name>]`, to see what a removal will strand before making it.
+- A **dangling import** is reported the same way. `React` never is: the classic JSX transform
+  compiles every element through it whether or not the name appears.
+
+Shadowing is not resolved, so a local binding with the same name as a top-level one counts as a
+use: the report errs toward keeping code, and a false "still used" is the failure it prefers.
 
 #### 4.5 Splice updated LESSON_CONTEXT if Phase 1 changed it
 
@@ -426,16 +455,16 @@ If Phase 1's content analysis updated the `LESSON_CONTEXT` string (e.g., because
 
 This is the backstop against silent splice corruption. Run all checks; fail loudly if any fails. A failure at this step halts Phase 3 and surfaces to the user before Phase 4 runs.
 
-1. **Babel parse**: run `npx babel src/<slug>.jsx --presets @babel/preset-react --no-babelrc` (or the equivalent parse-only call) and check exit code 0. Babel parse catches syntax errors (unclosed JSX, mismatched braces, stray commas from a bad splice).
-2. **Call-site to definition**: Grep every `<GraphName ` call site in the JSX. For each, Grep for a matching `function GraphName` definition. Fail if any call site lacks a def.
-3. **DEFAULT_GRAPH_PARAMS to usage**: for every key in `DEFAULT_GRAPH_PARAMS`, Grep for `gp.<key>` in the TOPICS content functions. Fail if any key is unused. Dead keys indicate an incomplete remove splice.
+1. **Babel parse**: every `lesson-ast.cjs` write already re-parsed the result and refused to write one that does not parse (exit 4), so this is the check on the edits made by hand — the content-function rewrites, the `TOPICS` and `TOPIC_CONTEXT` edits, the props reconcile. `node <skill_root>/scripts/lesson-ast.cjs reachability --file src/<slug>.jsx` parses the file and exits 2 with the line and column if it cannot; `npx babel src/<slug>.jsx --presets @babel/preset-react --no-babelrc` does too.
+2. **Call-site to definition**: re-run `lesson-ast.cjs inventory`. Every component the JSX calls must be in `graph_components` or `lesson_helpers`; a call site with no definition is a hard render error. Fail if any lacks one.
+3. **DEFAULT_GRAPH_PARAMS to usage**: `default_graph_params_keys` in the fresh inventory must equal the set of `default_params_key` values on `graph_components`. A key no component reads is an incomplete remove splice.
 4. **GRAPH_SCHEMA to DEFAULT_GRAPH_PARAMS key match**: extract the top-level keys of both and diff. Fail if the sets are not identical. Chatbot `<<EDIT_GRAPH>>` relies on this invariant.
-5. **Line count delta sanity**: if the delta exceeds ±25% of the original file size, pause and warn. Large deltas are legitimate in full-mode updates, but a 2x blowup usually means a copy-paste duplication.
+5. **Splice receipts account for the change**: the splice knows what it replaced, so the file size is not evidence about it. Sum the receipts from § 4.2 and check the total against the change-list: one target per planned action, each `outside_unchanged`, and the bytes in and out of the same order as the scratch files that produced them. A receipt with no planned action behind it, or a planned action with no receipt, is the failure the ±25% line-count heuristic used to approximate.
 6. **Prose self-check on rewritten topics**: for every `modify` / `add` topic, run the same self-check as new-mode Step 7 (substantive opening, one controlling claim per paragraph, bullet/heading lint, symbols defined, no uncalled-for analogy, no cross-component restatement, ending synthesizes to the exit model, exit evidence present). Untouched `keep` topics are not rewritten to the new rules in this pass — Phase 4 may still flag them, and those findings are logged as known-issues per the keep-media rule.
 
 #### 4.7 GRAPH_SCHEMA backfill if missing
 
-Lessons that predate the graph-schema feature do not export `GRAPH_SCHEMA`. Detect by Grep for `export const GRAPH_SCHEMA`. If missing:
+Lessons that predate the graph-schema feature do not export `GRAPH_SCHEMA`. The Phase 1 inventory says so in `graph_schema_backfill_needed`. If it is true:
 
 1. Generate a `GRAPH_SCHEMA` from the current `DEFAULT_GRAPH_PARAMS` per the derivation rules in `references/graph-schema-guide.md` (boolean default → `{ type: "bool" }`, integer default → `{ type: "int", min, max }`, non-integer number default → `{ type: "float", min, max }` with heuristics for typical ranges, enumerable string default → `{ type: "enum", values: [...] }`, free-form string default → `{ type: "string" }`). The runtime validator at `_lesson-core/chat/graphSchema.js` accepts only these 5 types; `"number"` / `"boolean"` / `"number[]"` will fail with `"unknown schema type"`.
 2. Insert the export right after `DEFAULT_GRAPH_PARAMS` in the component block.
@@ -462,7 +491,7 @@ Read the approved `ORPHAN ASSETS` verdict list from the plan artifact the record
 2. **`remove` verdict**: delete the file. Bash `rm -- <absolute-path>`. Verify the file actually existed before the call (a missing file is a trace-worthy anomaly, not a failure — log `Orphan already absent: <path>` and move on). After removal, confirm via `ls` that the file is gone.
 
 Edge cases:
-- **Orphan is a manim `.py` source** under `<lesson_root>/` root (not `public/videos/`): removing the `.py` is safe as long as the paired `.mp4` is also being removed or was never present. If the `.mp4` exists and is referenced in JSX, the `.py` is NOT an orphan — the inventory pre-scan in Phase 1 would have paired them. Trust the pre-scan; do not re-verify pairing here.
+- **Orphan is a manim `.py` source** under `<lesson_root>/` root (not `public/videos/`): removing the `.py` is safe as long as the paired `.mp4` is also being removed or was never present. A `.py` whose `.mp4` exists and is referenced in the JSX is not on this list at all: the Phase 1 pre-scan pairs on evidence — matching stems, a `class <Name>(...)` in the source that normalises to the video's stem, or the video's filename in the source text — and records which on the video row as `manim_source_evidence`. The pairing was verified, not assumed from a stem, so there is nothing to re-check here.
 - **Orphan is referenced by a soon-to-be-added topic**: impossible by construction. The Phase 1 inventory marks orphans as "no JSX reference in the current file"; Phase 3 add splices happen earlier in step 4 than this cleanup step, so any file that a new topic pulls in is no longer an orphan by this point.
 - **File is read-only or locked**: halt the cleanup step, log `Orphan cleanup blocked: <path> — <error>`, and surface at Phase 5 as an unresolved item. Do not retry; do not bypass with force flags.
 

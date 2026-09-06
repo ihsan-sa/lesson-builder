@@ -413,7 +413,7 @@ Update mode only. Run before scoping closes. Failures surface at mode confirmati
 - [ ] Either `CLAUDE.md` or the lesson JSX header identifies the course code unambiguously. Ambiguous course codes block scoping auto-fill.
 - [ ] Git working tree state is recorded, whatever it is. Nothing is stashed and nothing is discarded: the run builds from `git.base_sha` in its own worktree, so a dirty tree is reported (those paths are not in what the run builds from) and the run continues.
 - [ ] `from "@core"` imports are present in `src/<slug>.jsx`. If absent, the lesson predates the `_lesson-core/` migration and still inlines the old chat code. Update mode must halt with a migration-first warning. Narrow opt-in bypass ("update without migration") is allowed only with explicit user acknowledgement during scoping confirmation.
-- [ ] `GRAPH_SCHEMA` is present in the lesson file. If absent, the lesson predates the graph-schema feature; schedule a backfill in Phase 3 per `references/graph-schema-guide.md`. Do not halt; log as a drift-repair item.
+- [ ] `GRAPH_SCHEMA` is present in the lesson file (the inventory's `graph_schema_backfill_needed` is false). If absent, the lesson predates the graph-schema feature; schedule a backfill in Phase 3 per `references/graph-schema-guide.md`. Do not halt; log as a drift-repair item.
 - [ ] `test_lesson.cjs` exists in the lesson root. If absent, restore it from the canonical copy at `references/bootstrap/lesson-template/test_lesson.cjs` and log the restore as a drift-repair item; do not splice a shim from a sibling lesson.
 - [ ] Branch name `lesson-update/<slug>-YYYYMMDD` does not already exist locally. If it does, increment with a suffix (`-a`, `-b`) or ask the user to confirm a rerun. Collision handling must be deterministic so the Phase 5 merge target is unambiguous.
 - [ ] No slug rename requested (disallowed — slug renames affect branch name, commit message, hosted deploy path, and `vite.config.js base=`; handle as "create new + delete old" flow, not as an update).
@@ -440,17 +440,17 @@ Course-level restructures only. Run once, before the consolidation plan is compi
 
 Update mode only. Run after every splice edit and as final sweep before Phase 4. Pairs with the assembly algorithm in `references/phase-3-execution.md`.
 
-- [ ] Every `refine` component has the **same function name** as the existing component it replaces. Function-name anchoring is how the splice finds the edit site; a rename breaks the splice silently.
-- [ ] Every `remove` component has no remaining call sites in the JSX after splicing. Grep for `<ComponentName` and confirm zero hits. Dangling call sites become reference errors at runtime.
+- [ ] Every `refine` component has the **same function name** as the existing component it replaces. The name is how `lesson-ast.cjs replace --component` finds the declaration; a rename makes it exit 3 and write nothing, which is the loud version of what used to break silently.
+- [ ] Every `remove` component has no remaining call sites in the JSX after splicing — `remove --component <Name> --call-site <Name>` in one call is what guarantees it. Dangling call sites become reference errors at runtime.
 - [ ] `DEFAULT_GRAPH_PARAMS` keys match the current graph component set one-to-one. A removed graph must also have its `DEFAULT_GRAPH_PARAMS` entry removed; an added graph must have an entry inserted.
 - [ ] `GRAPH_SCHEMA` keys match `DEFAULT_GRAPH_PARAMS` keys one-to-one. Drift between the two is the most common Phase 4 failure after a splice.
-- [ ] No dangling imports or unused helpers after splicing. If a removed graph was the only user of a utility helper (e.g., `computeBandGap`), the helper should also be removed.
+- [ ] `lesson-ast.cjs reachability --file src/<slug>.jsx` reports nothing, or nothing that is not a deliberate keep. It names the dangling imports and the helpers a removal stranded — a helper whose only user was a removed graph is on it; one that lost one of two users is not.
 - [ ] Every final graph (new, refined, retained) has a live call site in some topic. A graph component with no call site will not show up in visual-QA screenshots and will silently escape Phase 4 review.
-- [ ] `TOPICS` array order matches the declared Phase 2 plan. A `reorder` action in the change-list must actually land in the final file; Grep-verify.
+- [ ] `TOPICS` array order matches the declared Phase 2 plan. A `reorder` action in the change-list must actually land in the final file.
 - [ ] `TOPIC_CONTEXT` keys match `TOPICS` ids one-to-one after all additions, removals, and reorders. This is a post-splice re-check of the T14 invariant.
 - [ ] Manim `<video src=...>` paths resolve to actual files in `public/videos/`. A refined manim component that overwrote the `.mp4` at the same path will still pass this check; a replaced manim with a new filename requires the src to be updated.
 - [ ] `<img src=...>` paths resolve to actual files in `public/images/`. Same logic as manim: refine preserves the path, replace requires an update.
-- [ ] `<InteractiveDemo title>` values are preserved for `refine` actions. The `title` is used as the identifier in the media inventory, so renaming it breaks the refine → replace → remove audit trail.
+- [ ] `<InteractiveDemo title>` values are preserved for `refine` actions. The `title` identifies the demo in the media inventory and is what `replace --demo` matches, so renaming it breaks the refine → replace → remove audit trail.
 - [ ] LESSON_CONTEXT spliced update (if Phase 1 changed it) lands inside the existing constant declaration, not as a duplicate constant.
 - [ ] `<Chatbot>` props reconcile check: `courseCode`, `courseName`, `lessonContext`, `topicContext`, `lessonFile`, `graphSchema`, `graphRenderId` all present and non-stale. Update if a `courseName` was previously missing or `graphSchema` was just backfilled.
 
@@ -460,13 +460,12 @@ Update mode only. Run after every splice edit and as final sweep before Phase 4.
 
 Main Claude runs this after assembly, before Phase 4. Cheap gate catching common splice corruption. Failures halt and fix in-place without review agents.
 
-- [ ] Babel parse passes. This is the coarsest gate and must pass before any other post-splice check runs.
-- [ ] Grep count: every `DEFAULT_GRAPH_PARAMS[<key>]` access has a matching key definition in the `DEFAULT_GRAPH_PARAMS` object literal.
-- [ ] Grep count: every `<ComponentName />` call site (for lesson-defined components — not `@core` primitives) has a matching `function ComponentName` definition in the file.
-- [ ] Grep count: every `GRAPH_SCHEMA[<key>]` access has a matching key in the `GRAPH_SCHEMA` object literal.
-- [ ] File line-count delta matches expected splice magnitude. Compute `abs(lines_after - lines_before)`, compare to the declared change-list (roughly: refines are small deltas, adds are positive, removes are negative). A wild delta (e.g., ±500 lines for a single `refine`) indicates runaway edits and should halt the pipeline.
+- [ ] Babel parse passes. This is the coarsest gate and must pass before any other post-splice check runs. Every `lesson-ast.cjs --write` already re-parsed its own result, so what this catches is the edits made by hand.
+- [ ] A fresh `lesson-ast.cjs inventory` agrees with itself: `default_graph_params_keys` equals the `default_params_key` set on `graph_components`, and `graph_schema_keys` equals it too.
+- [ ] Every `<ComponentName />` call site (for lesson-defined components — not `@core` primitives) has a definition, in `graph_components` or `lesson_helpers` of that same inventory.
+- [ ] The splice receipts account for the change: one target per planned action, every receipt `outside_unchanged`, and no receipt without a planned action behind it. The splice knows exactly what it replaced, so a file line-count delta is no longer the evidence.
 - [ ] No stray `<<< >>> ===` conflict markers from any merge or rebase that may have been in-flight.
-- [ ] Every graph component defined in the file has at least one call site, by Grep-count match.
+- [ ] Every graph component defined in the file has at least one call site — a graph with none is on the `reachability` report.
 - [ ] The `TOPIC_CONTEXT` object has the same number of keys as the `TOPICS` array has entries (quick sanity on T14 before Phase 4 runs the full check).
 
 ---
@@ -475,7 +474,7 @@ Main Claude runs this after assembly, before Phase 4. Cheap gate catching common
 
 - Graph schema derivation: `references/graph-schema-guide.md`
 - Course layer (COURSE.md, materials inbox, chunk triage, consolidate): `references/course-curation.md`
-- Phase 3 execution (splice algorithm): `references/phase-3-execution.md`
+- Phase 3 execution (splice targets and algorithm): `references/phase-3-execution.md`
 - Phase 4 review (parallel reviews, fix loop): `references/phase-4-review.md`
 - Shared chat + UI core: `<workspace_root>/_lesson-core/`
 
