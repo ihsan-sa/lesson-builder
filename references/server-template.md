@@ -234,7 +234,7 @@ Ships at `references/bootstrap/lesson-template/CLAUDE.md`, placeholder-substitut
 - `## How to Run` — `npm run proxy`, then `npm run dev`.
 - `## Key Files` — lesson JSX, `main.jsx`, proxy shim, `test_lesson.cjs`, `index.html`.
 - `## Testing` — `npm test`.
-- `## Author/tester notes` — the Ctrl+Click context gate (plain clicks intentionally inert), the chat panel rendering only in dev (`import.meta.env.PROD` gates it out of static builds), model/effort pickers in the chat header.
+- `## Author/tester notes` — the Ctrl+Click context gate (plain clicks intentionally inert), the chat panel rendering in dev and in a `VITE_TUTOR=1` build only (`TUTOR_ENABLED` in `@core/constants/build.js` gates it out of a plain `vite build`, which static hosts run), model/effort pickers in the chat header.
 - `## Tabs` and `## Graphs` — shipped empty; the lesson build fills them in (one line per `TOPICS` entry / graph component).
 
 Ownership rule: the template owns the scaffolding above; the build owns the `## Tabs` / `## Graphs` listings. Anything else a human adds later (per-lesson gotchas, graph parameter tables, notes) is authored content — preserve it on updates.

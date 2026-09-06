@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "../constants/models.js";
+import { TUTOR_ENABLED, API } from "../constants/build.js";
 import { _cs, _ss, makeTab } from "./chatState.js";
 import { ChatBubble } from "./ChatBubble.jsx";
 import { ThreadPanel } from "./ThreadPanel.jsx";
@@ -383,7 +384,7 @@ export function Chatbot({
       for (const tab of currentTabs) {
         if (!tab.sessionId) continue;
         const blob = new Blob([JSON.stringify({ sessionId: tab.sessionId, keepContext: tab.keepContext })], { type: "application/json" });
-        navigator.sendBeacon("/session/close", blob);
+        navigator.sendBeacon(API.sessionClose, blob);
         obsQueue.cleanup(tab.sessionId);
       }
     };
@@ -400,7 +401,7 @@ export function Chatbot({
     const tab = tabsRef.current.find(t => t.id === tabId);
     const iso = tab ? tab.isolated : true;
     try {
-      const res = await fetch("/session/init", {
+      const res = await fetch(API.sessionInit, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, effort, isolated: iso, system: makeSystemPrompt(iso) }),
@@ -423,7 +424,7 @@ export function Chatbot({
     const newIsolatedState = !activeTab.isolated;
     updateTab(tabId, { sessionStatus: "loading", messages: [...activeTab.messages, { role: "assistant", content: `Transferring to ${newIsolatedState ? "isolated" : "shared memory"} mode...` }] });
     try {
-      const res = await fetch("/session/transfer", {
+      const res = await fetch(API.sessionTransfer, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: activeTab.sessionId, model, effort, isolated: newIsolatedState, system: makeSystemPrompt(newIsolatedState) }),
@@ -445,7 +446,7 @@ export function Chatbot({
       return;
     }
     try {
-      const res = await fetch("/session/open", {
+      const res = await fetch(API.sessionOpen, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: sid }),
@@ -484,16 +485,17 @@ export function Chatbot({
 
   const fetchSessions = useCallback(async () => {
     try {
-      const res = await fetch("/sessions");
+      const res = await fetch(API.sessions);
       const data = await res.json();
       return data.sessions || [];
     } catch (_) { return []; }
   }, []);
 
   useEffect(() => {
-    // PROD gate: the static deploy has no proxy, so never fire /sessions or
-    // /session/init there (they only 404 and spam the console).
-    if (import.meta.env.PROD) return;
+    // Tutor gate (constants/build.js): a build with no tutor has no backend to
+    // talk to, so never fire /sessions or /session/init there -- they only 404
+    // and spam the console. A hosted build DOES have one and does run this.
+    if (!TUTOR_ENABLED) return;
     if (initStartedRef.current) return;
     initStartedRef.current = true;
 
@@ -577,7 +579,7 @@ export function Chatbot({
     if (tab && tab.sessionId) {
       try {
         const blob = new Blob([JSON.stringify({ sessionId: tab.sessionId, keepContext: tab.keepContext })], { type: "application/json" });
-        navigator.sendBeacon("/session/close", blob);
+        navigator.sendBeacon(API.sessionClose, blob);
       } catch (_) {}
       obsQueue.cleanup(tab.sessionId);
     }
@@ -678,7 +680,7 @@ export function Chatbot({
   // 409 just means the turn finished on its own first.
   const cancelTurn = (sessionId) => {
     if (!sessionId) return;
-    fetch("/chat/cancel", {
+    fetch(API.chatCancel, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       keepalive: true,
@@ -703,7 +705,7 @@ export function Chatbot({
     if (!activeTab) return;
     cancelRequest();
     if (activeTab.sessionId) {
-      fetch("/session/close", {
+      fetch(API.sessionClose, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: activeTab.sessionId, keepContext: false }),
@@ -781,7 +783,7 @@ export function Chatbot({
       let attachmentNote = "";
       if (currentAtts.length > 0) {
         try {
-          const uploadRes = await fetch("/upload", {
+          const uploadRes = await fetch(API.upload, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ files: currentAtts.map(a => ({ name: a.name, type: a.type, data: a.data })) }),
@@ -815,7 +817,7 @@ export function Chatbot({
       const tabContext = `${observations}${activeCtx}\n`;
       const messageText = tabContext + userContent + attachmentNote;
       const reqBody = { sessionId: tab.sessionId, message: messageText, model: model, effort: effort };
-      const res = await fetch("/chat", {
+      const res = await fetch(API.chat, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
@@ -1042,7 +1044,7 @@ export function Chatbot({
     const inFlightKey = `${tab.id}:${msgIdx}`;
     setCommitInFlight(inFlightKey);
     try {
-      const res = await fetch("/commit", {
+      const res = await fetch(API.commit, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1177,7 +1179,7 @@ export function Chatbot({
     const th = findThread(tabId, msgIdx, threadId);
     if (th?.sessionId) {
       obsQueue.cleanup(th.sessionId);
-      fetch("/session/close", {
+      fetch(API.sessionClose, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: th.sessionId, keepContext: false }),
@@ -1253,7 +1255,7 @@ export function Chatbot({
   // already knows, so a thread re-opened after a reload keeps its session.
   const openThreadSession = async (mainSessionId, threadId) => {
     try {
-      const res = await fetch("/thread/open", {
+      const res = await fetch(API.threadOpen, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: mainSessionId, threadId }),
@@ -1283,7 +1285,7 @@ export function Chatbot({
     }
     if (currentAtts.length > 0) {
       try {
-        const uploadRes = await fetch("/upload", {
+        const uploadRes = await fetch(API.upload, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ files: currentAtts.map(a => ({ name: a.name, type: a.type, data: a.data })) }),
@@ -1364,7 +1366,7 @@ export function Chatbot({
     };
 
     try {
-      const post = (sid) => fetch("/chat", {
+      const post = (sid) => fetch(API.chat, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
@@ -1544,7 +1546,7 @@ export function Chatbot({
     if (!tab || !tab.sessionId || !th || !th.sessionId || th.folded || th.loading || th.folding) return;
     updateThread(tabId, msgIdx, threadId, { folding: true });
     try {
-      const res = await fetch("/thread/fold", {
+      const res = await fetch(API.threadFold, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: th.sessionId }),
@@ -1640,14 +1642,15 @@ export function Chatbot({
     <>
       {/* The round toggle only exists without a shell; with one, the top bar's
           Tutor button is the affordance. */}
-      {!shell && !open && !import.meta.env.PROD && <button className="chat-toggle" onClick={() => setOpen(true)} title="Open the tutor">
+      {!shell && !open && TUTOR_ENABLED && <button className="chat-toggle" onClick={() => setOpen(true)} title="Open the tutor">
         {"?"}
         {contextSnippets.length > 0 && <span className="chat-badge">{contextSnippets.length}</span>}
       </button>}
-      {/* PROD gate: the static deploy has no proxy, so the whole panel is
-          withheld (not just the toggle button) — otherwise Ctrl+/ in a lesson
-          could open a chat that can only ever error. */}
-      {!import.meta.env.PROD && <div
+      {/* Tutor gate: a build with no tutor withholds the whole panel, not just
+          the toggle button — otherwise Ctrl+/ in a lesson could open a chat
+          that can only ever error. TUTOR_ENABLED is a build-time constant, so
+          everything below is dropped from that bundle rather than hidden. */}
+      {TUTOR_ENABLED && <div
           className={`chat-panel chat-panel-${dock} ${dock === "float" && expanded ? "chat-panel-expanded" : ""} ${dragOver ? "chat-panel-dragover" : ""}`}
           style={{ ...(panelStyle || {}), ...(!open ? { display: "none" } : {}) }}
           onDragOver={(e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); setDragOver(true); } }}

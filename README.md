@@ -149,6 +149,10 @@ scripts/lesson-ast.cjs         Babel-parses the lesson: the media inventory, the
                                node, and what a removal leaves unreachable
 tests/ast-inventory/           Fixture for it: helper-vs-graph, evidence-based manim pairing, a
                                byte-exact splice, stranded helpers (node + @babel/parser)
+tests/hosted-build/            Fixture for the build-time tutor gate: one lesson built four ways
+                               (default, hosted under a --base with VITE_TUTOR=1, dev-mode, and a
+                               base missing its trailing slash), asserted against the emitted
+                               bundles (node + a lesson npm install)
 tests/check.sh                 The release gate: one command that runs every fixture needing no
                                model call, no browser and no network, in parallel, and prints the
                                excluded ones with the command that runs each. Non-zero if any fails
@@ -166,7 +170,7 @@ Claude Code auto-discovers skills there. Trigger by asking Claude to create, bui
 
 A sibling `_lesson-core/` module is required at the workspace root. If it does not already exist, the skill installs it from `references/bootstrap/_lesson-core/` before Phase 0 (see `references/bootstrap.md`). `VITE_DESMOS_KEY` in a workspace-root `.env.local` is required for any lesson that embeds `<DesmosGraph/>` or the chatbot `<<DESMOS>>` protocol; obtain a free educational key at https://www.desmos.com/api. Each lesson's `vite.config.js` points `envDir` at the workspace root, so that single `.env.local` serves every lesson.
 
-The embedded chatbot requires the `claude` CLI on `PATH` (the Express proxy spawns it per chat session; no API key is stored in the workspace). The chat panel renders in dev only — static production builds ship without it.
+The embedded chatbot requires the `claude` CLI on `PATH` (the Express proxy spawns it per chat session; no API key is stored in the workspace). The chat panel renders in dev, and in a build that sets `VITE_TUTOR=1` (a hosted site — see `references/phase-5-deploy.md`); a plain `vite build` ships without it.
 
 ## License
 

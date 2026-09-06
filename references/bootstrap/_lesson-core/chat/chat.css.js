@@ -1363,7 +1363,7 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 .chat-help-close { position: absolute; top: 12px; right: 14px; background: none; border: 1px solid var(--border); border-radius: 999px; color: var(--ink-3); font-family: inherit; font-size: 11.5px; cursor: pointer; padding: 3px 10px; }
 .chat-help-close:hover { color: var(--accent); border-color: var(--accent); }
 
-/* ── Production banner (chat is dev-only) ── */
+/* ── No-tutor banner (shown by a build with TUTOR_ENABLED false) ── */
 .prod-banner {
   flex: none;
   background: var(--surface);

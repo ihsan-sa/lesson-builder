@@ -43,6 +43,8 @@ references/bootstrap/
                              primitives-interactive (Slider, Toggle, …), DesmosGraph
     constants/               THEMES_G + MODELS + EFFORT_LEVELS + DEFAULT_MODEL
                              + DEFAULT_EFFORT (chat opens on the default-flagged model)
+                             + build.js (TUTOR_ENABLED / API — whether this build
+                             carries the tutor, and the chat URLs under its base)
     hooks/                   useKatex, useDesmos
     helpers/                 manim-runner + empty manim_scratch/ (.gitkeep)
     prompts/                 graph-editing / lesson-augmentation
