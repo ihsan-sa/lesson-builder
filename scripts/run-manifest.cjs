@@ -24,6 +24,10 @@
  *   run-manifest.cjs promote  --lesson <dir> [--run <id>] --media-id <id> --from <staged path>
  *                             --to <lesson-relative path> [--min-bytes <n>] [--at <iso>]
  *   run-manifest.cjs fail     --lesson <dir> [--run <id>] --media-id <id> --reason <text>
+ *   run-manifest.cjs attest reuse  --lesson <dir> [--run <id>] --spec <file> [--at <iso>]
+ *   run-manifest.cjs attest record --lesson <dir> [--run <id>] --spec <file> --media-id <id>
+ *                             --reviewer <name> --verdict pass|issue|fail [--at <iso>]
+ *   run-manifest.cjs attest verify --lesson <dir> [--run <id>] --spec <file>
  *   run-manifest.cjs worktree add    --lesson <dir> [--run <id>]
  *   run-manifest.cjs worktree remove --lesson <dir> [--run <id>]
  *   run-manifest.cjs render   --lesson <dir>
@@ -53,6 +57,25 @@
  * `media` row; a refusal and `fail` record the reason there and leave the lesson tree untouched.
  * Identical bytes already in place are left alone entirely.
  *
+ * Attested verdicts: a Phase 4 verdict is recorded on its media row with what it attests to — the
+ * artifact's bytes, the rubric that judged it, the reviewer and its model, and every dependency the
+ * spec declares — so a later run can reuse it instead of re-reviewing bytes nothing has touched.
+ * The `--spec` file is the one declaration of what each review depends on
+ * (`{"reviews":[{media_id,reviewer,model,rubric,artifacts?,deps?}]}`; `artifacts` defaults to the
+ * media row's promoted paths). A ref is a lesson-relative path, `skill:<path>` for one of the
+ * skill's own files (the rubric, the reviewer prompt), or `<file>#<Name>` for one top-level
+ * declaration or demo inside a file, hashed by `lesson-ast.cjs digest` — that is what lets a
+ * verdict attest to one graph in a shared lesson file. `attest reuse` decides and carries
+ * every still-valid prior attestation into this run's record; `attest record` writes a fresh
+ * verdict; `attest verify` is the coverage gate — every review the spec asks for must end this run
+ * with a valid verdict in this run's record, and the spec must name a review of every medium the
+ * run ships, so a medium left out of it is a gap rather than an exemption. An attestation is
+ * invalid the moment any ref it names hashes differently, is gone, is not in the review any more,
+ * or the reviewer model changed, and bytes are re-hashed from disk, so an artifact edited without
+ * its record being updated is never reused. Only a `pass` is ever reused: an `issue` or a `fail`
+ * stands on findings that are still open, so it is reviewed again rather than carried past this
+ * run's issue list. Coverage is preserved by proof, never by omission: no attestation means review.
+ *
  * Exit codes:
  *   0  ok
  *   1  usage or I/O error
@@ -65,6 +88,8 @@
  *      lesson tree is unchanged and the reason is on the media row
  *   7  worktree remove: refused — the worktree holds uncommitted work, or commits no branch keeps;
  *      nothing is removed
+ *   8  attest verify: a review the spec asks for has no valid verdict in this run's record, or a
+ *      medium the run ships is one the spec names no review of; the gaps are named on stdout
  */
 
 'use strict';
@@ -697,6 +722,396 @@ function cmdFail(flags) {
 // ---------- the build worktree ----------
 
 // Every git command this tool runs. `cwd` is always a path inside the repo the lesson lives in.
+// ---------- attestations ----------
+
+// A verdict is what a reviewer decided about an artifact. `unavailable` is not on this list: a
+// reviewer that could not run is a coverage gap Phase 4 logs, and a gap is never proof.
+const VERDICTS = ['pass', 'issue', 'fail'];
+
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+const LESSON_AST = path.join(__dirname, 'lesson-ast.cjs');
+// This file lives in `<skill>/scripts/`, so the rubric and the reviewer prompt — the skill's own
+// files, which move with the skill and not with the lesson — are named `skill:<path>` and resolved
+// from here. A record therefore never holds a path that is only true on one machine.
+const SKILL_ROOT = path.resolve(__dirname, '..');
+const SKILL_REF = 'skill:';
+
+/** `lesson-ast.cjs digest` for one file — the only thing here that needs a parser. */
+function astDigest(file, names) {
+  const r = spawnSync(
+    process.execPath,
+    [LESSON_AST, 'digest', '--file', file, ...names.flatMap((n) => ['--name', n])],
+    { encoding: 'utf8' },
+  );
+  // A name that is not there is reported under `missing` on stdout, alongside the ones that are, so
+  // one spawn answers for every ref in the file even when one of them has been deleted. Only a file
+  // that does not parse at all comes back with nothing to read.
+  try {
+    const got = JSON.parse(r.stdout);
+    return { digests: got.digests || {} };
+  } catch (e) {
+    return {
+      error:
+        (r.stderr || '').trim().replace(/^lesson-ast: /, '') ||
+        `lesson-ast digest did not print JSON: ${e.message}`,
+    };
+  }
+}
+
+/**
+ * Hash every ref. A ref is a lesson-relative path, `skill:<path>` for one of the skill's own files
+ * (a rubric, a reviewer prompt), or `<path>#<Name>` naming one top-level declaration or demo inside
+ * a file — which is how a verdict attests to one graph in a shared lesson file instead of to the
+ * whole file. `#` refs go to `lesson-ast.cjs`, batched one spawn per file. A ref that cannot be
+ * hashed comes back as `{ gone: <reason> }` rather than throwing: at review time that is a reason
+ * to review, and only `record` treats it as an error.
+ */
+function hashRefs(lessonRoot, refs) {
+  const hashed = new Map();
+  const byFile = new Map();
+  for (const ref of new Set(refs)) {
+    const skill = ref.startsWith(SKILL_REF);
+    const root = skill ? SKILL_ROOT : lessonRoot;
+    const body = skill ? ref.slice(SKILL_REF.length) : ref;
+    const cut = body.indexOf('#');
+    const rel = cut === -1 ? body : body.slice(0, cut);
+    const name = cut === -1 ? null : body.slice(cut + 1);
+    const abs = path.resolve(root, rel);
+    if (!rel || !isInside(root, abs)) {
+      hashed.set(ref, { gone: `${ref} is not inside the ${skill ? 'skill' : 'lesson'} root` });
+      continue;
+    }
+    if (!fs.existsSync(abs)) {
+      hashed.set(ref, { gone: `${ref} is not in the lesson` });
+      continue;
+    }
+    if (name === null) {
+      hashed.set(ref, { sha256: sha256(fs.readFileSync(abs)) });
+      continue;
+    }
+    if (!name) {
+      hashed.set(ref, { gone: `${ref} names nothing after the #` });
+      continue;
+    }
+    if (!byFile.has(abs)) byFile.set(abs, []);
+    byFile.get(abs).push({ ref, name });
+  }
+  for (const [abs, items] of byFile) {
+    const batch = astDigest(abs, items.map((i) => i.name));
+    for (const i of items) {
+      const sha = batch.digests && batch.digests[i.name];
+      hashed.set(
+        i.ref,
+        sha
+          ? { sha256: sha }
+          : { gone: `${i.ref}: ${batch.error || 'no top-level declaration or demo of that name'}` },
+      );
+    }
+  }
+  return hashed;
+}
+
+const byRef = (a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
+
+/**
+ * The spec is the one declaration of what a review depends on: `reuse` decides from it, `record`
+ * attests to it and `verify` re-checks it, so what was checked and what was attested cannot drift.
+ * `{ "reviews": [ { media_id, reviewer, model, rubric, artifacts?, deps? } ] }`, every ref
+ * lesson-relative. `artifacts` defaults to the media row's promoted paths.
+ */
+function loadSpec(flags) {
+  if (!flags.spec) die('attest needs --spec <file> naming what each review depends on');
+  let spec;
+  try {
+    spec = JSON.parse(fs.readFileSync(flags.spec, 'utf8'));
+  } catch (e) {
+    return die(`cannot read the attestation spec ${flags.spec}: ${e.message}`);
+  }
+  if (!spec || !Array.isArray(spec.reviews)) die(`${flags.spec} has no "reviews" array`);
+  const seen = new Set();
+  for (const e of spec.reviews) {
+    requireSegment(e && e.media_id, 'spec media_id');
+    for (const key of ['reviewer', 'model', 'rubric'])
+      if (typeof e[key] !== 'string' || !e[key]) die(`spec review ${e.media_id} needs a ${key}`);
+    for (const key of ['artifacts', 'deps'])
+      if (
+        e[key] !== undefined &&
+        !(Array.isArray(e[key]) && e[key].every((r) => typeof r === 'string' && r))
+      )
+        die(`spec review ${e.media_id}/${e.reviewer}: ${key} must be an array of refs`);
+    const key = `${e.media_id} ${e.reviewer}`;
+    if (seen.has(key)) die(`spec names ${e.media_id}/${e.reviewer} twice`);
+    seen.add(key);
+  }
+  return spec.reviews;
+}
+
+function specEntry(reviews, mediaId, reviewer) {
+  const e = reviews.find((r) => r.media_id === mediaId && r.reviewer === reviewer);
+  if (!e)
+    die(
+      `the spec has no review of ${mediaId} by ${reviewer} — a verdict is recorded against the spec that asked for it`,
+    );
+  return e;
+}
+
+/**
+ * Where this medium's bytes are, when the spec does not say: the paths `promote` recorded, from the
+ * newest record that has any, and otherwise the destination the plan named. A run's own record only
+ * carries the media it produced, so a `keep` medium's paths come from the run that built it.
+ */
+function promotedPaths(records, mediaId) {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const row = records[i].media.find((m) => m && m.media_id === mediaId);
+    const paths = (row && Array.isArray(row.artifacts) ? row.artifacts : []).map((a) => a.path);
+    if (paths.length) return paths;
+  }
+  for (let i = records.length - 1; i >= 0; i--) {
+    const row = records[i].media.find((m) => m && m.media_id === mediaId);
+    if (row && row.path) return [row.path];
+  }
+  return [];
+}
+
+const reviewKey = (mediaId, reviewer) => `${mediaId}\u0000${reviewer}`;
+
+/**
+ * What every review in the spec attests to right now: the rubric, the artifact bytes, and the
+ * declared deps. Every ref in the spec is hashed in one pass, so a lesson file that eight reviews
+ * name is parsed once rather than eight times.
+ */
+function attestedNow(lessonRoot, records, reviews) {
+  const per = reviews.map((entry) => {
+    const artifacts =
+      entry.artifacts && entry.artifacts.length ? entry.artifacts : promotedPaths(records, entry.media_id);
+    // A verdict over no bytes is not proof of anything: never recorded, never reused.
+    if (!artifacts.length)
+      die(
+        `spec review ${entry.media_id}/${entry.reviewer} names no artifact, and no record carries a promoted path for it — nothing to attest to`,
+      );
+    return { entry, artifacts };
+  });
+  const hashed = hashRefs(
+    lessonRoot,
+    per.flatMap(({ entry, artifacts }) => [entry.rubric, ...artifacts, ...(entry.deps || [])]),
+  );
+  const at = (ref) => ({ ref, ...hashed.get(ref) });
+  return new Map(
+    per.map(({ entry, artifacts }) => [
+      reviewKey(entry.media_id, entry.reviewer),
+      {
+        rubric: at(entry.rubric),
+        artifacts: artifacts.map(at).sort(byRef),
+        deps: (entry.deps || []).map(at).sort(byRef),
+      },
+    ]),
+  );
+}
+
+/** The first thing that differs between what was attested and what is on disk now, or null. */
+function staleReason(prior, entry, now) {
+  if (!VERDICTS.includes(prior.verdict))
+    return `the recorded verdict "${prior.verdict}" is not a verdict`;
+  if (prior.model !== entry.model)
+    return `reviewer model changed (attested by ${prior.model}, now ${entry.model})`;
+  const sets = [
+    ['rubric', [prior.rubric || {}], [now.rubric]],
+    ['artifact', prior.artifacts || [], now.artifacts],
+    ['dependency', prior.deps || [], now.deps],
+  ];
+  for (const [label, before, after] of sets) {
+    const was = new Map(before.map((x) => [x.ref, x.sha256]));
+    for (const x of after) {
+      if (x.gone) return `${label} ${x.gone}`;
+      if (!was.has(x.ref)) return `${label} ${x.ref} is not one the verdict attests to`;
+      if (was.get(x.ref) !== x.sha256) return `${label} ${x.ref} changed since the verdict`;
+    }
+    const nowRefs = new Set(after.map((x) => x.ref));
+    for (const ref of was.keys())
+      if (!nowRefs.has(ref)) return `${label} ${ref} is no longer part of the review`;
+  }
+  return null;
+}
+
+const attestationsOf = (row) => (Array.isArray(row.attestations) ? row.attestations : []);
+
+/**
+ * The newest attestation of this media id by this reviewer, from any record in the lesson. Records
+ * are one per run and are never rewritten, so an earlier run's proof is only ever found here.
+ */
+function priorAttestation(records, mediaId, reviewer) {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const row = records[i].media.find((m) => m && m.media_id === mediaId);
+    const a = row && attestationsOf(row).find((x) => x && x.reviewer === reviewer);
+    if (a) return { attestation: a, run_id: records[i].run_id };
+  }
+  return null;
+}
+
+function putAttestation(rec, mediaId, attestation) {
+  const row = mediaRow(rec, mediaId);
+  const kept = attestationsOf(row).filter((a) => !a || a.reviewer !== attestation.reviewer);
+  row.attestations = kept.concat([attestation]);
+}
+
+function cmdAttest(flags, positional) {
+  const sub = positional[0];
+  const subs = { reuse: attestReuse, record: attestRecord, verify: attestVerify };
+  if (!sub || !subs[sub]) die(`attest takes ${Object.keys(subs).join(', ')}`);
+  const lessonRoot = requireLesson(flags);
+  subs[sub](lessonRoot, resolveRun(lessonRoot, flags), flags);
+}
+
+function attestReuse(lessonRoot, runId, flags) {
+  const reviews = loadSpec(flags);
+  const records = listRecords(lessonRoot);
+  const rec = readRecord(lessonRoot, runId);
+  const at = flags.at || new Date().toISOString();
+  const reuse = [];
+  const review = [];
+
+  const now = attestedNow(lessonRoot, records, reviews);
+  for (const entry of reviews) {
+    const prior = priorAttestation(records, entry.media_id, entry.reviewer);
+    if (!prior) {
+      review.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: 'no attestation' });
+      continue;
+    }
+    const stale = staleReason(prior.attestation, entry, now.get(reviewKey(entry.media_id, entry.reviewer)));
+    if (stale) {
+      review.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: stale });
+      continue;
+    }
+    // Only a clean verdict is proof that nothing needs doing. An `issue` or a `fail` stands on
+    // findings that were open when it was made — a `keep` medium's are logged rather than
+    // auto-fixed — and reusing it would drop them out of this run's issue list, out of the final
+    // report, and past the coverage gate, all without the reviewer ever running. So it is
+    // reviewed again, which is what happened before any of this existed.
+    if (prior.attestation.verdict !== 'pass') {
+      review.push({
+        media_id: entry.media_id,
+        reviewer: entry.reviewer,
+        reason: `prior verdict was ${prior.attestation.verdict}`,
+      });
+      continue;
+    }
+    const from = prior.attestation.from_run || prior.run_id;
+    const carried = { ...prior.attestation, from_run: from, reused_at: at };
+    // Already this run's own verdict — a resumed run deciding again. Re-adopting it changes
+    // nothing: a run does not report its own verdict as reused from itself.
+    if (from === runId) {
+      delete carried.from_run;
+      delete carried.reused_at;
+    }
+    putAttestation(rec, entry.media_id, carried);
+    reuse.push({
+      media_id: entry.media_id,
+      reviewer: entry.reviewer,
+      verdict: carried.verdict,
+      attested: carried.at,
+      from_run: carried.from_run || runId,
+    });
+  }
+  writeRecord(lessonRoot, rec);
+  process.stdout.write(`${JSON.stringify({ run_id: runId, reuse, review }, null, 2)}\n`);
+}
+
+function attestRecord(lessonRoot, runId, flags) {
+  const reviews = loadSpec(flags);
+  const mediaId = requireSegment(flags['media-id'], '--media-id');
+  if (!flags.reviewer) die('attest record needs --reviewer <name>');
+  const verdict = flags.verdict;
+  if (!VERDICTS.includes(verdict))
+    die(
+      `--verdict must be one of ${VERDICTS.join(', ')}` +
+        (verdict === 'unavailable'
+          ? ' — a reviewer that could not run is a coverage gap Phase 4 logs, not a verdict'
+          : ` (got "${verdict === undefined ? '' : verdict}")`),
+    );
+  const entry = specEntry(reviews, mediaId, flags.reviewer);
+  const rec = readRecord(lessonRoot, runId);
+  const now = attestedNow(lessonRoot, listRecords(lessonRoot), [entry])
+    .get(reviewKey(mediaId, flags.reviewer));
+  for (const x of [now.rubric, ...now.artifacts, ...now.deps])
+    if (x.gone) die(`cannot attest to what is not there: ${x.gone}`);
+
+  const attestation = {
+    reviewer: flags.reviewer,
+    model: entry.model,
+    verdict,
+    at: flags.at || new Date().toISOString(),
+    rubric: now.rubric,
+    artifacts: now.artifacts,
+    deps: now.deps,
+  };
+  putAttestation(rec, mediaId, attestation);
+  writeRecord(lessonRoot, rec);
+  process.stdout.write(`${JSON.stringify({ media_id: mediaId, ...attestation })}\n`);
+}
+
+/**
+ * A medium this run ships that the spec names no review of. The spec is hand-written, so without
+ * this walk the gate is only as complete as whoever wrote it: leave a medium out and every review
+ * the spec does name passes, Phase 5 starts, and that medium ends the run with no verdict at all.
+ * Two rows have nothing to review and are not gaps: one the plan removes from the lesson, and one
+ * whose production failed leaving nothing promoted — Phase 4 logs that as a finding of its own.
+ */
+function unreviewedMedia(rec, reviews) {
+  const named = new Set(reviews.map((r) => r.media_id));
+  return rec.media
+    .filter((row) => {
+      if (!row || !row.media_id || named.has(row.media_id)) return false;
+      if (row.intent === 'remove') return false;
+      // A failed production leaves the previous artifacts on disk, so a row that still holds
+      // promoted bytes is still shipping them and still needs a verdict.
+      if (Array.isArray(row.artifacts) && row.artifacts.length) return true;
+      return !row.artifact_failure;
+    })
+    .map((row) => ({
+      media_id: row.media_id,
+      reviewer: null,
+      reason: 'the spec names no review of this medium',
+    }));
+}
+
+/**
+ * Coverage by proof: every review the spec asks for has a valid attestation in THIS run's record,
+ * and the spec asks for a review of every medium this run ships. Exit 8 with the gaps named, so a
+ * run cannot reach Phase 5 having quietly reviewed less — neither by a verdict it never bought nor
+ * by a medium it never listed.
+ */
+function attestVerify(lessonRoot, runId, flags) {
+  const reviews = loadSpec(flags);
+  const rec = readRecord(lessonRoot, runId);
+  const now = attestedNow(lessonRoot, listRecords(lessonRoot), reviews);
+  const unjudged = [];
+  for (const entry of reviews) {
+    const row = rec.media.find((m) => m && m.media_id === entry.media_id);
+    const a = row && attestationsOf(row).find((x) => x && x.reviewer === entry.reviewer);
+    if (!a) {
+      unjudged.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: 'no verdict this run' });
+      continue;
+    }
+    const stale = staleReason(a, entry, now.get(reviewKey(entry.media_id, entry.reviewer)));
+    if (stale) unjudged.push({ media_id: entry.media_id, reviewer: entry.reviewer, reason: stale });
+  }
+  const unreviewed = unreviewedMedia(rec, reviews);
+  const gaps = unjudged.concat(unreviewed);
+  process.stdout.write(
+    `${JSON.stringify({ run_id: runId, reviews: reviews.length, media: rec.media.length, gaps }, null, 2)}\n`,
+  );
+  if (gaps.length) {
+    const said = [];
+    if (unjudged.length)
+      said.push(`${unjudged.length} of ${reviews.length} review(s) end this run without a valid verdict`);
+    if (unreviewed.length)
+      said.push(`${unreviewed.length} medium(s) in this run's record the spec names no review of`);
+    process.stderr.write(`run-manifest: ${said.join('; ')}\n`);
+    process.exit(8);
+  }
+}
+
 function git(cwd, args, opts) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (r.error) die(`git ${args[0]}: ${r.error.message}`);
@@ -820,20 +1235,29 @@ function renderApproval(rec) {
 function renderMedia(rec) {
   if (!rec.media.length) return [];
   return ['Media:'].concat(
-    rec.media.map((m) => {
+    rec.media.flatMap((m) => {
       const a = Array.isArray(m.artifacts) ? m.artifacts : [];
       const f = m.artifact_failure;
-      return (
+      return [
         `  - ${m.media_id || '<no id>'} — intent: ${m.intent || 'unspecified'}` +
-        `${m.medium ? ` — ${m.medium}` : ''}${m.original_intent ? ` — original intent: ${m.original_intent}` : ''}` +
-        `${m.status ? ` — ${m.status}` : ''}` +
-        // What the lesson tree holds — one segment per promoted path — and why the last
-        // production did not change it.
-        a
-          .map((x) => ` — ${x.path} sha256:${String(x.sha256).slice(0, 12)} (${x.bytes} bytes, ${x.state})`)
-          .join('') +
-        `${f ? ` — PRODUCTION FAILED: ${f.reason}` : ''}`
-      );
+          `${m.medium ? ` — ${m.medium}` : ''}${m.original_intent ? ` — original intent: ${m.original_intent}` : ''}` +
+          `${m.status ? ` — ${m.status}` : ''}` +
+          // What the lesson tree holds — one segment per promoted path — and why the last
+          // production did not change it.
+          a
+            .map((x) => ` — ${x.path} sha256:${String(x.sha256).slice(0, 12)} (${x.bytes} bytes, ${x.state})`)
+            .join('') +
+          `${f ? ` — PRODUCTION FAILED: ${f.reason}` : ''}`,
+        // A Phase 4 verdict and what it attests to. A reused one says which run reviewed the
+        // artifact, so the log shows what this run paid for and what it did not re-review.
+        ...(Array.isArray(m.attestations) ? m.attestations : []).map(
+          (v) =>
+            `      verdict: ${v.reviewer} ${v.verdict} — ` +
+            (v.from_run
+              ? `REUSED from run ${v.from_run}, attested ${v.at}`
+              : `${v.model}, attested ${v.at}`),
+        ),
+      ];
     }),
   );
 }
@@ -983,6 +1407,7 @@ const commands = {
   stage: () => cmdStage(flags),
   promote: () => cmdPromote(flags),
   fail: () => cmdFail(flags),
+  attest: () => cmdAttest(flags, positional),
   worktree: () => cmdWorktree(flags, positional),
   render: () => cmdRender(flags),
 };
