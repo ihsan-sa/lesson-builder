@@ -4,7 +4,7 @@ Contents: §1 Purpose · §2 Course context (`COURSE.md`) · §3 The course mate
 
 Read this whenever the workspace has a `<workspace_root>/<course>/COURSE.md`, whenever material arrives in chunks over a term rather than as one hand-off, or whenever the request uses a restructure verb (`restructure`, `re-split`, `consolidate`, `merge lessons`, `split this lesson`, `re-balance the course`).
 
-Cross-reference: `SKILL.md` holds the mode-detection summary, the session-mode rule, and the phase shell. `references/update-mode.md` is the lesson-level orientation — the 5 media actions, branch/stash/merge invariants, no-grandfathering. This doc adds the layer above a single lesson: where a new chunk of material belongs, when to build, and how to restructure a course without hand-editing five lessons in five uncoordinated runs. Nothing here is required — a workspace with no `COURSE.md` runs exactly as before.
+Cross-reference: `SKILL.md` holds the mode-detection summary, the session-mode rule, and the phase shell. `references/update-mode.md` is the lesson-level orientation — the 5 media actions, worktree/branch/merge invariants, no-grandfathering. This doc adds the layer above a single lesson: where a new chunk of material belongs, when to build, and how to restructure a course without hand-editing five lessons in five uncoordinated runs. Nothing here is required — a workspace with no `COURSE.md` runs exactly as before.
 
 ## 1. Purpose
 
@@ -135,7 +135,19 @@ Announce the pending set rather than sitting on it silently: when a run is skipp
 - **Phase 0 (course scope, once)** — read `COURSE.md`; resolve the affected lesson set from the map; working-tree check across *all* affected lesson roots (one dirty tree blocks the whole run); confirm the restructure's reason. No per-lesson interview.
 - **Phase 1 (course scope, once)** — run the existing inventory pre-scan (`references/update-mode.md` § Inventory pre-scan) once per affected lesson, plus each lesson's topic list and `GRAPH_SCHEMA` state. The output is a course-wide topic × lesson × media table. Research is `light` by default: a restructure moves existing material, it does not re-teach it.
 - **Phase 2 (course scope, once)** — compile the **consolidation plan** below and take **one** approval gate for it.
-- **Phases 3–5 (per lesson, in dependency order)** — each affected lesson runs the ordinary update pipeline against its own change-list: its own branch (`lesson-update/<slug>-YYYYMMDD`), its own splice, its own Phase 4, its own merge. No further approval gate fires; each lesson writes the inheritance into its own run record before Phase 3 starts:
+- **Phases 3–5 (per lesson, in dependency order)** — each affected lesson runs the ordinary update pipeline against its own change-list: its own record, its own build worktree, its own branch (`lesson-update/<slug>-YYYYMMDD`), its own splice, its own Phase 4, its own merge.
+
+  **Each lesson bases on the previous lesson's merge.** `git.base_branch` and `git.base_sha` are recorded on each affected lesson's own record before its Phase 3 — `worktree add` builds from the SHA on the record it is given, and a record with no base SHA refuses to open a worktree at all. The first lesson in the execution order bases on the branch tip Phase 0 read. Lesson 2..n bases on the commit the previous lesson just merged and pushed:
+
+  ```bash
+  PREV=$(git -C <workspace_root> rev-parse refs/lesson-builder/<previous run_id>/merge)
+  run-manifest.cjs set --lesson <this lesson_root> git.base_branch <base>
+  run-manifest.cjs set --lesson <this lesson_root> git.base_sha "$PREV"
+  ```
+
+  The run never moves the local `refs/heads/<base>` — the user's checkout may hold it — so that ref is stale by lesson 2 and cannot be the base. Base every lesson on the frozen Phase 0 tip instead and lesson 2's merge has the pre-restructure commit as its parent: `origin` refuses the push non-fast-forward and the restructure stops half-published, destination merged and source stranded. Phase 5's pre-push check (`references/phase-5-deploy.md` § Step 2b.6) halts on exactly that rather than pushing.
+
+  No further approval gate fires; each lesson writes the inheritance into its own run record before Phase 3 starts:
 
   ```bash
   run-manifest.cjs set --lesson <lesson_root> plan.approval \
@@ -218,7 +230,7 @@ Everything else — outline, conventions, open questions, unconsumed chunks — 
 - **A chunk with no home is not automatically a new lesson.** "No lesson covers this" is trigger 5 only after triggers 1–3 have been checked — material that seems unplaced is often a symptom of moved unit boundaries.
 - **Topic-count ceiling is a trigger, not a hard limit.** Seven topics with one arc beats six topics plus a stub. Use trigger 4 as the prompt to look at the lesson's arc, not as arithmetic.
 - **Do not let triage silently re-scope a build.** If triage says *new lesson* but the request said "update `<slug>`", say so and let the user redirect — the verdict is a recommendation surfaced at the gate, not a licence to build somewhere else.
-- **Consolidate against a dirty tree.** The Phase 0 working-tree check spans every affected lesson root; a single dirty lesson blocks the run rather than being stashed piecemeal, because a half-stashed multi-lesson restructure is unrecoverable by hand.
+- **Consolidate against a dirty tree.** The Phase 0 working-tree check spans every affected lesson root, and it only reads: each lesson builds from its own recorded base SHA in its own worktree, so a dirty lesson is reported and left alone rather than stashed. Nothing about a partially-completed restructure can strand the user's uncommitted work, because none of it was ever moved.
 
 ## 10. Phase cross-reference
 

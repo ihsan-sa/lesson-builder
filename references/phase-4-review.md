@@ -14,7 +14,22 @@ Phase 4 runs a battery of parallel reviews against the post-execution lesson (th
 
 Main Claude fires all of these at once in a single parallel batch. Do not serialize — the goal is the complete picture of what is wrong in one pass, then fix once, rather than discovering problems drip by drip. (Fix priority is a different matter: deterministic failures get fixed first — see the fix loop.)
 
-**Prerequisites before the batch** (fresh lessons especially): `npm install` in the lesson root, then start the proxy (`node server/proxy.js`) and Vite (`npx vite`) and confirm both respond — the Playwright and interaction reviewers fail spuriously against a server that isn't up. Reuse already-running instances when the lesson was launched earlier in the session.
+**Prerequisites before the batch.**
+
+**Update mode first — warm `node_modules/` once, for the whole phase.** Phase 4's lesson root is the build worktree: a checkout of the base SHA, and `node_modules/` is gitignored, so every `npm install` in this phase is otherwise a cold install of the lesson — minutes off the network, and a hard failure with no network at all. Copy the user's before anything else here, the same copy `references/phase-5-deploy.md` § Update mode note makes before the scoped build:
+
+```bash
+LR=<the user's lesson root>                      # the checkout the user works in
+WT=$(run-manifest.cjs get --lesson "$LR" git.worktree)
+
+# Copy, never symlink: a symlink would let `npm install` write into the user's checkout, which is
+# the one thing this run must not do.
+[ -d "$LR/node_modules" ] && [ ! -e "$WT/node_modules" ] && cp -r "$LR/node_modules" "$WT/node_modules"
+```
+
+Once is enough: the reviewers below, the `npm install` + `node test_lesson.cjs` in Build + test, and the build gate at the end of the phase all run against that one warm tree.
+
+Then (fresh lessons especially): `npm install` in the lesson root, then start the proxy (`node server/proxy.js`) and Vite (`npx vite`) and confirm both respond — the Playwright and interaction reviewers fail spuriously against a server that isn't up. Reuse already-running instances when the lesson was launched earlier in the session.
 
 ### 1. `code-review-agent`
 
@@ -71,6 +86,8 @@ cd "<lesson_root>"
 npm install
 node test_lesson.cjs
 ```
+
+In update mode that `npm install` is a no-op — § Prerequisites warmed the worktree's `node_modules/` once for the whole phase.
 
 `test_lesson.cjs` executes the 17-test suite defined below. Capture the full pass/fail breakdown and feed it into the compile-findings step as another reviewer.
 
@@ -267,6 +284,8 @@ After the build completes, run a **headless Playwright check** of the built arti
 **Update mode note**: in update mode the build runs against the current branch (the update branch created in Phase 3, typically `lesson-update/<slug>-YYYYMMDD`). Do not switch to `main` before the build — that would build the wrong code and invalidate the verification.
 
 If either `build-all.sh` or the headless Playwright check fails, halt before the Phase 5 commit/merge and do not patch blind. The build error is new deterministic information: **one formal loop re-entry is permitted** — feed the build error into the compile-findings step as a blocker and re-enter the fix loop under the same absolute iteration cap (iterations already spent count). If the re-entry doesn't clear it, or the error suggests the Phase 2 plan is structurally wrong, surface the failure to the user with the failing command, the relevant log excerpt, and the current branch state, for a return-to-Phase-2 or abort decision.
+
+In update mode this runs in the build worktree — use the warmed scoped build in `references/phase-5-deploy.md` § Update mode note rather than a bare `build-all.sh`, or the review gate becomes a cold install of every lesson in the workspace. This lesson's `node_modules/` is already warm; § Prerequisites copied it at the top of the phase.
 
 Note that the full `build-all.sh` builds every lesson in the workspace, not just the one under review. This is deliberate: a change in `_lesson-core/` can break any lesson importing from `@core`, so the full build is the only way to catch cross-lesson regressions introduced by a change to the shared core. If Phase 3 only touched per-lesson files (no `_lesson-core/` edits), a scoped build targeting only `<lesson_root>` is acceptable as an optimization, but the full build remains the default.
 

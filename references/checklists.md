@@ -411,7 +411,7 @@ Update mode only. Run before scoping closes. Failures surface at mode confirmati
 - [ ] Lesson root resolves to an existing directory. Canonical form: `<workspace_root>/<course>/claude_lessons/<slug>/`.
 - [ ] `src/<slug>.jsx` exists at the expected path and parses cleanly under Babel (`{ sourceType: "module", plugins: ["jsx"] }`). A parse failure means the baseline is already broken; halt and surface the parse error.
 - [ ] Either `CLAUDE.md` or the lesson JSX header identifies the course code unambiguously. Ambiguous course codes block scoping auto-fill.
-- [ ] Git working tree is either clean, or the caller has intentionally stashed changes. If dirty, main Claude stashes with a labeled ref (`lesson-builder-preflight-<slug>-<timestamp>`) and logs the stash ref for later recovery.
+- [ ] Git working tree state is recorded, whatever it is. Nothing is stashed and nothing is discarded: the run builds from `git.base_sha` in its own worktree, so a dirty tree is reported (those paths are not in what the run builds from) and the run continues.
 - [ ] `from "@core"` imports are present in `src/<slug>.jsx`. If absent, the lesson predates the `_lesson-core/` migration and still inlines the old chat code. Update mode must halt with a migration-first warning. Narrow opt-in bypass ("update without migration") is allowed only with explicit user acknowledgement during scoping confirmation.
 - [ ] `GRAPH_SCHEMA` is present in the lesson file. If absent, the lesson predates the graph-schema feature; schedule a backfill in Phase 3 per `references/graph-schema-guide.md`. Do not halt; log as a drift-repair item.
 - [ ] `test_lesson.cjs` exists in the lesson root. If absent, restore it from the canonical copy at `references/bootstrap/lesson-template/test_lesson.cjs` and log the restore as a drift-repair item; do not splice a shim from a sibling lesson.
@@ -425,7 +425,7 @@ Update mode only. Run before scoping closes. Failures surface at mode confirmati
 Course-level restructures only. Run once, before the consolidation plan is compiled — a restructure that fails halfway is the most expensive failure the skill has. Procedure and plan format: `references/course-curation.md` §6.
 
 - [ ] Every slug in `course_scope` passes the update-mode pre-flight above. One failing lesson blocks the whole run; do not consolidate around it.
-- [ ] Every affected lesson root has a clean working tree. A multi-lesson restructure is never stashed piecemeal — a dirty tree aborts rather than stashes.
+- [ ] Every affected lesson root's working-tree state is recorded. A multi-lesson restructure is never stashed piecemeal — nothing is stashed at all, and each lesson builds from its own recorded base SHA in its own worktree.
 - [ ] The affected lesson set is closed: no topic being moved is referenced (call site, shared asset, cross-lesson link) by a lesson outside `course_scope`. If one is, either add that lesson to the scope or drop the move.
 - [ ] Execution order lists destinations before sources, and every `remove` in a source lesson has a matching `add` in a destination lesson already earlier in the order.
 - [ ] Every moved medium's asset path, component name, `DEFAULT_GRAPH_PARAMS` key, and `GRAPH_SCHEMA` key are named in the plan; destination lessons lacking `GRAPH_SCHEMA` carry an explicit backfill item.
@@ -465,7 +465,7 @@ Main Claude runs this after assembly, before Phase 4. Cheap gate catching common
 - [ ] Grep count: every `<ComponentName />` call site (for lesson-defined components — not `@core` primitives) has a matching `function ComponentName` definition in the file.
 - [ ] Grep count: every `GRAPH_SCHEMA[<key>]` access has a matching key in the `GRAPH_SCHEMA` object literal.
 - [ ] File line-count delta matches expected splice magnitude. Compute `abs(lines_after - lines_before)`, compare to the declared change-list (roughly: refines are small deltas, adds are positive, removes are negative). A wild delta (e.g., ±500 lines for a single `refine`) indicates runaway edits and should halt the pipeline.
-- [ ] No stray `<<< >>> ===` conflict markers from any stash/merge/rebase that may have been in-flight.
+- [ ] No stray `<<< >>> ===` conflict markers from any merge or rebase that may have been in-flight.
 - [ ] Every graph component defined in the file has at least one call site, by Grep-count match.
 - [ ] The `TOPIC_CONTEXT` object has the same number of keys as the `TOPICS` array has entries (quick sanity on T14 before Phase 4 runs the full check).
 

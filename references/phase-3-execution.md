@@ -4,7 +4,7 @@ Contents: Shared conventions (scratch dir, the run staging area, private-by-defa
 
 ## Purpose
 
-Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project files. It is the only phase that modifies `<lesson_root>/` content, hard-branched on mode: **new** spawns specialists in parallel, collects scratch outputs, assembles `src/<slug>.jsx` from `references/template.md`. **Update** stages a git branch + optional stash, then splices specialist outputs into the existing file using edit anchors (function signatures, `DEFAULT_GRAPH_PARAMS` keys, `TOPICS` entries) while preserving `keep` items. Both end with a `.build-scratch/` cleanup and a post-assembly sanity pass.
+Phase 3 takes the approved Lesson Plan and writes the lesson JSX plus project files. It is the only phase that modifies `<lesson_root>/` content, hard-branched on mode: **new** spawns specialists in parallel, collects scratch outputs, assembles `src/<slug>.jsx` from `references/template.md`. **Update** names a branch inside the run's own build worktree, then splices specialist outputs into the existing file using edit anchors (function signatures, `DEFAULT_GRAPH_PARAMS` keys, `TOPICS` entries) while preserving `keep` items. Both end with a `.build-scratch/` cleanup and a post-assembly sanity pass.
 
 ## Shared conventions (both modes)
 
@@ -208,7 +208,7 @@ Matplotlib outputs arrive pre-verified by the specialist's own PNG self-view; fu
 After the assembled `src/<slug>.jsx` is written:
 
 1. Delete `<lesson_root>/.build-scratch/` recursively.
-2. Delete `<lesson_root>/.lesson-builder/staging/<run_id>/` recursively — every artifact that was going to be promoted has been. Leave it in place if Phase 3 failed, so a refused artifact can be inspected; the record names each one and why.
+2. Delete the run staging area recursively — `<record root>/.lesson-builder/staging/<run_id>/`, the exact path `run-manifest.cjs stage` printed. In update mode that is under the **user's** lesson root, not `<lesson_root>`: `<lesson_root>` is the worktree, `.lesson-builder/` is gitignored, and the worktree never had a copy of it. Every artifact that was going to be promoted has been. Leave it in place if Phase 3 failed, so a refused artifact can be inspected; the record names each one and why.
 3. Log specialists spawned, files written, and the lesson file line count.
 4. Hand off to Phase 4.
 
@@ -240,43 +240,42 @@ Update mode splices specialist outputs into the **existing** `src/<slug>.jsx` in
 
 ### Step 1: pre-execution git setup
 
-Runs **before any specialist spawns**. The stash (if any) already happened at Phase 0, which recorded `git.stash_oid` — read it back with `run-manifest.cjs get --lesson <lesson_root> git.stash_oid` (exit 3 means Phase 0 did not stash); do NOT stash again. Exact commands:
+Runs **before any specialist spawns**, and runs **inside the build worktree** Phase 0 opened. Nothing here touches the user's checkout: no stash, no branch switch, no write. Read the worktree's lesson root back from the record and use it as `<lesson_root>` for every command from here on:
 
 ```bash
-cd <workspace_root>
-git status --short <lesson_root>   # expect clean apart from run-owned files (lesson_build.log.md,
-                                   # .lesson-builder/,
-                                   # .gitignore edits this run made — both written since the Phase 0
-                                   # check); anything ELSE dirty → halt and surface, don't stash
-git rev-parse --abbrev-ref HEAD    # must be the workspace default branch (normally main);
-                                   # branching off a feature branch drags unrelated commits into the merge
+WT=$(run-manifest.cjs get --lesson <lesson_root> git.worktree)   # exit 3 → Phase 0 never opened
+                                                                 # one; run `worktree add` against
+                                                                 # the user's lesson root — the one
+                                                                 # Phase 0 had — before building
+cd "$(git -C "$WT" rev-parse --show-toplevel)"   # the worktree's own workspace root
+git status --short                 # a fresh checkout of the base SHA: expect it clean
 git checkout -b lesson-update/<slug>-YYYYMMDD   # collision → append -a/-b per the pre-flight checklist
-git rev-parse HEAD                 # record as base_sha
 ```
 
-Record the branch and the base SHA — the ACTUAL branch name, collision suffix included; Phase 5 reads this recorded value back verbatim and never reconstructs it:
+The worktree was checked out detached on `git.base_sha`, so the branch starts exactly there and no unrelated commits ride along — the check that the user's checkout was on the default branch is gone with the reason for it. Record the ACTUAL branch name, collision suffix included; Phase 5 reads this recorded value back verbatim and never reconstructs it:
 
 ```bash
-run-manifest.cjs set --lesson <lesson_root> git.branch   "$(git rev-parse --abbrev-ref HEAD)"
-run-manifest.cjs set --lesson <lesson_root> git.base_sha "$(git rev-parse HEAD)"
+run-manifest.cjs set --lesson "$WT" git.branch "$(git rev-parse --abbrev-ref HEAD)"
 ```
+
+`git.base_sha` is already recorded — Phase 0 set it, and it is what the worktree was made from. Do not re-record it here.
 
 Substitutions:
-- `<workspace_root>` — absolute path to the monorepo root, typically derived from `git rev-parse --show-toplevel` or provided at Phase 0.
-- `<lesson_root>` — absolute path to the lesson directory (e.g. `<workspace_root>/<course>/claude_lessons/<slug>/`). Git expects forward slashes even on Windows.
+- `<workspace_root>` — absolute path to the monorepo root. In update mode that is the **worktree's** root, `git -C "$WT" rev-parse --show-toplevel`, not the user's checkout.
+- `<lesson_root>` — absolute path to the lesson directory (e.g. `<workspace_root>/<course>/claude_lessons/<slug>/`). In update mode that is `git.worktree`, the same lesson path inside the worktree. Git expects forward slashes even on Windows.
 - `<slug>` — the lesson slug from Phase 0.
 - `<date>` — `YYYYMMDD` format.
 - `YYYYMMDD` in the branch name — same format as `<date>`.
 
-`run-manifest.cjs render --lesson <lesson_root>` then puts them at the top of `### Phase 3 — Execution (update)` in the log, with the stash ref carried over from Phase 0's record:
+`run-manifest.cjs render --lesson "$WT"` then puts them at the top of `### Phase 3 — Execution (update)` in the log, alongside the worktree Phase 0 opened:
 
 ```
 Branch: lesson-update/<slug>-YYYYMMDD
 Base SHA: <sha>
-Stash ref: stash@{0} (<oid>) | none
+Worktree: <path> (live)
 ```
 
-If the working tree was clean at Phase 0 the record has no `git.stash_oid` and the log renders `Stash ref: none`. If the user aborted on the dirty-tree question, Phase 3 never starts.
+There is no stash line: a run builds in its own worktree and never stashes. Only a record left over from the old flow renders one, marked legacy (`references/update-mode.md` § Recovering a run from the old stash flow). If the user aborted on the dirty-tree question, Phase 3 never starts.
 
 ### Step 2: scratch directory layout (update-specific)
 
@@ -490,7 +489,7 @@ Log `.gitignore updated: <N entries appended>` or `.gitignore already covers all
 
 #### 4.12 Clean up .build-scratch/ and the run staging area
 
-Delete `<lesson_root>/.build-scratch/` and `<lesson_root>/.lesson-builder/staging/<run_id>/` recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing). A staged file that was never promoted is the same warning in the other direction: the record's media row says why it was refused. Both directories stay in place if Phase 3 failed.
+Delete `<lesson_root>/.build-scratch/` — under the worktree, where the splice ran — and the run staging area, `<record root>/.lesson-builder/staging/<run_id>/`, which lives under the **user's** lesson root because that is where the records live and is the path `run-manifest.cjs stage` printed. Both recursively. If any scratch file was not consumed during the splice, log it as an `unconsumed-scratch` warning (a specialist was spawned but its output was not applied — usually a plan-vs-execution mismatch worth surfacing). A staged file that was never promoted is the same warning in the other direction: the record's media row says why it was refused. Both directories stay in place if Phase 3 failed.
 
 ### What NOT to touch in update mode
 
@@ -519,6 +518,6 @@ Update mode's splice assembly has three standard drift-repair categories; log th
 When Phase 3 exits:
 
 - **New mode**: `src/<slug>.jsx` is fully written, project files are in place, `.build-scratch/` is gone, the record carries this phase's notes and `lesson_build.log.md`, re-rendered, has a `## Phase 3 — Execution` section with specialists spawned and files written.
-- **Update mode**: `src/<slug>.jsx` has been spliced against the approved change-list, the git branch `lesson-update/<slug>-YYYYMMDD` holds the pending commit, `.build-scratch/` is gone, and the record carries `git.branch`, `git.base_sha` and this phase's notes, which re-render into a `### Phase 3 — Execution (update)` section with branch name, stash ref, splice counts, and drift repairs.
+- **Update mode**: `src/<slug>.jsx` has been spliced against the approved change-list, the git branch `lesson-update/<slug>-YYYYMMDD` holds the pending commit, `.build-scratch/` is gone, and the record carries `git.branch`, `git.base_sha` and this phase's notes, which re-render into a `### Phase 3 — Execution (update)` section with branch name, worktree path, splice counts, and drift repairs. All of it is in the worktree: the user's checkout is exactly as Phase 0 found it.
 
 Phase 4 runs parallel reviews (code, content, test, visual-QA) against the post-execution lesson file. See `references/phase-4-review.md` for review mechanics, the progress-aware fix loop, and the update-mode no-grandfathering and regression-watch rules.
