@@ -155,7 +155,8 @@ tests/hosted-build/            Fixture for the build-time tutor gate: one lesson
                                bundles (node + a lesson npm install)
 tests/check.sh                 The release gate: one command that runs every fixture needing no
                                model call, no browser and no network, in parallel, and prints the
-                               excluded ones with the command that runs each. Non-zero if any fails
+                               excluded ones with the command that runs each. Non-zero if any fails,
+                               or if a fixture left a proxy or dev server of its own still running
 ```
 
 ## Installation

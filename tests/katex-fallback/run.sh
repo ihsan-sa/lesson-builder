@@ -16,6 +16,12 @@ WS=$(mktemp -d "${TMPDIR:-/tmp}/katex-fallback-ws.XXXX"); echo "workspace: $WS"
 VITE_PID=""
 cleanup() {
   [ -n "$VITE_PID" ] && kill "$VITE_PID" 2>/dev/null || true
+  # `npx vite` runs Vite as a grandchild, so VITE_PID is npm's and the line
+  # above leaves the dev server holding $PORT with a cwd this trap is about to
+  # delete. Same belt as tests/resume-metadata/run.sh: clear whatever still has
+  # the port. Reliable rather than a sleep — nothing else is listening on it,
+  # because the run bound it with --strictPort.
+  fuser -k -TERM "${PORT}/tcp" 2>/dev/null || true
   if [ -n "${KEEP:-}" ]; then echo "kept $WS"; else rm -rf "$WS"; fi
 }
 trap cleanup EXIT

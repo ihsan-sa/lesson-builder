@@ -7,8 +7,8 @@ import { lessonChatProxy } from "../../../_lesson-core/server/viteLessonProxy.js
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  // lessonChatProxy forwards /chat, /session, /sessions, /upload and /commit
-  // to THIS lesson's Express proxy, resolving it per request from
+  // lessonChatProxy forwards /chat, /session, /sessions, /thread, /upload and
+  // /commit to THIS lesson's Express proxy, resolving it per request from
   // server/.proxy.json. It replaces a `server.proxy` entry that pinned a port
   // number read once at config load: every lesson's proxy starts its search at
   // 3001, so a number that has gone stale still answers — from another

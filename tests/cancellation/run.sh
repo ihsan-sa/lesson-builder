@@ -10,9 +10,25 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); SKILL=$(cd "$HERE/../.." && pwd); B="$SKILL/references/bootstrap"
 PORT="${PORT:-3901}"
 WS=$(mktemp -d "${TMPDIR:-/tmp}/cancellation-ws.XXXX"); echo "workspace: $WS"
-PROXY_PID=""
+PROXY_PID=""; L=""
+# `exec` in start_proxy makes PROXY_PID the node process itself. Without it $!
+# was the subshell, the signal reaped only that, and the proxy was orphaned
+# with its cwd already deleted by the `rm -rf` below — one leaked server per
+# run, alive until something else ended it. `wait` rather than a sleep: it
+# returns when the process is really gone, and it is safe to call twice.
+stop_proxy() {
+  [ -n "$PROXY_PID" ] || return 0
+  kill "$PROXY_PID" 2>/dev/null || true
+  wait "$PROXY_PID" 2>/dev/null || true
+  PROXY_PID=""
+}
 cleanup() {
-  [ -n "$PROXY_PID" ] && kill "$PROXY_PID" 2>/dev/null || true
+  stop_proxy
+  # Belt and brace, as in tests/resume-metadata/run.sh: .proxy-port exists only
+  # while a proxy is alive (it removes it on exit), so this reaches something
+  # only when the line above failed to — never a stranger holding a free port.
+  local bp=""; [ -n "$L" ] && bp=$(cat "$L/server/.proxy-port" 2>/dev/null || true)
+  [ -n "$bp" ] && { fuser -k -TERM "${bp}/tcp" 2>/dev/null || true; }
   if [ -n "${KEEP:-}" ]; then echo "kept $WS"; else rm -rf "$WS"; fi
 }
 trap cleanup EXIT
@@ -30,7 +46,7 @@ sed -i 's/__SLUG_SNAKE__/cancel_demo/g; s/__SLUG__/cancel-demo/g; s/__COURSE_COD
 
 start_proxy() { # $1 = PATH prefix ("" for the real CLI), $2 = port
   rm -f "$L/server/.proxy.json" "$L/server/.proxy-port"
-  (cd "$L" && PATH="${1:+$1:}$PATH" PROXY_PORT="$2" node server/proxy.js >"$WS/proxy-$2.log" 2>&1) &
+  (cd "$L" && exec env PATH="${1:+$1:}$PATH" PROXY_PORT="$2" node server/proxy.js >"$WS/proxy-$2.log" 2>&1) &
   PROXY_PID=$!
   for _ in $(seq 1 60); do [ -f "$L/server/.proxy-port" ] && break; sleep 0.25; done
   [ -f "$L/server/.proxy.json" ] && [ -f "$L/server/.proxy-port" ] || { echo "proxy did not write .proxy.json + .proxy-port"; cat "$WS/proxy-$2.log"; exit 1; }
@@ -39,7 +55,7 @@ start_proxy() { # $1 = PATH prefix ("" for the real CLI), $2 = port
 
 start_proxy "$HERE/fake-claude" "$PORT"
 PROXY_URL="http://127.0.0.1:$(cat "$L/server/.proxy-port")" LESSON_DIR="$L" CORE_DIR="$WS/_lesson-core" node "$HERE/check.cjs"
-kill "$PROXY_PID"; wait "$PROXY_PID" 2>/dev/null || true; PROXY_PID=""
+stop_proxy
 
 if [ -n "${REAL_CLAUDE:-}" ]; then
   rm -f "$L/server/chat.log"
