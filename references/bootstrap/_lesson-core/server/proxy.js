@@ -60,6 +60,7 @@ import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
+import { createNdjsonReader } from "./ndjson.js";
 
 // Can we spawn the CLI WITHOUT a shell?
 //
@@ -309,7 +310,20 @@ function signalTree(rootPid, pids, sig) {
     try { spawnSync("taskkill", ["/pid", String(rootPid), "/T", "/F"], { timeout: 5000 }); } catch (_) {}
     return;
   }
-  try { process.kill(-rootPid, sig); } catch (_) {}
+  // `kill(-pid)` signals whatever process group carries that pgid — NOT necessarily one this proxy
+  // started. A turn's CLI leads a group of its own only while it is alive (spawn set `detached`);
+  // once it has exited, that number is free for the kernel to hand to somebody else's group, and
+  // on this box it landed on the proxy's own: a cancel took the whole server down mid-turn, which
+  // is what tests/thread-actors case 5 kept catching as an ECONNREFUSED on the request after the
+  // kill. So the group is signalled only while the root is still alive AND still leads it. The
+  // per-pid kills below are what actually ends the tree; the group signal only catches members
+  // that re-parented. With no `ps` to ask there is nothing better to go on, so the old behaviour
+  // stands rather than silently orphaning children.
+  const rows = psTable();
+  const leadsItsOwnGroup = rows && rows.length
+    ? rows.some((r) => r.pid === rootPid && r.pgid === rootPid)
+    : pidAlive(rootPid);
+  if (leadsItsOwnGroup) { try { process.kill(-rootPid, sig); } catch (_) {} }
   for (const p of pids) { try { process.kill(p, sig); } catch (_) {} }
 }
 
@@ -414,30 +428,15 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
   // detached: the CLI leads its own process group so /chat/cancel can take
   // the whole tree down with one signal (see killTree).
   const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, detached: !IS_WIN, env: { ...process.env, MPLBACKEND: "agg" } });
-  let buffer = "";
+  // Chunk boundaries fall wherever the pipe puts them — mid-object and mid-character both.
+  // createNdjsonReader carries each across; server/ndjson.js has the why.
+  const reader = createNdjsonReader(onEvent);
   let stderr = "";
-  proc.stdout.on("data", (d) => {
-    buffer += d.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const parsed = JSON.parse(trimmed);
-        onEvent(parsed);
-      } catch (_) {}
-    }
-  });
+  proc.stdout.on("data", (d) => reader.push(d));
   proc.stderr.on("data", (d) => (stderr += d.toString()));
   proc.on("error", (err) => onError(err));
   proc.on("close", (code) => {
-    if (buffer.trim()) {
-      try {
-        const parsed = JSON.parse(buffer.trim());
-        onEvent(parsed);
-      } catch (_) {}
-    }
+    reader.end();
     if (code !== 0) onError(new Error(stderr.trim() || `claude exited with code ${code}`));
     else onDone();
   });

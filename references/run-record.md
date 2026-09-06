@@ -136,11 +136,13 @@ newest record in that lesson, so a resumed session does not have to carry the id
 | `stage --media-id <id> --name <file>` | Creates this run's staging directory for that media id and prints the path the producer writes to. |
 | `promote --media-id <id> --from <staged> --to <lesson-relative> [--min-bytes <n>]` | Validates the staged bytes and moves them into the lesson tree. Prints a JSON receipt; exits 6 on refusal. See below. |
 | `fail --media-id <id> --reason <text>` | Records a production that produced nothing. Touches no file. |
+| `check-return --media-id <id> [--from <file>]` | The Phase 3 boundary: reads a specialist's returned JSON manifest (`--from`, or stdin) and refuses it unless it agrees with the record. Writes nothing; exits 10 on refusal. See below. |
 | `attest reuse --spec <file> [--at <iso>]` | Decides every review the spec asks for and carries each still-valid prior attestation into this run's record. Prints `{"reuse":[…],"review":[{media_id,reviewer,reason}]}`. See below. |
 | `attest record --spec <file> --media-id <id> --reviewer <name> --verdict pass\|issue\|fail [--at <iso>]` | Records a fresh verdict with what it attests to. Prints the attestation as one JSON line. |
 | `attest verify --spec <file>` | Coverage gate: every review the spec asks for has a valid attestation in **this** run's record, and the spec names a review of every medium the record carries. Exits 8 naming the gaps otherwise. |
 | `worktree add` | Creates this run's build worktree from `git.base_sha`, records `git.worktree` + `git.worktree_state`, and prints the lesson root inside it. Takes the **user's** lesson root, never the worktree's — given one carrying the pointer it refuses (exit 1). Idempotent: a resumed run calls it again and gets its worktree back. |
 | `worktree remove` | Prunes it. Same root as `add`: a worktree does not remove itself. Exits 7 and removes nothing while it holds uncommitted work or a commit no ref keeps; exits 3 when the record names no worktree. |
+| `branch [--name <n>]` | Creates the run's branch **in the build worktree** from `git.base_sha`, records the name it created on `git.branch`, and prints it. Deterministic on a collision; idempotent on a resumed run. Exits 3 with no live worktree, 9 when the name and every suffix are taken. See below. |
 | `render` | Rewrites `lesson_build.log.md` from every record in the lesson. |
 
 ## The build worktree
@@ -164,7 +166,7 @@ The log is the one visible write — it is untracked but not ignored, so it does
   whichever of the two lesson roots a command is given. One hop only — a pointer naming a lesson
   root that is itself a build worktree is refused, not followed.
 - **No branch until Phase 3.** The worktree is detached on the base SHA until Phase 3 names the
-  branch in it, so a run aborted at the Phase 2 gate leaves no branch behind.
+  branch in it with `branch`, so a run aborted at the Phase 2 gate leaves no branch behind.
 - **`worktree add` is how a run resumes.** Called again it returns the same worktree with whatever
   it had already built still in it, and re-creates it on the recorded branch if the directory is
   gone but the branch is not.
@@ -175,6 +177,24 @@ The log is the one visible write — it is untracked but not ignored, so it does
 Phase 5 merges in the worktree too, on a detached HEAD, and moves `refs/heads/<base>` only when no
 working tree has it checked out — git refuses to push or fetch into a checked-out branch for the
 same reason. Commands: `references/phase-5-deploy.md` § Step 2b.
+
+### The run's branch
+
+`branch` names it, in the worktree. `lesson-update/<slug>-YYYYMMDD` where the date is the record's
+own `started` stamp in UTC — never `new Date()`, so a resumed run and a run that crosses midnight
+name the same branch — or `--name <n>` for a caller that has its own.
+
+- **The collision rule is here, not in a session's prose.** A name already taken as a local
+  `refs/heads/` takes the first free `-a`…`-z` suffix; a remote-tracking ref of the same name is not
+  a collision, because it does not stop `checkout -b` and treating it as one would push every re-run
+  of a pushed lesson onto a suffix nobody asked for. All 27 taken is exit 9 and no branch created.
+- **The name that was created is what is recorded.** `git.branch` holds the actual name, suffix
+  included, and Phase 5 reads it back verbatim rather than rebuilding it from the pattern.
+- **A run that already has a branch keeps it.** Called again — Phase 3 resuming after a crash — it
+  checks the recorded branch out instead of opening a second one beside it, and exits 3 rather than
+  silently choosing a different name if that branch is gone.
+
+Fixture: `tests/branch-collision/`.
 
 ## Artifacts: stage, validate, promote
 
@@ -218,6 +238,42 @@ truncated or simply wrong therefore leaves the lesson exactly as it was, and say
   the full 64 characters and is the artifact's identity in the record.
 
 Fixture: `tests/stage-promote/`.
+
+## The Phase 3 return boundary
+
+A manim or web-image specialist stages and promotes its own artifact and then **returns** a JSON
+manifest — `mp4_path`, `py_path`, `sha256`, `effective_action` — that assembly consumes directly:
+the splice takes the `<video src>` out of it. `check-return` is what that manifest crosses before
+assembly sees it, and it needs no schema per agent, because the record already knows what the run
+promoted.
+
+- **The paths it claims must be exactly what this run promoted for that media id.** No more, so a
+  file written into the lesson tree behind the staging area's back is never spliced in; no fewer, so
+  a manifest that names the MP4 and forgets the `.py` beside it is caught. A path claim is any
+  string under a key named `path`/`paths` or ending in `_path`/`_paths` — by shape, so a third file
+  an agent returns is checked too instead of slipping past an allow-list. Absolute paths, paths
+  outside the lesson root and paths that are not on disk are all refusals.
+- **A `sha256` it states is checked against the bytes on disk**, not against the record: the record
+  is where the run said the bytes were, and this is the question of whether they still are.
+- **The action is the agents' vocabulary, not the plan's.** `agents/manim-agent.md` § Stage 4
+  states `effective_action: "as-briefed" | "degraded-to-replace"`; `agents/web-image-agent.md`
+  § Return format states `action: "keep_existing" | "format_change"`, or no action key at all on a
+  plain success. Those are what is accepted, under either key, and a return that states none is
+  fine. The plan's `keep|refine|replace|remove|add` is a different axis — it is what the run was
+  ASKED to do, and it lives on the media row as `intent`; an agent says what it did about that.
+  Two of those five could never reach here anyway: a `keep` or a `remove` verdict spawns no agent
+  (`references/phase-2-plan.md` § Update mode), so there is no return for them to be the word of.
+- **A return that names no path is the documented no-op** — a bare `null`, or web-image's
+  `{"action":"keep_existing","reason":…}` from a refine that found nothing better — and it passes
+  only while the run promoted nothing for that media id. If it did promote something, a no-change
+  return is the "no fewer" rule seen from the empty end, and is refused.
+- **A return that reports its own failure (`ok: false`) is refused** with that as the reason: it is
+  the respawn case, not a manifest to check.
+- **It writes nothing.** A refusal is exit 10 with the reason on stderr, answered by respawning that
+  specialist once with the same brief — a respawn that succeeds should not have to clear a flag this
+  left. A pass prints one JSON line: `{"media_id","effective_action","artifacts":[{path,sha256}]}`.
+
+Fixture: `tests/agent-return/`.
 
 ## Attested verdicts
 

@@ -76,12 +76,34 @@
  * stands on findings that are still open, so it is reviewed again rather than carried past this
  * run's issue list. Coverage is preserved by proof, never by omission: no attestation means review.
  *
+ * `branch` names the run's git branch, in the build worktree and never in the user's checkout. The
+ * name is `lesson-update/<slug>-YYYYMMDD` from the record's own `started` stamp (UTC, so a resumed
+ * run and one that crosses midnight name the same branch), or `--name`; a name already taken as a
+ * local `refs/heads/` takes the first free `-a`...`-z` suffix, and the name actually created is
+ * recorded on `git.branch` for Phase 5 to read back verbatim. Called again on a run that already
+ * has a branch, it checks that one out rather than opening a second beside it.
+ *
+ * `check-return` is the Phase 3 boundary between a specialist's returned JSON manifest and the
+ * splice that consumes it. It reads the return from `--from <file>` or stdin and refuses one that
+ * does not parse, is not a manifest object, reports its own failure (`ok: false`), states an action
+ * outside what the two agent files specify, or disagrees with the record: the paths it claims must
+ * be exactly the artifacts this run promoted for that media id -- no more, so nothing written
+ * behind the staging area's back is spliced in, and no fewer, so a manifest that forgot half of
+ * what it produced is caught -- and a `sha256` it states must be the hash of one of those files as
+ * they are on disk now. The action is stated as `effective_action` (manim) or `action` (web image)
+ * or not at all, and its vocabulary is the agents' -- `as-briefed`, `degraded-to-replace`,
+ * `keep_existing`, `format_change` -- NOT the plan's 5-way media taxonomy, which is a different
+ * axis: the plan's word is what the run was asked to do, an agent's is what it did about that. A
+ * bare `null`, and a return that names no path while the run promoted nothing for that media id,
+ * are the documented no-ops. It writes nothing: a refusal is answered by respawning that specialist.
+ *
  * Exit codes:
  *   0  ok
  *   1  usage or I/O error
  *   2  init: a record with that run_id already exists (never clobbered)
  *   3  get: the field is unset (absent or null)  |  approve: hash does not match the recorded
- *      plan  |  worktree remove: no worktree is recorded for this run
+ *      plan  |  worktree remove: no worktree is recorded for this run  |  branch: this run has
+ *      no live worktree to open one in, or the branch it recorded is gone
  *   4  approve: no plan is recorded for this run — approval refers to nothing, so it is not approval
  *   5  approve: the run was aborted by a person; a machine does not un-abort it
  *   6  promote: refused — not staged by this run, not a complete file, or the write failed; the
@@ -90,6 +112,10 @@
  *      nothing is removed
  *   8  attest verify: a review the spec asks for has no valid verdict in this run's record, or a
  *      medium the run ships is one the spec names no review of; the gaps are named on stdout
+ *   9  branch: the name and every -a...-z suffix of it already exist; no branch is created
+ *  10  check-return: the specialist's return is unusable -- unparseable, not a manifest, an
+ *      unknown action, or its paths and hash disagree with what this run promoted; nothing is
+ *      recorded, because a refusal is answered by respawning that specialist
  */
 
 'use strict';
@@ -1208,6 +1234,233 @@ function worktreeRemove(lessonRoot, rec) {
   process.stdout.write(`${wtLesson}\n`);
 }
 
+// ---------- check-return ----------
+
+// The Phase 3 boundary. A manim or web-image specialist stages and promotes its own artifact and
+// then RETURNS a JSON manifest — `mp4_path`, `py_path`, `sha256`, `effective_action` — which
+// "assembly consumes directly" (references/phase-3-execution.md § Step 3): the splice takes the
+// `<video src>` from it. A return that is truncated, that is prose, that names a path nothing
+// promoted, or that quietly drops one of the two files it produced is a wrong splice, and until
+// this existed the only thing between it and the lesson was main Claude reading it.
+//
+// The rule needs no schema per agent, because the record already knows what the run promoted: the
+// set of paths the return claims must be exactly the set of artifacts this media row holds, and a
+// hash it states must be the hash of those bytes. A return that forgot its `.py` fails because the
+// promoted `.py` is unclaimed; one that names a file it wrote into the lesson tree behind the
+// staging area's back fails because nothing promoted it.
+//
+// Read-only on purpose: a refusal here is answered by respawning that specialist once with the
+// same brief (§ Step 4), and a respawn that succeeds should not have to clear a flag this left.
+//
+// The action vocabulary is READ OFF THE AGENT FILES, not the plan's 5-way media taxonomy. They are
+// different axes and conflating them refused every correct return: the plan's `keep|refine|replace|
+// remove|add` is what the run was ASKED to do (it is the media row's `intent`), while what an agent
+// states is what it DID relative to that brief — `as-briefed` or `degraded-to-replace` for manim
+// (agents/manim-agent.md § Stage 4), `keep_existing` or `format_change` for web images
+// (agents/web-image-agent.md § Return format). Neither agent is specified to state the plan's word.
+const AGENT_ACTIONS = ['as-briefed', 'degraded-to-replace', 'keep_existing', 'format_change'];
+// manim states it as `effective_action`, web-image as `action`, and web-image's success return
+// states neither — so the key is looked for under both names and its absence is not a refusal.
+const ACTION_KEYS = ['effective_action', 'action'];
+
+function cmdCheckReturn(flags) {
+  const lessonRoot = requireLesson(flags);
+  const runId = resolveRun(lessonRoot, flags);
+  const rec = readRecord(lessonRoot, runId);
+  const mediaId = requireSegment(flags['media-id'], '--media-id');
+
+  let raw;
+  if (flags.from) {
+    try { raw = fs.readFileSync(flags.from, 'utf8'); }
+    catch (e) { die(`cannot read the return at ${flags.from}: ${e.message}`); }
+  } else {
+    try { raw = fs.readFileSync(0, 'utf8'); }
+    catch (e) { die(`cannot read the return on stdin: ${e.message}`); }
+  }
+
+  const refuse = (reason) => {
+    process.stderr.write(`run-manifest: ${mediaId}'s return is not usable: ${reason}\n`);
+    process.exit(10);
+  };
+
+  if (!raw.trim()) refuse('it is empty — the specialist returned nothing');
+  let ret;
+  try {
+    ret = JSON.parse(raw);
+  } catch (e) {
+    // The two ways a real return arrives unparseable: cut off part-way, or wrapped in prose.
+    refuse(`it is not JSON (${e.message}) — first 200 bytes: ${JSON.stringify(raw.slice(0, 200))}`);
+  }
+  // A web-image refine that found nothing better returns a bare `null` (agents/web-image-agent.md
+  // § Refine behavior). It is not a failure — but it is not a free pass either, so it goes to the
+  // same question as a manifest that names no path: it is a no-op only if the run really promoted
+  // nothing for this media id. Anything else that is not an object is a malformed return.
+  const isNull = ret === null;
+  if (!isNull && (typeof ret !== 'object' || Array.isArray(ret)))
+    refuse(`it is a ${Array.isArray(ret) ? 'JSON array' : typeof ret}, not a manifest object`);
+
+  const row = (rec.media || []).find((m) => m && m.media_id === mediaId);
+  if (!row) refuse(`no media row with that id is in run ${runId} — nothing planned it`);
+  if (row.artifact_failure)
+    refuse(`the run recorded a failed production for it (${row.artifact_failure.reason || 'no reason'}), `
+      + 'so there is nothing for a manifest to describe');
+
+  // A return that says outright that it failed is not a manifest to check — it is the respawn case,
+  // and saying so is more use than letting it fall through to "it names no path".
+  if (!isNull && ret.ok === false)
+    refuse(`it reports its own failure (\`ok: false\`${ret.reason_if_failed ? `, ${ret.reason_if_failed}` : ''})`);
+
+  // Stated under either key, or not at all. Checked when stated, because a word outside the two
+  // agents' vocabularies means the return came from something that was briefed differently.
+  const actionKey = isNull ? undefined : ACTION_KEYS.find((k) => Object.prototype.hasOwnProperty.call(ret, k));
+  const action = actionKey ? ret[actionKey] : null;
+  if (actionKey && !AGENT_ACTIONS.includes(action))
+    refuse(`\`${actionKey}\` is ${JSON.stringify(action)}, not one of ${AGENT_ACTIONS.join(', ')}`);
+
+  // Every string value whose key ends in `_path`, plus `path`/`paths`, is a path claim. Named by
+  // shape rather than by a list of the two agents' key names, so an agent that returns a third
+  // file is checked too instead of slipping past an allow-list.
+  const claims = [];
+  for (const [key, value] of Object.entries(isNull ? {} : ret)) {
+    const isPathKey = key === 'path' || key === 'paths' || key.endsWith('_path') || key.endsWith('_paths');
+    if (!isPathKey) continue;
+    for (const v of Array.isArray(value) ? value : [value]) {
+      if (v === null || v === undefined) continue;
+      if (typeof v !== 'string') refuse(`\`${key}\` is ${JSON.stringify(v)}, which is not a path`);
+      if (!v.trim()) refuse(`\`${key}\` is an empty string`);
+      claims.push({ key, raw: v });
+    }
+  }
+  const lessonAbs = path.resolve(lessonRoot);
+  const promoted = new Map();
+  for (const a of Array.isArray(row.artifacts) ? row.artifacts : []) if (a && a.path) promoted.set(a.path, a);
+
+  // Naming no path is the documented NO-OP — `{"action":"keep_existing"}` from a web-image refine
+  // that found nothing better (agents/web-image-agent.md § Refine behavior), the same case as the
+  // bare `null` above. It is only a no-op if the run really promoted nothing: a return that names
+  // no path while this media id holds a promoted artifact is a manifest that dropped its own work,
+  // which is the "no fewer" rule seen from the empty end.
+  if (!claims.length) {
+    if (promoted.size)
+      refuse(`${isNull ? 'it is `null`' : 'it names no path'}, but this run promoted `
+        + `${[...promoted.keys()].join(', ')} for ${mediaId} — `
+        + 'a no-change return cannot be the answer to a production that happened');
+    process.stdout.write(`${JSON.stringify({ media_id: mediaId, effective_action: action || 'no-op', artifacts: [] })}\n`);
+    return;
+  }
+
+  const claimed = new Map();
+  for (const c of claims) {
+    if (path.isAbsolute(c.raw))
+      refuse(`\`${c.key}\` is the absolute path ${c.raw} — a record holds no path that is only true on one machine`);
+    const abs = path.resolve(lessonAbs, c.raw);
+    if (!isInside(lessonAbs, abs)) refuse(`\`${c.key}\` (${c.raw}) leaves the lesson root`);
+    const rel = path.relative(lessonAbs, abs).split(path.sep).join('/');
+    if (!fs.existsSync(abs)) refuse(`\`${c.key}\` names ${rel}, which is not there`);
+    if (!promoted.has(rel))
+      refuse(`\`${c.key}\` names ${rel}, which this run never promoted for ${mediaId} — `
+        + `it holds ${promoted.size ? [...promoted.keys()].join(', ') : 'no artifact at all'}`);
+    claimed.set(rel, c.key);
+  }
+  // …and the other direction: a manifest that describes the video and forgets the `.py` it also
+  // promoted leaves the splice half-informed, which is the same failure seen from the far side.
+  const unclaimed = [...promoted.keys()].filter((p) => !claimed.has(p));
+  if (unclaimed.length)
+    refuse(`it does not name ${unclaimed.join(', ')}, which this run promoted for ${mediaId}`);
+
+  // A hash it states is checked against the bytes on disk, not against the record: the record is
+  // where the run said the bytes were, and this is the question of whether they still are.
+  if (!isNull && Object.prototype.hasOwnProperty.call(ret, 'sha256') && ret.sha256 !== null) {
+    if (typeof ret.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(ret.sha256))
+      refuse(`\`sha256\` is ${JSON.stringify(ret.sha256)}, which is not a SHA-256`);
+    const stated = ret.sha256.toLowerCase();
+    const matches = [...claimed.keys()].filter(
+      (rel) => crypto.createHash('sha256').update(fs.readFileSync(path.resolve(lessonAbs, rel))).digest('hex') === stated,
+    );
+    if (!matches.length)
+      refuse(`\`sha256\` ${stated.slice(0, 12)}… is the hash of none of the files it names `
+        + `(${[...claimed.keys()].join(', ')})`);
+  }
+
+  process.stdout.write(`${JSON.stringify({
+    media_id: mediaId,
+    effective_action: action,
+    artifacts: [...claimed.keys()].map((rel) => ({ path: rel, sha256: promoted.get(rel).sha256 })),
+  })}\n`);
+}
+
+// ---------- branch ----------
+
+// Phase 3 names the run's branch, and the pre-flight checklist's rule for a name already taken is
+// "increment with a suffix (`-a`, `-b`) … Collision handling must be deterministic so the Phase 5
+// merge target is unambiguous" (references/checklists.md § Update-mode pre-flight). Deterministic
+// is what a model choosing a suffix in prose is not, so the choice is made here and the name that
+// was actually created is recorded — Phase 5 reads `git.branch` back verbatim and never rebuilds
+// it from the pattern.
+const BRANCH_SUFFIXES = 'abcdefghijklmnopqrstuvwxyz'.split('');
+
+function cmdBranch(flags) {
+  // Either the user's lesson root or the worktree's: `record-root` leads both to the one record,
+  // so Phase 3 can call this from inside the worktree it is building in.
+  const lessonRoot = requireLesson(flags);
+  const runId = resolveRun(lessonRoot, flags);
+  const rec = readRecord(lessonRoot, runId);
+  const wtLesson = rec.git.worktree;
+  if (!wtLesson)
+    die('no worktree is recorded for this run — `worktree add` first: the branch is created in the '
+      + 'build worktree, never in the user\'s checkout', 3);
+  if (rec.git.worktree_state !== 'live' || !fs.existsSync(wtLesson))
+    die(`the build worktree at ${wtLesson} is not live — \`worktree add\` puts it back`, 3);
+  const wtRoot = git(wtLesson, ['rev-parse', '--show-toplevel']).out;
+
+  // Resuming Phase 3 after a crash must land on the branch the run already has, not open a second
+  // one beside it: the recorded name is the answer whenever it still exists.
+  if (rec.git.branch) {
+    if (!branchExists(wtRoot, rec.git.branch))
+      die(`the record names branch ${rec.git.branch}, which no longer exists — recover it by hand; `
+        + 'a machine does not silently open a different one', 3);
+    if (git(wtRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { allowFail: true }).out !== rec.git.branch)
+      git(wtRoot, ['checkout', rec.git.branch]);
+    process.stdout.write(`${rec.git.branch}\n`);
+    return;
+  }
+
+  if (!rec.git.base_sha)
+    die('git.base_sha is unset — Phase 0 records it, and the branch starts exactly there');
+  // The date is the run's own `started`, in UTC as the record writes every stamp, so a resumed run
+  // and a run that crosses midnight both name the same branch. Never `new Date()`.
+  const day = String(rec.started || '').slice(0, 10).replace(/-/g, '');
+  if (!/^\d{8}$/.test(day)) die(`cannot read a YYYYMMDD from the record's started stamp: ${rec.started}`);
+  const wanted = flags.name || `lesson-update/${rec.lesson.slug}-${day}`;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(wanted) || wanted.includes('..'))
+    die(`refusing branch name ${wanted}`);
+
+  const taken = [];
+  let chosen = null;
+  for (const candidate of [wanted, ...BRANCH_SUFFIXES.map((s) => `${wanted}-${s}`)]) {
+    if (branchExists(wtRoot, candidate)) { taken.push(candidate); continue; }
+    chosen = candidate;
+    break;
+  }
+  if (!chosen)
+    die(`${wanted} and every -a…-z suffix of it already exist — name this run's branch with `
+      + '--name, or delete the ones that are finished', 9);
+
+  git(wtRoot, ['checkout', '-b', chosen, rec.git.base_sha]);
+  rec.git.branch = chosen;
+  writeRecord(lessonRoot, rec);
+  if (taken.length)
+    process.stderr.write(`run-manifest: ${taken.join(', ')} already exist; this run is on ${chosen}\n`);
+  process.stdout.write(`${chosen}\n`);
+}
+
+// refs/heads only. The checklist asks whether the name exists LOCALLY: a remote-tracking ref of
+// the same name does not stop `checkout -b`, and treating it as a collision would push every
+// re-run of a pushed lesson onto a suffix nobody asked for.
+function branchExists(repoDir, name) {
+  return git(repoDir, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`], { allowFail: true }).code === 0;
+}
+
 // ---------- render ----------
 
 function notes(rec, phase) {
@@ -1408,7 +1661,9 @@ const commands = {
   promote: () => cmdPromote(flags),
   fail: () => cmdFail(flags),
   attest: () => cmdAttest(flags, positional),
+  'check-return': () => cmdCheckReturn(flags),
   worktree: () => cmdWorktree(flags, positional),
+  branch: () => cmdBranch(flags),
   render: () => cmdRender(flags),
 };
 if (!cmd || !commands[cmd]) {

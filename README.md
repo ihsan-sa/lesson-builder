@@ -149,6 +149,9 @@ scripts/lesson-ast.cjs         Babel-parses the lesson: the media inventory, the
                                node, and what a removal leaves unreachable
 tests/ast-inventory/           Fixture for it: helper-vs-graph, evidence-based manim pairing, a
                                byte-exact splice, stranded helpers (node + @babel/parser)
+tests/check.sh                 The release gate: one command that runs every fixture needing no
+                               model call, no browser and no network, in parallel, and prints the
+                               excluded ones with the command that runs each. Non-zero if any fails
 ```
 
 ## Installation
