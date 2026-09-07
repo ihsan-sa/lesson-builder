@@ -8,10 +8,12 @@
  * pop-out's host and its <html>; both palettes live in the sheet, so everything styled from the
  * tokens repaints on the class change with nothing re-rendering.
  *
- * This fixture is text-only, and text is enough for the two ways that mechanism breaks: a palette
- * class written as a literal somewhere the theme cannot reach it, and a token declared in one
- * theme block but not the other. What text cannot check — that the built page actually paints
- * both ways, pop-out included — is tests/shell-theme/README.md's by-hand demonstration.
+ * This fixture is text-only, and text is enough for three ways that mechanism breaks: a palette
+ * class written as a literal somewhere the theme cannot reach it, a token declared in one theme
+ * block but not the other, and a lesson that paints an SVG from THEMES_G while leaving the theme
+ * to the shell — which gets a dark page with light-palette graphs on it. What text cannot check —
+ * that the built page actually paints both ways, uncontrolled lesson and pop-out included — is
+ * tests/shell-theme/README.md's by-hand demonstration, tests/shell-theme/run.sh.
  *
  * Node only. No npm install, no network, no browser. Runs in well under a second.
  * Exit code 0 only when every check passes.
@@ -137,6 +139,68 @@ function hookBlock(js, hook, needle) {
   const close = js.indexOf(']);', at);
   if (close === -1) return null;
   return js.slice(open, close + 3);
+}
+
+// ── The graph-theme trap ────────────────────────────────────────────────────
+// references/template.md: "Graph colors do not [follow the class]: they are JS values, so
+// pass theme={theme} and onThemeChange={setTheme} and rebind G = THEMES_G[theme] in the
+// component body. Omit both props and the shell keeps the choice itself, which is right
+// for a lesson with no SVG graphs."
+//
+// So the rule is conditional, and reading it the other way round is the mistake: omitting
+// the props is not wrong in itself, it is wrong FOR A LESSON WHOSE SVG PAINTS FROM G.
+// That lesson gets a dark page with light-palette graphs on it, which is what both lessons
+// on the shell ship today.
+//
+// What text can see: which props the <LessonShell> tag carries, whether any JSX colour
+// attribute reads G, and whether some line rebinds G from a theme. What it cannot see is
+// whether the value handed to theme= is really state, or whether the rebind runs on every
+// render — browser.cjs reads those off a real page.
+
+// The opening <LessonShell ...> tag as text. Scanned with brace depth rather than to the
+// first `>`: `tutor={<Chatbot ... />}` puts a `>` inside a prop value, and stopping there
+// reads a lesson's props as ending before `theme=` is ever reached.
+function shellPropsTag(js) {
+  const at = js.indexOf('<LessonShell');
+  if (at === -1) return null;
+  let depth = 0;
+  for (let i = at; i < js.length; i++) {
+    const c = js[i];
+    if (c === '{') depth++;
+    else if (c === '}') depth--;
+    else if (c === '>' && depth === 0) return js.slice(at, i + 1);
+  }
+  return null;
+}
+
+// Lines carrying a JSX colour attribute whose value reads the graph palette binding:
+// fill={G.bg}, stroke={G.gold}, stopColor={G.axis}. These are attributes on the rendered
+// SVG, so no class swap reaches them. One entry per line, like themeClassSites, so a
+// failure prints the site rather than a count.
+function graphColourSites(js) {
+  const lines = stripJsComments(js).split('\n');
+  const out = [];
+  lines.forEach((text, i) => {
+    if (/\b(fill|stroke|color|stopColor|floodColor)=\{[^}]*\bG\./.test(text)) {
+      out.push({ line: i + 1, text: text.trim() });
+    }
+  });
+  return out;
+}
+
+// `ok` is the verdict a caller acts on; the rest is there so a failure prints why.
+function graphThemeAudit(js) {
+  const src = stripJsComments(js);
+  const tag = shellPropsTag(src) || '';
+  const graphs = graphColourSites(js);
+  const theme = /\btheme=\{/.test(tag);
+  const onChange = /\bonThemeChange=\{/.test(tag);
+  const rebinds = /\bG\s*=\s*THEMES_G\[/.test(src);
+  return { graphs, theme, onChange, rebinds, ok: graphs.length === 0 || (theme && onChange && rebinds) };
+}
+function auditDetail(a) {
+  return `${a.graphs.length} SVG colour(s) from G`
+    + `, theme= ${a.theme}, onThemeChange= ${a.onChange}, rebinds G ${a.rebinds}`;
 }
 
 // The text between the open tag and </button> of the button carrying `cls`.
@@ -320,6 +384,72 @@ function buttonLabel(js, cls) {
     const gateAt = js.indexOf('{tutorEnabled && (');
     check('the switch is not inside the tutor gate', toggleAt !== -1 && gateAt !== -1 && toggleAt < gateAt,
       `theme-toggle at ${toggleAt}, tutor gate opens at ${gateAt}`);
+  }
+
+  // -------------------------------------------------------------------------
+  heading(5, 'a lesson with graphs is not allowed to leave the theme to the shell');
+  {
+    // Fixtures first, each built here, so the assertion on the real lesson bodies below
+    // means something. The graph body and the shell mount are the same in all of them;
+    // only the props and the rebind move.
+    const graph = 'let G = THEMES_G.light;\n'
+      + 'const T = () => (\n  <svg>\n    <rect fill={G.bg} />\n    <path stroke={G.gold} />\n  </svg>\n);\n';
+    const mount = (props) => `const A = () => (\n  <LessonShell courseCode="X"${props}>\n    {body}\n  </LessonShell>\n);\n`;
+    const rebind = 'G = THEMES_G[theme];\n';
+
+    const held = graph + rebind + mount(' theme={theme} onThemeChange={setTheme}');
+    const neither = graph + mount('');
+    const halfWay = graph + rebind + mount(' theme={theme}');
+    const propsNoRebind = graph + mount(' theme={theme} onThemeChange={setTheme}');
+    const noGraphs = 'const T = () => <p>no svg here</p>;\n' + mount('');
+
+    check('a lesson that holds the theme and rebinds G passes', graphThemeAudit(held).ok,
+      auditDetail(graphThemeAudit(held)));
+    check('…and it is not passing by having no graphs to check', graphThemeAudit(held).graphs.length === 2,
+      auditDetail(graphThemeAudit(held)));
+    check('omitting both props with graphs on the page is the trap, and fails',
+      !graphThemeAudit(neither).ok, auditDetail(graphThemeAudit(neither)));
+    check('passing only theme= fails too — the shell would never hand a change back',
+      !graphThemeAudit(halfWay).ok, auditDetail(graphThemeAudit(halfWay)));
+    check('passing both props without rebinding G fails — the SVG still cannot move',
+      !graphThemeAudit(propsNoRebind).ok, auditDetail(graphThemeAudit(propsNoRebind)));
+    // The other half of the rule, and the half that makes it a rule rather than a ban:
+    // template.md says omitting both props is RIGHT for a lesson with no SVG graphs. A
+    // check that failed this one would be telling every plain lesson to take state it
+    // does not need.
+    check('a lesson with no graphs may leave the theme to the shell', graphThemeAudit(noGraphs).ok,
+      auditDetail(graphThemeAudit(noGraphs)));
+
+    // The tag scan, on a mount shaped like the real one: `tutor={<Chatbot ... />}` before
+    // the theme props. Reading to the first `>` stops inside the Chatbot and reports a
+    // lesson that does everything right as the trap.
+    const tutorFirst = graph + rebind
+      + 'const A = () => (\n  <LessonShell tutor={<Chatbot open={o} />} theme={theme} onThemeChange={setTheme}>\n'
+      + '    {body}\n  </LessonShell>\n);\n';
+    check('a `>` inside an earlier prop value does not hide the theme props',
+      graphThemeAudit(tutorFirst).ok, auditDetail(graphThemeAudit(tutorFirst)));
+    // And a commented-out graph is not a graph.
+    const commentedGraph = '// <rect fill={G.bg} />\n' + mount('');
+    check('a colour attribute named only in a comment is not a graph site',
+      graphThemeAudit(commentedGraph).graphs.length === 0, auditDetail(graphThemeAudit(commentedGraph)));
+
+    // The two lesson bodies this directory ships, which are the only lesson sources in
+    // this repo — the lessons that ship on the shell live in another one, so this case
+    // guards the fixtures and states the rule; it cannot see those. run.sh builds both of
+    // these and browser.cjs presses the switch on each.
+    const LESSONS = path.join(__dirname, 'lesson');
+    const demo = fs.readFileSync(path.join(LESSONS, 'theme_demo.jsx'), 'utf8');
+    const uncontrolled = fs.readFileSync(path.join(LESSONS, 'theme_uncontrolled.jsx'), 'utf8');
+    const demoAudit = graphThemeAudit(demo);
+    const unAudit = graphThemeAudit(uncontrolled);
+    check('theme_demo.jsx draws from G and holds the theme, so it passes', demoAudit.ok,
+      auditDetail(demoAudit));
+    check('…and it really does have graphs to hold it for', demoAudit.graphs.length > 0,
+      auditDetail(demoAudit));
+    check('theme_uncontrolled.jsx draws from G and passes neither prop, so it is flagged',
+      !unAudit.ok, auditDetail(unAudit));
+    check('…and it is flagged for the props, not for a missing SVG',
+      unAudit.graphs.length > 0 && !unAudit.theme && !unAudit.onChange, auditDetail(unAudit));
   }
 
   // -------------------------------------------------------------------------
