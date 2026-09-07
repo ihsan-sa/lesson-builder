@@ -54,6 +54,12 @@ inverted — the rail floats, and the shell's block still reserves its 92px gutt
 — so a rule that went missing and a rule that leaked past its media query both
 show up.
 
+One case is a press rather than a measurement, on a page load of its own: at
+390px the shell's contents rail must start collapsed to 48px **and** must still
+open to 262px when the reader presses "Show contents", and stay open. Collapsing
+it by default is the fix; an inert toggle would be a worse bug than the one
+being fixed, so both halves are asserted together.
+
 ## What it found (2026-09-06, before the fix)
 
 - **classic was already clean at 390px**: `chat/chat.css.js` gained a

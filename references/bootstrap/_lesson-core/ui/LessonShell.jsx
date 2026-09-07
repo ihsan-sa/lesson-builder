@@ -299,11 +299,6 @@ export function LessonShell({
   // wide on a large screen would push the article off the layout.
   useEffect(() => {
     const refit = () => {
-      // Only ever closes, and only at a width that cannot give the article its
-      // minimum beside the rail: a reader who opens the rail on a phone keeps
-      // it open until the window is resized (or the phone rotated) into a width
-      // with no room for it. Widening again never reopens a rail a reader shut.
-      if (!railFits()) setRailOpen(false);
       setSideW((w) => clamp(w, SIDE_MIN, sideMax()));
       setBottomH((h) => clamp(h, BOTTOM_MIN, bottomMax()));
     };
@@ -311,6 +306,23 @@ export function LessonShell({
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
   }, [sideMax, bottomMax]);
+
+  // Close the rail when the window is resized (or the phone rotated) to a width
+  // that cannot give the article its minimum beside it. Only ever closes, and
+  // only on a resize: a reader who presses "Show contents" on a phone keeps the
+  // rail open until they close it or the width changes again, and widening
+  // never reopens a rail a reader shut.
+  //
+  // Its own effect, listening for nothing but resize, because the clamps above
+  // re-run on every railOpen change -- sideMax is keyed on railOpen. Sharing
+  // that effect made pressing "Show contents" below 551px re-run this line and
+  // shut the rail in the same tick, so the button was inert on a phone and the
+  // contents list could not be reached at all.
+  useEffect(() => {
+    const closeIfCramped = () => { if (!railFits()) setRailOpen(false); };
+    window.addEventListener("resize", closeIfCramped);
+    return () => window.removeEventListener("resize", closeIfCramped);
+  }, []);
 
   const onWindowDrag = useCallback((e) => {
     const g = win;

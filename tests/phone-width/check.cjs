@@ -31,6 +31,8 @@ const { chromium } = require(resolveDep("playwright"));
 
 const BROWSER = process.env.PHONE_WIDTH_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
 const PHONE = { width: 390, height: 844 };
+// The two widths ui/LessonShell.jsx gives the contents rail.
+const RAIL_W = 262, RAIL_W_COLLAPSED = 48;
 const DESKTOP = { width: 1440, height: 900 };
 
 // Anything smaller than this is a rounding artefact of subpixel layout, not a
@@ -146,6 +148,34 @@ async function measure(browser, url, viewport) {
   return snap;
 }
 
+// The rail starts collapsed at 390px; pressing "Show contents" must still open
+// it, and it must stay open. Its own page load, so the press is read against a
+// rail the shell collapsed on its own rather than one an earlier case left in
+// some state. Both halves are asserted: the rail the reader did not ask for is
+// out of the way, and the rail the reader did ask for is there.
+async function probeRailToggle(browser, url) {
+  const ctx = await browser.newContext({ viewport: PHONE });
+  const page = await ctx.newPage();
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".rail-toggle", { timeout: 30000 });
+  const read = () => page.evaluate(() => {
+    const rail = document.querySelector(".rail");
+    return {
+      collapsed: rail ? rail.classList.contains("rail-collapsed") : null,
+      width: rail ? rail.getBoundingClientRect().width : 0,
+    };
+  });
+  const before = await read();
+  await page.click(".rail-toggle");
+  // Long enough for React to commit and for any effect that would undo the
+  // press to have run: the bug this covers shut the rail again in the tick
+  // after it opened, so reading straight back would have seen it open.
+  await page.waitForTimeout(400);
+  const after = await read();
+  await ctx.close();
+  return { before, after };
+}
+
 function report(label, snap) {
   console.log(
     `\n[${label}] viewport ${snap.viewportWidth}px  reading column ${Math.round(snap.readingWidth)}px  ` +
@@ -234,11 +264,22 @@ function commonCases(scope, snap) {
         desktop.readingWidth > 400, `${Math.round(desktop.readingWidth)}px`);
       if (name === "shell") {
         check(`${name}: the contents rail is open at its full 262px at 1440px`,
-          Math.round(desktop.railWidth) === 262 && desktop.railCollapsed === false,
+          Math.round(desktop.railWidth) === RAIL_W && desktop.railCollapsed === false,
           `${Math.round(desktop.railWidth)}px, collapsed=${desktop.railCollapsed}`);
         check(`${name}: the block still reserves its 92px gutter at 1440px`,
           desktop.equations.every((e) => e.blockPaddingRight === "92px"),
           `padding-right: ${[...new Set(desktop.equations.map((e) => e.blockPaddingRight))].join("/")}`);
+
+        const toggle = await probeRailToggle(browser, url);
+        console.log(`\n[shell rail toggle] before ${Math.round(toggle.before.width)}px` +
+          `${toggle.before.collapsed ? " (collapsed)" : " (open)"}  ` +
+          `after press ${Math.round(toggle.after.width)}px${toggle.after.collapsed ? " (collapsed)" : " (open)"}\n`);
+        check(`${name}: the contents rail starts collapsed at 390px`,
+          toggle.before.collapsed === true && Math.round(toggle.before.width) === RAIL_W_COLLAPSED,
+          `${Math.round(toggle.before.width)}px, collapsed=${toggle.before.collapsed}`);
+        check(`${name}: "Show contents" still opens the rail at 390px, and it stays open`,
+          toggle.after.collapsed === false && Math.round(toggle.after.width) === RAIL_W,
+          `${Math.round(toggle.after.width)}px, collapsed=${toggle.after.collapsed}`);
       }
     }
   } finally {
