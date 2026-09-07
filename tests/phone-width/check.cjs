@@ -5,6 +5,11 @@
 // measurement skips a part inside are what keeps those parts unnamed. See
 // README.md.
 //
+// Neither measurement lives here: overlap.cjs measures what lands on an
+// equation, collapse.cjs measures a part squeezed to nothing, and sweep.cjs
+// reads both over a real built site. This file adds the page-level geometry
+// (reading column, rail, sideways scroll) and the cases.
+//
 // Two of the lessons are the two stylesheets the 41 lessons render:
 //   shell    lesson/shell_demo.jsx    mounts LessonShell, so chat/chat.css.js
 //            with chat/shell.css.js injected over it (2 of the 41)
@@ -39,17 +44,13 @@ function resolveDep(spec) {
 }
 const { chromium } = require(resolveDep("playwright"));
 const { MIN_PART_W, NOT_LESSON_CONTENT, describeCollapsed, settle, readParts } = require("./collapse.cjs");
+const { EPS_AREA, readEquations, blankEquations } = require("./overlap.cjs");
 
 const BROWSER = process.env.PHONE_WIDTH_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
 const PHONE = { width: 390, height: 844 };
 // The two widths ui/LessonShell.jsx gives the contents rail.
 const RAIL_W = 262, RAIL_W_COLLAPSED = 48;
 const DESKTOP = { width: 1440, height: 900 };
-
-// Anything smaller than this is a rounding artefact of subpixel layout, not a
-// control sitting on an equation: a real overlap in this bug is tens of
-// pixels wide and the whole height of the pill.
-const EPS_AREA = 0.5;
 
 let failed = 0;
 const results = [];
@@ -59,76 +60,16 @@ function check(name, ok, detail) {
   console.log(`  ${ok ? "PASS" : "FAIL"}: ${name}${!ok && detail ? `\n        ${detail}` : ""}`);
 }
 
-// Read out of the page, in the page: every rect is a real getBoundingClientRect
-// on the laid-out document, never a number computed from the stylesheet.
+// The page-level geometry, read out of the page: every rect is a real
+// getBoundingClientRect on the laid-out document, never a number computed from
+// the stylesheet. The equations themselves are measured by overlap.cjs, which
+// sweep.cjs reads too, so both runs measure an overlap the same way.
 const MEASURE = () => {
-  const rect = (el) => {
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
-  };
-  const intersect = (a, b) => {
-    if (!a || !b) return null;
-    const left = Math.max(a.left, b.left), right = Math.min(a.right, b.right);
-    const top = Math.max(a.top, b.top), bottom = Math.min(a.bottom, b.bottom);
-    if (right <= left || bottom <= top) return null;
-    return { left, top, right, bottom, width: right - left, height: bottom - top, area: (right - left) * (bottom - top) };
-  };
   const inner = (el) => {
     if (!el) return 0;
     const cs = getComputedStyle(el);
     return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   };
-
-  // The glyphs, not the box that holds them. In display mode KaTeX makes
-  // .katex-display, .katex and .katex-html full-width blocks and centres the
-  // formula inside them, so the .katex rect reaches the far edge of a column
-  // the equation itself covers a fraction of -- and every absolutely positioned
-  // control in that column reads as covering it. `.katex .base` is
-  // inline-block, width: min-content: it hugs the formula, which is what a
-  // reader would point at. One rect per base, because a formula KaTeX broke
-  // over lines has several and their union is not what any of them covers.
-  const inkRects = (math) => {
-    if (!math) return [];
-    const bases = [...math.querySelectorAll(".base")];
-    return (bases.length ? bases : [math]).map(rect);
-  };
-  const area = (r) => (r ? r.width * r.height : 0);
-
-  const equations = [...document.querySelectorAll(".eq-block[data-latex]")].map((block, i) => {
-    const body = block.querySelector(".eq-body");
-    const side = block.querySelector(".eq-side");
-    const label = block.querySelector(".eq-label");
-    const math = body && (body.querySelector(".katex") || body.querySelector(".eq-raw"));
-    // What the reader sees is the formula clipped to .eq-body, which is its own
-    // scroll container (overflow-x). Intersecting with it rather than taking
-    // the bare glyph rects keeps ink that is scrolled out of sight from
-    // counting as on screen.
-    const ink = inkRects(math).map((r) => intersect(r, rect(body))).filter(Boolean);
-    const worst = (el) => {
-      const r = rect(el);
-      let hit = null;
-      for (const part of ink) {
-        const o = intersect(part, r);
-        if (o && (!hit || o.area > hit.area)) hit = o;
-      }
-      return hit;
-    };
-    return {
-      i,
-      latex: block.getAttribute("data-latex").slice(0, 40),
-      rendered: math ? (math.classList.contains("katex") ? "katex" : "raw") : "none",
-      body: rect(body),
-      inkArea: ink.reduce((sum, r) => sum + area(r), 0),
-      inkWidth: ink.reduce((w, r) => Math.max(w, r.width), 0),
-      sideOverlap: worst(side),
-      labelOverlap: worst(label),
-      sidePosition: side ? getComputedStyle(side).position : null,
-      blockPaddingLeft: getComputedStyle(block).paddingLeft,
-      blockPaddingRight: getComputedStyle(block).paddingRight,
-    };
-  });
-
   // The column the prose is actually set in: .article-col under the shell,
   // .lesson-body without it. This is "what a reader gets" at this width.
   const col = document.querySelector(".article-col") || document.querySelector(".lesson-body");
@@ -139,7 +80,6 @@ const MEASURE = () => {
     readingWidth: inner(col),
     railWidth: rail ? rail.getBoundingClientRect().width : 0,
     railCollapsed: rail ? rail.classList.contains("rail-collapsed") : null,
-    equations,
   };
 };
 
@@ -151,6 +91,7 @@ async function measure(browser, url, viewport) {
   // itself rather than for load: an equation not yet rendered has no geometry.
   await settle(page);
   const snap = await page.evaluate(MEASURE);
+  snap.equations = await readEquations(page);
   snap.parts = await readParts(page);
   await ctx.close();
   return snap;
@@ -208,7 +149,7 @@ function commonCases(scope, snap) {
   // A squeezed column can hide an overlap by leaving no visible math to cover.
   // Assert the math is on screen first, so a pass below means "nothing covers
   // it", never "there is nothing there".
-  const invisible = snap.equations.filter((e) => e.inkArea <= EPS_AREA);
+  const invisible = blankEquations(snap.equations);
   check(`${scope}: every equation's math is visible`, invisible.length === 0,
     invisible.map((e) => `eq${e.i} ink ${Math.round(e.inkArea)}px² (body ${Math.round(e.body ? e.body.width : 0)}px): ${e.latex}`).join("\n        "));
   // The GOAL: no control an equation carries lands on the equation it belongs to.

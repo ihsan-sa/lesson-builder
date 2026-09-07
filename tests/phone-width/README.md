@@ -14,7 +14,9 @@ PHONE_WIDTH_BROWSER=/usr/bin/google-chrome ./run.sh
 ```
 
 Needs a Chromium, three `vite build`s and the KaTeX CDN, so it is not in
-`tests/check.sh`; that gate lists it with this command.
+`tests/check.sh`; that gate lists it with this command. The same two
+measurements run over a whole built site with `sweep.cjs`, and are shown going
+red with `sweep-negative.sh` — both below.
 
 ## What it builds
 
@@ -100,11 +102,11 @@ pass the four. Before this the guards were unreachable — no demo lesson put a
 measured part under any of the four — and a mistyped selector left every case
 green.
 
-## The same measurement over a whole built site
+## Both measurements over a whole built site
 
-`sweep.cjs` runs it over every lesson of a built site, one page load each, at
-390x844. It is how the check was shown to fail on the build before #24 and pass
-on the one after:
+`sweep.cjs` runs **both** of them — overlap and collapse — over every lesson of
+a built site, one page load each, at 390x844. It is how the collapse check was
+shown to fail on the build before #24 and pass on the one after:
 
 ```
 cd ~/dev/lessons/lessons
@@ -114,9 +116,44 @@ PHONE_WIDTH_BROWSER=/usr/bin/google-chrome \
 ```
 
 Lessons come from the directory links on the site's index page that no other
-link sits under, or from `LESSON_PATHS`. Exit 1 when a part is collapsed, naming
-it; the last line reports how many lessons were measured and the narrowest part
-found.
+link sits under, or from `LESSON_PATHS`. The site is only read; nothing here
+writes into a build. Per lesson the run prints `ok`, `OVERLAP`, `COLLAPSED` or
+`OVERLAP+COLLAPSED`, and names what it found: which equation, and whether it was
+the side rail or the caption that covered it, or which part was squeezed. Exit 1
+when any lesson has either. The last line reports how many lessons and equations
+were measured, how many lessons had an overlap and how many had a collapse, and
+the narrowest part found.
+
+The measurement itself is `overlap.cjs`, required by this file's fixture and by
+the sweep alike, so both runs measure an overlap the same way. Until 2026-09-07
+it lived inside `check.cjs` and only ever ran over the three scaffolded lessons:
+the sweep measured collapse alone, and its "41 of 41 ok" could not tell "no
+overlap" from "overlap never looked for".
+
+An equation with no ink on screen is one no overlap could have been seen on, so
+the run counts those and says so rather than passing them in silence — a lesson
+whose math never rendered must not read as a lesson nothing lands on.
+
+### Showing the sweep go red
+
+`sweep-negative.sh` is the sweep's negative control, because a run over a clean
+corpus only ever stays quiet. It copies **one** lesson out of a built site into a
+temp directory — the site is never written to — makes three copies, breaks two
+of them in the built HTML, and asserts what the sweep says about each:
+
+```
+SITE=~/.cc/state/lessons/build-head-0f03499 \
+  PHONE_WIDTH_BROWSER=/usr/bin/google-chrome tests/phone-width/sweep-negative.sh
+```
+
+| copy | injected | the sweep must |
+| --- | --- | --- |
+| clean | nothing | pass, having measured at least one equation |
+| overlap | `.eq-side` pinned over the whole `.eq-block` | go red, name the lesson and `side rail covers`, with nothing collapsed |
+| squeezed | `.eq-body { max-width: 0 }` | go red, name `equation[0]`, and report the equation as having no math on screen |
+
+The overlap copy having nothing collapsed is the point of the pair: the run went
+red on the overlap measurement, not on the collapse one that was already there.
 
 ## What it found (2026-09-06, before the fix)
 
@@ -131,7 +168,7 @@ Fixed in `ui/LessonShell.jsx` (the rail starts collapsed below the width that
 can hold it) and `chat/shell.css.js` (below 520px the rail flows under the
 equation and the block stops reserving a gutter for it).
 
-## What the sweep found (2026-09-06)
+## What the sweep found (2026-09-06, collapse only)
 
 Both builds served from `~/.cc/state/lessons/`, one lesson per page load at
 390px. 41 lessons measured in each.
@@ -142,4 +179,12 @@ Both builds served from `~/.cc/state/lessons/`, one lesson per page load at
 | `build-head-0f03499` (post-#24) | 41 | **236px** (`/chemhl/radioactive-decay/`) | none |
 
 The two collapsed lessons are the two that mount `LessonShell`. The 24px floor
-sits an order of magnitude clear of both numbers.
+sits an order of magnitude clear of both numbers. Neither run measured overlap —
+that is what the run below adds.
+
+## What the sweep found with overlap in it (2026-09-07)
+
+`build-head-0f03499` (post-#24), served the same way: **41 lessons, 176
+equations, 0 with a control or caption on the equation, 0 with a collapsed
+part**, and no equation without math on screen. This is the first corpus-wide
+overlap figure; the earlier runs above could not produce one.
