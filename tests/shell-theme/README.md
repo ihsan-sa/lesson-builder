@@ -67,15 +67,19 @@ anywhere in that lesson, passed it, and let this case's own trap through in sile
 wraps *every* colour it contains, because one single-line `fill={G.x}` left in would flag the lesson
 by itself and the wrapped ones could go back to being invisible unnoticed.
 
-Spanning lines is why the scan has to tell code from text, and the second fixture is there for
+Spanning lines is why the scan has to tell code from text, and three more fixtures are there for
 that. Help text that says "write `fill={` and then the palette key you want, e.g. `G.bg`" over two
 lines has no `}` between the two, so the paragraph reads as one attribute — a lesson that draws
 nothing was reported as a graph site and failed the gate on its prose, which the per-line scan
 could never have done. Comments and the contents of strings and template literals are blanked
 before the scan, one character for one space so line numbers and the printed site still come off
-the real source. A `${…}` is handed back as code: ``stroke={`${G.axis}`}`` paints from `G` and
-stays a site. The fixture asserts both halves — the prose-only lesson is not flagged, and the same prose
-beside two real wrapped colours reports those two.
+the real source. A `'` or `"` opens a string only when it closes on its own line, because a JS
+string literal cannot hold a raw newline: an apostrophe in prose — `the reader's guide` — is a
+character, and reading it as a delimiter blanked every colour under it and passed the lesson. A
+`${…}` is handed back as code: ``stroke={`${G.axis}`}`` paints from `G` and stays a site. Each
+fixture asserts both halves — the prose-only lesson is not flagged and the same prose beside two
+real wrapped colours reports those two; the apostrophe does not hide the colour below it and a
+real one-line string is still text.
 
 Case 3 reads the CSS out of the template literal first, and one of its fixtures is there to keep it
 doing so. The module header is a `//` comment that names both palette classes while explaining

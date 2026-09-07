@@ -173,6 +173,18 @@ function shellPropsTag(js) {
   return null;
 }
 
+// The index of the quote closing the one at `open`, or -1 when the line ends first — which means
+// the quote never opened a string at all.
+function closingQuote(js, open) {
+  const q = js[open];
+  for (let i = open + 1; i < js.length; i++) {
+    if (js[i] === '\n') return -1;
+    if (js[i] === '\\') { i++; continue; }
+    if (js[i] === q) return i;
+  }
+  return -1;
+}
+
 // Comments AND the contents of string and template literals blanked, in one left-to-right pass,
 // with newlines kept so line numbers still line up. Only `graphColourSites` reads this:
 // `themeClassSites` and the CSS case must go on seeing `className="lesson-shell theme-light"`,
@@ -183,6 +195,11 @@ function shellPropsTag(js) {
 // comments-first one — either way the rest of the file is blanked and a real graph site below it
 // disappears. `${…}` interpolations are handed back as code, so `stroke={`${G.axis}`}` is still
 // found; the `${` may itself hold another template literal, hence the stack.
+//
+// A `'` or `"` only opens a string when its partner is on the same line, because a JS string
+// literal cannot hold a raw newline. Ordinary JSX prose can hold an apostrophe — `the reader's
+// guide` — and reading that as a string blanked the rest of the file, taking every real graph
+// site under it with it. A backtick has no such bound: a template literal is meant to span lines.
 //
 // Not a JS parser: a regex literal holding a quote or a `//` is read as one, the same blind spot
 // `stripJsComments` has always had. A lesson body has no such regex, and the cost of being wrong
@@ -215,12 +232,10 @@ function stripJsCommentsAndStrings(js) {
     }
     if (c === '`') { tmpl.push({ braces: -1 }); i++; continue; }
     if (c === "'" || c === '"') {
-      i++;                                                          // delimiters kept
-      while (i < js.length && js[i] !== c) {
-        if (js[i] === '\\' && i + 1 < js.length) { blank(i); i++; }
-        blank(i); i++;
-      }
-      i++;
+      const end = closingQuote(js, i);
+      if (end === -1) { i++; continue; }                            // an apostrophe in prose
+      for (let k = i + 1; k < end; k++) blank(k);                   // delimiters kept
+      i = end + 1;
       continue;
     }
     if (tmpl.length) {
@@ -588,6 +603,25 @@ function buttonLabel(js, cls) {
       JSON.stringify(mixedAudit.graphs.map((g) => g.text)));
     check('so a lesson that draws AND talks about it is still flagged', !mixedAudit.ok,
       auditDetail(mixedAudit));
+    // Telling code from text has its own trap, and it is the apostrophe. `<P>the reader's guide</P>`
+    // is prose, not a string — but a quote scan with no line bound reads it as one that opens
+    // there and closes at the next quote or at the end of the file, blanking every colour under
+    // it. The lesson below paints from G and passes neither prop, so it must be flagged; scanned
+    // that way it came back ok, which is this case's own trap hidden by the fix for the last one.
+    const apostrophe = 'let G = THEMES_G.light;\n'
+      + 'const T = () => (\n  <svg>\n    <P>the reader\'s guide</P>\n'
+      + '    <rect fill={G.bg} />\n  </svg>\n);\n';
+    eq('an apostrophe in prose does not hide the colour under it',
+      graphColourSites(apostrophe).length, 1);
+    check('so a lesson with prose above its graph is still flagged for the props',
+      !graphThemeAudit(apostrophe + mount('')).ok, auditDetail(graphThemeAudit(apostrophe + mount(''))));
+    // And the other half, or "only a string when it closes on its line" would just be "never a
+    // string": a real single-quoted string on one line is still text.
+    const quotedProse = 'let G = THEMES_G.light;\n'
+      + "const HINT = 'write fill={ and then the key you want, e.g. G.bg';\n"
+      + 'const T = () => <p>{HINT}</p>;\n';
+    eq('…while a real one-line string is still read as text', graphColourSites(quotedProse).length, 0);
+
     // A `${…}` is code, not text. Blanking a template literal whole would lose a colour built
     // this way, which is a real graph site the gate has to keep catching.
     const interpolated = 'let G = THEMES_G.light;\n'
