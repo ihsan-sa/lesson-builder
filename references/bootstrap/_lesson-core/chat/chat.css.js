@@ -5,11 +5,13 @@
 // This is the lessons' original stylesheet, plus only those newer rules whose
 // selectors it has no rule for: a block is refused if ANY class in its selector
 // is already styled above, so nothing appended can override the original look.
-// Two deliberate deviations, each explained where it sits: .eq-block
+// Three deliberate deviations, each explained where it sits: .eq-block
 // { position: relative } at the forward-ported seam, which anchors the Explain
-// rail and paints nothing, and .eq-label's top and background, which move the
+// rail and paints nothing; .eq-label's top and background, which move the
 // equation caption inside the panel because the classic panel is a scroll
-// container and would clip it. Everything else appended is verbatim.
+// container and would clip it; and .thread-panel:focus-within, a state rule on
+// a class styled above that paints only while a thread's input has focus.
+// Everything else appended is verbatim.
 //
 // 39 of the 41 lessons predate LessonShell and have none of its markup, so a
 // sheet written around the shell restyles them into a layout they were never
@@ -63,6 +65,11 @@ export const STYLES = `
   --surface-2: var(--bg-card);
   --danger: var(--chat-stop-color);
   --accent-hover: #d8b877;
+  /* A 1px halo just outside an accent border. The newer sheet freezes it as a
+     pale tint of its terracotta accent, which would vanish on this sheet's dark
+     theme, so it maps onto the one softened-accent line colour both themes
+     already declare. */
+  --accent-soft: var(--ctx-hover-outline);
   --font-mono: 'IBM Plex Mono', monospace;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --t-micro: 150ms;
@@ -107,6 +114,7 @@ export const STYLES = `
   --surface-2: var(--bg-card);
   --danger: var(--chat-stop-color);
   --accent-hover: #7d6325;
+  --accent-soft: var(--ctx-hover-outline);
   --font-mono: 'IBM Plex Mono', monospace;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --t-micro: 150ms;
@@ -634,6 +642,11 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 .thread-stop:hover { background: var(--danger); color: var(--canvas); }
 .thread-attach { width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-3); font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex: none; line-height: 1; }
 .thread-attach:hover { background: var(--surface-2); }
+/* A focused thread owns captured lesson context — make that visible, or the
+   student cannot tell where their next Ctrl+Click is going to land.
+   Third deviation from the refusal rule: .thread-panel IS styled above, but this
+   is a state compound and paints nothing until a thread's input takes focus. */
+.thread-panel:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
 /* ── Lesson anchor (a thread opened on lesson content, not a chat reply) ── */
 .chat-msg-anchor { align-items: stretch; }
 .chat-anchor-card {
@@ -691,6 +704,17 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 }
 .chat-dead-session button { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--accent); background: var(--accent); color: var(--canvas); font-size: 11.5px; font-family: inherit; font-weight: 500; cursor: pointer; }
 .chat-dead-session button:hover { background: var(--accent-hover); }
+/* ── Drag-and-drop attachment target ── */
+.chat-panel-dragover { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.chat-panel-dragover::after {
+  content: 'Drop image or PDF to attach';
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ctx-hover-bg);
+  color: var(--accent);
+  font-size: 13px; letter-spacing: .05em;
+  pointer-events: none; z-index: 20;
+}
 /* ── Shortcut overlay (Ctrl+Shift+/) ── */
 .chat-help-overlay { position: absolute; inset: 0; z-index: 30; background: var(--canvas); display: flex; flex-direction: column; overflow-y: auto; padding: 16px 18px; }
 .chat-help-overlay h4 { margin: 0 0 12px; font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); }
