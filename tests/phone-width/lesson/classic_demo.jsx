@@ -8,6 +8,7 @@
 // so the two cases are comparable.
 import { useState } from "react";
 import { STYLES, Eq, M, P, Section, useKatex } from "@core";
+import { Figure, Table, Code } from "./parts.jsx";
 
 const TOPICS = [
   {
@@ -27,6 +28,13 @@ const TOPICS = [
           <P>A wide one, and one with a caption riding the border.</P>
           <Eq>{"\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi} \\quad \\text{for all real } x"}</Eq>
           <Eq label="TIME-DEPENDENT FORM">{"i\\hbar \\partial_t \\psi = H\\psi"}</Eq>
+        </Section>
+        <Section title="Parts that are not equations">
+          <P>A figure, a table and a code block: an equation is not the only
+            thing a narrow column can squeeze to nothing.</P>
+          <Figure />
+          <Table />
+          <Code />
         </Section>
       </div>
     ),
