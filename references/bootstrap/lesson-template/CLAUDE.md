@@ -38,7 +38,9 @@ The lesson renders inside `<LessonShell>` from `@core` — the Claude Design "Lu
 - **Article**: single scrolling column capped at 680px (~68ch reading measure).
 - **Tutor placement**: side dock (392px, drag 320-760), bottom dock (300px, drag 180-620), an in-app floating window, or a real browser window. The panel is portaled into a single host node that MOVES between slots — it is never re-rendered at a new position in the React tree, because that would remount `Chatbot` and silently start a new session.
 
-Light palette only; there is no theme toggle. Tokens live in `_lesson-core/chat/chat.css.js`.
+- **Theme**: a DARK/LIGHT button in the top bar swaps the palette on the shell root, so everything styled from the tokens follows without re-rendering. Pass `theme` and `onThemeChange` to hold the choice in the lesson instead, which is what a lesson with SVG graphs must do — graph colours come from `THEMES_G`, which only changes when the lesson re-renders.
+
+Tokens live in `_lesson-core/chat/shell.css.js`, declared in a light block and a dark one.
 
 Equations are first-class: `<Eq>` renders a numbered card (numbers stamped from DOM order as `(topic.n)`) with an **Explain** pill that attaches the LaTeX to the tutor's context. `<Eq label="...">` adds a caption riding the top border.
 

@@ -315,7 +315,7 @@ Phase 4 runs the suite via `node test_lesson.cjs`; each lesson ships its own `te
 - **T6** — `TOPIC_CONTEXT` object is defined.
 - **T7** — `LESSON_CONTEXT` constant is defined.
 - **T8** — Imports from `@core` and references `Chatbot`.
-- **T9** — Renders inside `<LessonShell>` from `@core`, and `className="theme-light"` is present (the KaTeX loading gate applies it directly; the shell applies it thereafter).
+- **T9** — Renders inside `<LessonShell>` from `@core`, and a `theme-` class is applied (the KaTeX loading gate applies ``className={`theme-${theme}`}`` directly; the shell applies `theme-light` or `theme-dark` thereafter, from its own switch).
 - **T10** — No hand-rolled shell chrome: the lesson must not emit `header`, `tab-bar`, `tab-btn`, `content-area` or `theme-toggle-btn` classes. `LessonShell` owns the top bar, contents rail and article container.
 - **T11** — Imports `Eq`, `KeyConcept`, and `Chatbot` from `@core` (these apply `.eq-block`, `.key-concept`, `.chat-panel`).
 - **T12** — No `localStorage` usage (sessionStorage alias `_ss` is intentionally allowed).

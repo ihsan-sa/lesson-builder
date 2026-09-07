@@ -602,7 +602,8 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
    shows seven identical transparent chips and nothing says which is live. The
    text colour is --chat-badge-text, the classic sheet's own colour for text on
    an --accent fill (see .chat-badge, .pp-badge-official), not the page fill the
-   newer sheet uses -- that sheet is light-only and this one has two themes. */
+   newer sheet uses. Both sheets have two themes now; this one keeps its own
+   token because its accent is the gold, not the newer sheet's terracotta. */
 .chat-segment.active { background: var(--accent); color: var(--chat-badge-text); }
 .chat-segment.active:hover { color: var(--chat-badge-text); }
 .chat-setting-help { font-size: 12px; color: var(--ink-4); margin-top: 6px; line-height: 1.5; }

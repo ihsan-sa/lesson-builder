@@ -18,14 +18,89 @@
 // When the remaining 39 lessons have moved onto the shell, this becomes the only
 // sheet and chat/chat.css.js goes away.
 //
-// Palette and metrics come from the Claude Design "Lumen" handoff. The design
-// specifies a single light palette; there is no dark variant. Legacy variable
-// names (--bg-main, --text-dim, ...) are kept as aliases onto the Lumen tokens
-// so older rules and any lesson-local styles keep resolving.
+// Palette and metrics come from the Claude Design "Lumen" handoff, which
+// specifies the light palette. The dark palette below is this sheet's own: the
+// same token names on the neutral dark family the graph palette THEMES_G.dark
+// is tuned against, so an SVG a lesson draws in dark mode sits on the same
+// paper as the page around it. Legacy variable names (--bg-main, --text-dim,
+// ...) are kept as aliases onto the Lumen tokens so older rules and any
+// lesson-local styles keep resolving.
+//
+// TWO BLOCKS, and the order matters: :root plus .theme-dark first, .theme-light
+// after, exactly as chat/chat.css.js has it -- LessonShell puts one of the two
+// class names on its root and on the tutor pop-out's host, and the pop-out also
+// carries it on <html>, where the two selectors have equal specificity and the
+// later block is what wins. Every token must be declared in BOTH blocks: a
+// custom property resolves where it is declared, so one declared only in the
+// dark block inherits its dark value straight into a .theme-light subtree.
+// tests/css-vars-defined checks that for every var(--x) this sheet uses.
 export const SHELL_STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-:root, .theme-light {
+:root, .theme-dark {
+  /* ── Lumen tokens, dark ── */
+  --canvas: #0E1014;
+  --surface: #13151C;
+  --surface-2: #1A1D25;
+  --ink: #E6E6EA;
+  --ink-2: #C2C5D2;
+  --ink-3: #9498AC;
+  --ink-4: #6B7084;
+  --border: #262A34;
+  --accent: #E07B55;
+  --accent-hover: #EE9070;
+  --accent-soft: #33211B;
+  --accent-ink: #F3C7B2;
+  --danger: #E06C75;
+
+  /* Semantic hues the shell needs but Lumen does not name: the formula-sheet
+     and course-summary callouts. Lifted off the paper values so they still
+     read as sage and rose against a dark page. */
+  --sage: #7FB183;
+  --sage-soft: rgba(127, 177, 131, 0.10);
+  --sage-border: rgba(127, 177, 131, 0.32);
+  --rose: #D08CAC;
+  --rose-soft: rgba(208, 140, 172, 0.10);
+  --rose-border: rgba(208, 140, 172, 0.32);
+
+  --font-display: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --font-ui: 'Inter Tight', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --t-micro: 150ms;
+  --t-surface: 220ms;
+
+  --shadow-window: 0 20px 48px -16px rgba(0, 0, 0, 0.66);
+
+  /* ── Legacy aliases (do not remove; older rules resolve through these) ── */
+  --bg-main: var(--canvas);
+  --bg-panel: var(--surface);
+  --bg-card: var(--surface);
+  --bg-eq: var(--surface);
+  --text-primary: var(--ink);
+  --text-secondary: var(--ink-2);
+  --text-dim: var(--ink-3);
+  --text-muted: var(--ink-3);
+  --chat-user-bg: var(--surface-2);
+  --chat-user-text: var(--ink);
+  --chat-input-text: var(--ink);
+  --chat-placeholder: var(--ink-4);
+  --chat-chip-bg: var(--accent-soft);
+  --chat-chip-border: var(--border);
+  --chat-katex: var(--ink);
+  --chat-badge-text: var(--canvas);
+  --chat-toggle-active-bg: var(--surface-2);
+  --chat-sent-dim: var(--ink-3);
+  --chat-sent-dim-bg: var(--surface-2);
+  --chat-stop-contrast: var(--canvas);
+  --chat-stop-color: var(--danger);
+  --ctx-hover-outline: rgba(224, 123, 85, 0.45);
+  --ctx-hover-bg: rgba(224, 123, 85, 0.07);
+  --ctx-flash-bg: rgba(224, 123, 85, 0.18);
+}
+
+.theme-light {
   /* ── Lumen tokens ── */
   --canvas: #FAF9F6;
   --surface: #F4F1EB;
@@ -210,6 +285,25 @@ export const SHELL_STYLES = `
   transition: background var(--t-micro) var(--ease);
 }
 .topbar-popout:hover { background: var(--surface); }
+
+/* The dark/light switch. Same pill as .tutor-btn so the top bar reads as one
+   row of controls, in the mono face the pre-shell lessons' DARK button uses.
+   The label is the theme it switches TO, which is how that button reads. */
+.theme-toggle {
+  padding: 8px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease), border-color var(--t-micro) var(--ease);
+}
+.theme-toggle:hover { background: var(--surface); color: var(--ink); border-color: var(--ink-4); }
 
 /* ── Body row: rail | (article + docked tutor) ── */
 .shell-body { flex: 1; min-height: 0; display: flex; }

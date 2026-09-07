@@ -92,10 +92,13 @@ const VID = import.meta.env.BASE_URL + "videos/";
 // Module-level graph theme binding
 // ───────────────────────────────────────────────────────────────
 //
-// Graph components reference `G` at module scope for their colors. The Lumen
-// shell is light-only (the design specifies a single palette), so this is now
-// a fixed binding — keep the `let` declaration and the name, since every graph
-// component closes over it.
+// Graph components reference `G` at module scope for their colors. Keep the
+// `let` declaration and the name: every graph component closes over it, and
+// LessonApp rebinds it from the lesson's theme state on each render. A graph's
+// colors are JS values, not CSS variables, so this rebinding is the only thing
+// that makes an SVG follow the shell's dark/light switch — the chrome, prose,
+// equations and tutor follow the class LessonShell puts on its root and need
+// nothing from the lesson.
 
 let G = THEMES_G.light;
 
@@ -346,6 +349,13 @@ function LessonApp() {
   const [ctxMenu, setCtxMenu] = useState(null);
   const [threadTrigger, setThreadTrigger] = useState(null);
   const [threadCtxTrigger, setThreadCtxTrigger] = useState(null);
+  // The lesson holds the theme and LessonShell renders the switch for it (pass
+  // both props below, or neither and the shell keeps the choice itself). Held
+  // here because rebinding G is what makes the graphs follow, and only a
+  // re-render of THIS component does that. Rebound before the return, so the
+  // graph components rendered by this pass read the palette just chosen.
+  const [theme, setTheme] = useState("light");
+  G = THEMES_G[theme];
 
   // Ctrl-/ toggles the chat panel; Ctrl-Shift-F adds the current selection to
   // the surrounding thread's context (fires only inside a .thread-panel).
@@ -591,7 +601,7 @@ function LessonApp() {
       <>
         <style>{STYLES}</style>
         <div
-          className="theme-light"
+          className={`theme-${theme}`}
           style={{
             minHeight: "100vh",
             background: "var(--canvas)",
@@ -624,6 +634,8 @@ function LessonApp() {
       onSelectTopic={setActiveIdx}
       chatOpen={chatOpen}
       setChatOpen={setChatOpen}
+      theme={theme}
+      onThemeChange={setTheme}
       // Optional: rendered under the rail divider.
       // refs={[{ label: "Formula sheet (PDF)", href: "..." }]}
       onMouseDown={handleContentMouseDown}
@@ -853,11 +865,11 @@ What these model, move by move: the opening sentence is the first content-bearin
 - **The shell owns the chrome.** Do not hand-roll a header, a tab bar, a footer or a content wrapper — `LessonShell` renders the top bar, the contents rail (with per-topic section outline and scroll-spy), the article column, and the tutor dock. The lesson supplies `TOPICS` and the active topic's body as children. `LessonShell` also injects its own sheet, `SHELL_STYLES` from `@core/chat/shell.css.js`, so a lesson needs no `<style>` tag outside the KaTeX loading gate.
 - **The rail outline comes from `<Section title>` headings.** Anything rendered outside a `Section` gets no outline entry and no scroll-spy target.
 - **Equations are first-class.** `<Eq>` renders a numbered card with an "Explain" pill that hands the LaTeX to the tutor as context. Numbering is a CSS counter scoped to the article, so equation numbers read `(<topic>.<n>)` automatically — never hand-number them. Add `label="ON FORMULA SHEET"`-style captions with `<Eq label="...">`; pass `explain={false}` to drop the pill on a specific equation.
-- **The palette is light-only.** The Lumen design specifies one palette; there is no theme toggle and no dark tokens. `let G = THEMES_G.light;` stays as a module-scope binding because every graph component closes over it.
+- **Both palettes ship.** `@core/chat/shell.css.js` declares the Lumen tokens in a light block and a dark one, and `LessonShell` renders the DARK/LIGHT button that swaps the class on its root — the same switch the 39 pre-shell lessons have. Everything styled from those tokens follows on its own. Graph colors do not: they are JS values, so pass `theme={theme}` and `onThemeChange={setTheme}` and rebind `G = THEMES_G[theme]` in the component body. Omit both props and the shell keeps the choice itself, which is right for a lesson with no SVG graphs.
 - **Wrap every graph call site in `<LiveGraph graphKey renderId>`.** Without it the `<<EDIT_GRAPH>>` visual-verification loop screenshots a selector that matches nothing, and Ctrl+Click on a graph captures stray axis labels instead of the graph's key and parameters.
 - **Keep the three context-capture selector lists in sync.** `handleContentClick` here, the capture-phase gate in `@core/chat/Chatbot.jsx`, and the hover rules in `@core/chat/shell.css.js` (which is what a shell lesson gets; `chat/chat.css.js` carries the same list for the 39 pre-shell lessons) must name the same classes. A class in the CSS but not the handler shows a pointer cursor and does nothing.
 - **Keep `routeLessonContext` at the top of `addSnippet`.** It is what lets a student Ctrl+Click lesson content into a focused side-thread; drop it and every capture silently lands in the main composer instead.
-- **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it by name.
+- **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it by name; the initial value is the light palette and `LessonApp` rebinds it from `theme` on every render.
 - **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 verifies. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.
 - **`TOPIC_CONTEXT` keys must equal `TOPICS[i].id` values.** T14 enforces.
 - **KaTeX escaping**: use `\\lt` / `\\gt` inside KaTeX strings, never bare `<` / `>`. T2 rejects.
