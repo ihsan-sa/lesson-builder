@@ -44,7 +44,7 @@ reads the unmoved colours off the page. Do not "fix" it by adding the props.
 | 2 | `LessonShell.jsx` | exactly one line names a palette class, and it is the one deriving `themeClass` from `theme`; the shell root, the pop-out host and the pop-out's `documentElement` all take that value; an effect keyed on `themeClass` re-applies it to a pop-out that is already open; a **layout** effect keyed on `themeClass` adds the class to the main document's `documentElement` and removes it again |
 | 3 | `shell.css.js` | both theme blocks exist and declare the same token set (fixtures first: a gap in either direction is reported against the block that has it, and one fixture is shaped like the shipped file, header comment and all); no rule outside those blocks writes a colour as a literal; the sheet resets `html, body` and paints them from `--canvas`; the two palettes differ on `--canvas` |
 | 4 | the switch | the `.theme-toggle` label expression evaluates to `Dark` in the light theme and `Light` in the dark one, and the button sits outside the tutor gate |
-| 5 | a lesson's theme wiring | a lesson whose SVG paints from `G` passes `theme` and `onThemeChange` **and** rebinds `G = THEMES_G[theme]`; passing one prop, or both without the rebind, fails; a lesson with no such SVG may leave the theme to the shell; a colour wrapped across a line break is still found, on the line its attribute opens; `theme_demo.jsx` passes and `theme_uncontrolled.jsx` is flagged |
+| 5 | a lesson's theme wiring | a lesson whose SVG paints from `G` passes `theme` and `onThemeChange` **and** rebinds `G = THEMES_G[theme]`; passing one prop, or both without the rebind, fails; a lesson with no such SVG may leave the theme to the shell; a colour wrapped across a line break is still found, on the line its attribute opens, while the same pattern in prose, help text or a commented-out block is not a site at all; `theme_demo.jsx` passes and `theme_uncontrolled.jsx` is flagged |
 
 Case 1 builds every fixture it asserts on and pins down what the finder lets through as well as what
 it catches. Cases 3 and 5 do the same before they read the shipped files.
@@ -66,6 +66,20 @@ there to keep it that way. A formatter given a long conditional breaks the line 
 anywhere in that lesson, passed it, and let this case's own trap through in silence. The fixture
 wraps *every* colour it contains, because one single-line `fill={G.x}` left in would flag the lesson
 by itself and the wrapped ones could go back to being invisible unnoticed.
+
+Spanning lines is why the scan has to tell code from text, and three more fixtures are there for
+that. Help text that says "write `fill={` and then the palette key you want, e.g. `G.bg`" over two
+lines has no `}` between the two, so the paragraph reads as one attribute — a lesson that draws
+nothing was reported as a graph site and failed the gate on its prose, which the per-line scan
+could never have done. Comments and the contents of strings and template literals are blanked
+before the scan, one character for one space so line numbers and the printed site still come off
+the real source. A `'` or `"` opens a string only when it closes on its own line, because a JS
+string literal cannot hold a raw newline: an apostrophe in prose — `the reader's guide` — is a
+character, and reading it as a delimiter blanked every colour under it and passed the lesson. A
+`${…}` is handed back as code: ``stroke={`${G.axis}`}`` paints from `G` and stays a site. Each
+fixture asserts both halves — the prose-only lesson is not flagged and the same prose beside two
+real wrapped colours reports those two; the apostrophe does not hide the colour below it and a
+real one-line string is still text.
 
 Case 3 reads the CSS out of the template literal first, and one of its fixtures is there to keep it
 doing so. The module header is a `//` comment that names both palette classes while explaining
