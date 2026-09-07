@@ -84,9 +84,9 @@ test('T8 — Imports from @core (Chatbot, UI primitives)', () => {
 
 // T9: Renders through the shared Lumen shell rather than hand-rolled chrome
 test('T9 — Renders inside @core LessonShell', () => {
-  // The Lumen palette lives in _lesson-core/chat/chat.css.js. A lesson gets it
-  // by rendering <LessonShell> (which applies theme-light and injects STYLES);
-  // the KaTeX loading gate applies theme-light directly.
+  // The Lumen palette lives in _lesson-core/chat/shell.css.js. A lesson gets it
+  // by rendering <LessonShell> (which applies theme-light and injects
+  // SHELL_STYLES); the KaTeX loading gate applies theme-light directly.
   return /<LessonShell\b/.test(code) && /className=\{?\s*["`]theme-/.test(code);
 });
 
