@@ -2,9 +2,10 @@
 # The release gate: every fixture under tests/ that needs no model call, no browser and no
 # network. One command, so a change that breaks the run record, staging, worktrees, the
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
-# branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch
-# or the built bundle's tutor gate cannot land. `cc-land` runs this as a gate on every PR (it
-# treats an executable tests/check.sh as one), and a person runs it the same way.
+# branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch,
+# the built bundle's tutor gate, or the shell staying out of a classic lesson's bundle cannot land.
+# `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
+# person runs it the same way.
 #
 #   tests/check.sh                 every deterministic fixture, in parallel
 #   tests/check.sh run-manifest …  only the named ones, for iterating on one
@@ -13,13 +14,14 @@
 # seconds one fixture may take before it is killed and counted failed (default 600).
 #
 # Environment: node and git, from a clean checkout. Nothing here calls a model or opens a browser.
-# Five fixtures do need packages: `ast-inventory` and `attestation` install `@babel/parser`,
+# Six fixtures do need packages: `ast-inventory` and `attestation` install `@babel/parser`,
 # `cancellation` and `thread-actors` copy `_lesson-core` and install its express/cors, and
-# `hosted-build` scaffolds a lesson and installs the template's own devDeps (vite, react, the babel
-# pair; Playwright's browser download is skipped) because it asserts on real `vite build` output.
-# All five use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
+# `hosted-build` and `shell-reach` each scaffold a lesson and install the template's own devDeps
+# (vite, react, the babel pair; Playwright's browser download is skipped) because they assert on
+# real `vite build` output.
+# All six use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
 # registry — that is the one dependency this gate has beyond node and git, and on a cold cache those
-# five fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
+# six fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
 # Every fixture builds its own temp state and cleans it up; the checkout is not written to.
 # The run points TMPDIR at one directory of its own, so after the last fixture finishes any
 # process still sitting in a directory under it is a proxy or dev server that fixture started
@@ -52,6 +54,7 @@ FIXTURES=(
   "css-vars-defined|node tests/css-vars-defined/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
+  "shell-reach|tests/shell-reach/run.sh"
   "cancellation|tests/cancellation/run.sh"
   "thread-actors|tests/thread-actors/run.sh"
 )
