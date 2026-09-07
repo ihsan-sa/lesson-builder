@@ -55,7 +55,7 @@ Non-negotiables — these are what visual-QA and the numerical spot-check fail b
   staged=$(node <skill_root>/scripts/run-manifest.cjs stage --lesson <lesson_root> --media-id <media_id> --name <name>.png)
   ```
 
-- Figure face `#F4F1EB`, text/axes `#3A3833`, primary curves `#C96442`, secondary dashed muted. Light figures only — the shell has no dark mode.
+- Figure face `#F4F1EB`, text/axes `#3A3833`, primary curves `#C96442`, secondary dashed muted. Light figures only: the shell has a dark theme now, but a raster figure is a fixed image and cannot follow it, so it reads as a light card on a dark page — the same trade manim's dark-field video already makes on a light one. An SVG drawn inline from `G` does follow the theme; prefer that when the artwork can be drawn rather than rendered.
 - View the PNG with `Read` before returning — you are the first reviewer of your own render.
 - Print an assertions line to stderr before the script ends: `ASSERTIONS: {"width":N,"height":N,"nonblank":true,"hasCurves":N}`.
 - **Promote the figure, then its source**: in build modes both are staged and then promoted — the PNG to `public/images/<name>.png` and the final `.py` to `figures/<media_id>.py`:

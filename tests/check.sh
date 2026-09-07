@@ -2,10 +2,9 @@
 # The release gate: every fixture under tests/ that needs no model call, no browser and no
 # network. One command, so a change that breaks the run record, staging, worktrees, the
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
-# branch collisions, the proxy's reader, the lessons' stylesheets or the built bundle's tutor
-# gate cannot land. `cc-land` runs this as a gate on every PR (it treats an executable
-# tests/check.sh as one), and a person
-# runs it the same way.
+# branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch
+# or the built bundle's tutor gate cannot land. `cc-land` runs this as a gate on every PR (it
+# treats an executable tests/check.sh as one), and a person runs it the same way.
 #
 #   tests/check.sh                 every deterministic fixture, in parallel
 #   tests/check.sh run-manifest …  only the named ones, for iterating on one
@@ -51,6 +50,7 @@ FIXTURES=(
   "branch-collision|node tests/branch-collision/check.cjs"
   "sse-byte-split|node tests/sse-byte-split/check.cjs"
   "css-vars-defined|node tests/css-vars-defined/check.cjs"
+  "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
   "cancellation|tests/cancellation/run.sh"
   "thread-actors|tests/thread-actors/run.sh"
@@ -62,6 +62,7 @@ EXCLUDED=(
   "katex-fallback|needs a Chromium and a Vite dev server|cd tests/katex-fallback && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && KATEX_FALLBACK_BROWSER=/usr/bin/google-chrome ./run.sh"
   "resume-metadata|needs a Chromium and a Vite dev server|cd tests/resume-metadata && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && RESUME_METADATA_BROWSER=/usr/bin/google-chrome ./run.sh"
   "phone-width|needs a Chromium, two vite builds and the KaTeX CDN|cd tests/phone-width && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && PHONE_WIDTH_BROWSER=/usr/bin/google-chrome ./run.sh"
+  "shell-theme --browser|the gate checks the sheet and the component as text; this one presses the switch in a built lesson|cd tests/shell-theme && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && SHELL_THEME_BROWSER=/usr/bin/google-chrome ./run.sh"
   "cancellation --real|the fake CLI covers it here; this one spends tokens on the real CLI|cd tests/cancellation && REAL_CLAUDE=1 ./run.sh"
   "thread-actors --real|the fake CLI covers it here; this one spends tokens on the real CLI|cd tests/thread-actors && REAL_CLAUDE=1 ./run.sh"
   "teaching evals|graded by a model, per evals/teaching/rubric.md|see evals/teaching/README.md"

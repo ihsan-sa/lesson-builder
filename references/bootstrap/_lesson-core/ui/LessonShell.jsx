@@ -8,12 +8,18 @@ import { TUTOR_ENABLED } from "../constants/build.js";
 // ───────────────────────────────────────────────────────────────
 // LessonShell — the frame every lesson renders inside.
 //
-// Owns: the top bar, the contents rail (topic list + per-topic section
-// outline + scroll-spy), the article scroll container, and WHERE the tutor
-// panel lives (side dock / bottom dock / in-app window / real browser
-// window). The lesson passes its Chatbot in as the `tutor` prop; the shell
-// places it and hands the placement controls down through ShellContext so the
-// dock switcher can render inside the panel header.
+// Owns: the top bar (including the dark/light switch), the contents rail
+// (topic list + per-topic section outline + scroll-spy), the article scroll
+// container, and WHERE the tutor panel lives (side dock / bottom dock / in-app
+// window / real browser window). The lesson passes its Chatbot in as the
+// `tutor` prop; the shell places it and hands the placement controls down
+// through ShellContext so the dock switcher can render inside the panel header.
+//
+// The theme is a class, on three elements: the shell root, the main document's
+// <html> (the page behind the shell, which the sheet's html,body rule paints)
+// and the tutor pop-out's host and document. Both palettes are declared in
+// SHELL_STYLES, so everything styled from the tokens repaints on the swap. See
+// the theme block below for the one thing that does not follow on its own.
 //
 // The rail starts open, except at a width too narrow to hold it beside an
 // article of ARTICLE_MIN_W — a phone — where it starts collapsed to its number
@@ -94,6 +100,11 @@ export function LessonShell({
   tutor = null,
   chatOpen = false,
   setChatOpen,
+  // Theme. Omit BOTH and the shell owns the switch itself; pass BOTH to hold
+  // the choice in the lesson instead. See the theme block below for which of
+  // the two a lesson wants.
+  theme: themeProp,
+  onThemeChange,
   // Content-block affordances (both default on)
   equationNumbers = true,
   equationExplain = true,
@@ -113,10 +124,31 @@ export function LessonShell({
   const [sections, setSections] = useState([]);
   const [secIdx, setSecIdx] = useState(0);
   const [popupHost, setPopupHost] = useState(null);
+  const [themeOwn, setThemeOwn] = useState("light");
 
   const articleRef = useRef(null);
   const popupRef = useRef(null);
   const active = topics[activeIdx] || {};
+
+  // ── Theme ──
+  // The class is the whole mechanism: both palettes live in SHELL_STYLES, so
+  // every rule under an element carrying it repaints on the swap with nothing
+  // re-rendering. Three elements carry it, each set below: the shell root, the
+  // main document's <html> (the page the shell does not cover), and the pop-out
+  // -- a second document, so its host and its own <html> both need it.
+  //
+  // Uncontrolled by default, so a lesson gets the switch for free. What a
+  // CONTROLLED theme buys is the one thing a class cannot reach: SVG graph
+  // colours are JS values (THEMES_G), read by graph components as they render,
+  // so they only follow the theme when the LESSON re-renders and rebinds G. A
+  // lesson with graphs holds `theme` in its own state and passes both props.
+  const theme = themeProp === "dark" || themeProp === "light" ? themeProp : themeOwn;
+  const themeClass = theme === "dark" ? "theme-dark" : "theme-light";
+  const toggleTheme = useCallback(() => {
+    const next = theme === "dark" ? "light" : "dark";
+    setThemeOwn(next);
+    if (onThemeChange) onThemeChange(next);
+  }, [theme, onThemeChange]);
 
   // ── Section outline + equation numbers: both are read back off the DOM the
   // topic actually rendered. KaTeX renders after mount and the tutor can
@@ -242,7 +274,12 @@ export function LessonShell({
     st.textContent = SHELL_STYLES + "\nhtml,body{margin:0;padding:0;height:100%;background:var(--surface);}";
     d.head.appendChild(st);
     const host = d.createElement("div");
-    host.className = "theme-light";
+    // Both the host and the pop-out's <html>: the html,body rule above paints
+    // from var(--surface), and a custom property resolves where it is declared,
+    // so the document element needs the class too or the paper behind the panel
+    // keeps whichever palette :root carries.
+    host.className = themeClass;
+    d.documentElement.className = themeClass;
     host.style.cssText = "height:100%;display:flex;flex-direction:column;";
     d.body.appendChild(host);
     const onGone = () => { popupRef.current = null; setPopupHost(null); setDockRaw("side"); };
@@ -251,7 +288,27 @@ export function LessonShell({
     setBlocked(false);
     setDockRaw("popup");
     if (setChatOpen) setChatOpen(true);
-  }, [lessonTitle, setChatOpen]);
+  }, [lessonTitle, setChatOpen, themeClass]);
+
+  // The main document. The shell root is not the whole page — the UA's body
+  // margin shows html and body at every edge — and the html,body rule in
+  // SHELL_STYLES paints them from --canvas, which resolves where it is
+  // declared. So the document element carries the class too. A layout effect,
+  // not an effect: an effect runs after the paint, which would show one frame
+  // of the palette :root carries around a shell already in the other one.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.classList.add(themeClass);
+    return () => root.classList.remove(themeClass);
+  }, [themeClass]);
+
+  // A pop-out already open when the theme is switched: same two elements again.
+  useEffect(() => {
+    if (!popupHost) return;
+    popupHost.className = themeClass;
+    const doc = popupHost.ownerDocument;
+    if (doc) doc.documentElement.className = themeClass;
+  }, [popupHost, themeClass]);
 
   // A popup closed by the OS chrome does not always fire beforeunload; poll.
   useEffect(() => {
@@ -414,7 +471,7 @@ export function LessonShell({
 
   return (
     <ShellContext.Provider value={shellCtx}>
-      <div className={`lesson-shell theme-light ${chatOpen ? "ctx-active" : ""}`} {...rootProps}>
+      <div className={`lesson-shell ${themeClass} ${chatOpen ? "ctx-active" : ""}`} {...rootProps}>
         <style>{SHELL_STYLES}</style>
 
         {/* ── Top bar ── */}
@@ -449,6 +506,20 @@ export function LessonShell({
                 </div>
               </div>
             )}
+            {/* Labelled with the theme it switches TO -- in the light theme it
+                reads DARK, the button the pre-shell lessons put in their header
+                and the one the reader goes looking for. Outside the tutor gate:
+                a build with no tutor still has a reader who wants dark. No
+                aria-label: the word on the button is the accessible name, and
+                the neighbouring icon buttons carry one only because they have
+                no text of their own. */}
+            <button
+              className="theme-toggle"
+              onClick={toggleTheme}
+              title={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
+            >
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
             {tutorEnabled && (
               <>
                 <button
