@@ -33,6 +33,7 @@ which is the kind of regression that ships.
 | 2 | each shipped sheet | every `var(--x)` resolves in both themes |
 | 3 | `chat.css.js`'s forward-ported tokens | all twelve are declared in each theme block, named one by one so a regression says which |
 | 4 | each sheet as JavaScript | exactly two backticks (the pair delimiting the export), no `${` interpolation, balanced braces, the export present |
+| 5 | the equation caption | `.eq-label` is not clipped by `.eq-block`, and paints on the panel's fill (`--bg-eq`) rather than the page's |
 
 Case 1 builds every fixture it asserts on, and pins down what the analyser lets through as well as
 what it catches — an analyser that flags everything would pass a test that only checked for flags.
@@ -40,3 +41,10 @@ what it catches — an analyser that flags everything would pass a test that onl
 Case 4 is about a build, not a look: these sheets are JS template literals, so one backtick anywhere
 in the CSS — a comment included — ends the literal early and the build fails with
 `Expected a semicolon`. That has cost a build once.
+
+Case 5 is the one geometric invariant text can check here. The restore made `.eq-block`
+`position: relative` to anchor the Explain rail, while the classic rule keeps `overflow-x: auto` for
+wide equations — and a non-visible `overflow-x` computes `overflow-y` to `auto`, so the panel is a
+scroll container whose scrollable region stops at its padding edge. An `.eq-label` at `top: -8px`,
+which is how the newer sheet rides it on the top border, is then clipped to a sliver nothing can
+scroll to. The caption sits inside the padding box instead, on the panel's own fill.

@@ -5,9 +5,11 @@
 // This is the lessons' original stylesheet, plus only those newer rules whose
 // selectors it has no rule for: a block is refused if ANY class in its selector
 // is already styled above, so nothing appended can override the original look.
-// One declaration is a deliberate exception -- .eq-block { position: relative },
-// which anchors the Explain rail and paints nothing. The comment beside it, at
-// the forward-ported seam below, says why it had to come across.
+// Two deliberate deviations, each explained where it sits: .eq-block
+// { position: relative } at the forward-ported seam, which anchors the Explain
+// rail and paints nothing, and .eq-label's top and background, which move the
+// equation caption inside the panel because the classic panel is a scroll
+// container and would clip it. Everything else appended is verbatim.
 //
 // 39 of the 41 lessons predate LessonShell and have none of its markup, so a
 // sheet written around the shell restyles them into a layout they were never
@@ -479,12 +481,22 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 }
 .eq-explain:hover { background: var(--accent); color: var(--canvas); border-color: var(--accent); }
 .article[data-eq-explain="off"] .eq-explain { display: none; }
-/* Optional label riding the top border. The background knocks the border out,
-   so it must match whatever surface the block sits on. */
+/* Optional caption for the equation. Two values differ from the sheet this
+   block came from, and they are the second deliberate deviation in this file.
+   There the panel is overflow: visible and the caption rides the top border at
+   top: -8px, knocked out of it by the page fill. Here the panel is the classic
+   one, which sets overflow-x: auto -- and an overflow-x of auto computes
+   overflow-y to auto too, so the panel is a scroll container and anything above
+   its padding box is clipped, with no way to scroll up to it. The caption would
+   render as 4 visible pixels of a 12px caption, in the page colour (measured). So it sits at the top of the
+   padding box instead, on the panel's own fill: inside the panel's 14px of top
+   padding, clear of the equation, and clipped by nothing. Fixing it the other
+   way -- overflow: visible on .eq-block -- would drop the classic sheet's
+   horizontal scrolling for wide equations. */
 .eq-label {
   position: absolute;
-  left: 24px; top: -8px;
-  background: var(--canvas);
+  left: 24px; top: 0;
+  background: var(--bg-eq);
   padding: 0 7px;
   font-size: 0.69em; font-weight: 600;
   letter-spacing: .06em;
@@ -536,6 +548,11 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
   transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
 }
 .chat-icon-btn:hover { background: var(--surface-2); color: var(--ink-2); }
+/* The gear while its popover is open (Chatbot.jsx sets .active on it). Refused
+   by the selector rule because the classic sheet styles .active -- but only as
+   .tab-btn.active and .chat-tab.active, and no pre-shell lesson carries a
+   .chat-icon-btn, so this compound cannot reach the original look. */
+.chat-icon-btn.active { background: var(--surface-2); color: var(--accent); }
 /* ── Settings popover ── */
 .chat-settings {
   padding: 16px 18px;
@@ -572,6 +589,14 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
   transition: background var(--t-micro) var(--ease), color var(--t-micro) var(--ease);
 }
 .chat-segment:hover { color: var(--ink); }
+/* Which model, effort and answer style are selected. Same refusal, same reason
+   it is safe: .chat-segment is chat-panel-only. Without these three the popover
+   shows seven identical transparent chips and nothing says which is live. The
+   text colour is --chat-badge-text, the classic sheet's own colour for text on
+   an --accent fill (see .chat-badge, .pp-badge-official), not the page fill the
+   newer sheet uses -- that sheet is light-only and this one has two themes. */
+.chat-segment.active { background: var(--accent); color: var(--chat-badge-text); }
+.chat-segment.active:hover { color: var(--chat-badge-text); }
 .chat-setting-help { font-size: 12px; color: var(--ink-4); margin-top: 6px; line-height: 1.5; }
 .chat-msg-anchor::before { content: none; }
 /* A turn the student stopped: the bubble keeps what streamed and carries this caption. */

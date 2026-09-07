@@ -12,6 +12,10 @@
  * `.theme-light` subtree. So "defined" here means declared in both theme blocks — or declared on
  * the very rule that uses it, which is how `.chat-panel-expanded` carries `--chat-content-w`.
  *
+ * It also holds the one geometric invariant this sheet has that text can check: the equation
+ * caption must stay inside the equation panel, which the restore made a containing block while it
+ * is still a scroll container.
+ *
  * Node only. No npm install, no network, no browser: the sheet is text, and each case parses the
  * text it is about. Runs in well under a second. Exit code 0 only when every check passes.
  *
@@ -105,6 +109,46 @@ function namesUsed(body) {
 
 const isDarkSel = (s) => /(^|[\s,])(:root|\.theme-dark)([\s,]|$)/.test(s);
 const isLightSel = (s) => /(^|[\s,])\.theme-light([\s,]|$)/.test(s);
+
+// Declarations on one rule, as a map. Last one wins, which is what CSS does inside a block.
+function decls(body) {
+  const out = new Map();
+  for (const d of body.split(';')) {
+    const i = d.indexOf(':');
+    if (i > 0) out.set(d.slice(0, i).trim(), d.slice(i + 1).trim());
+  }
+  return out;
+}
+
+/**
+ * Whether an absolutely positioned child would be clipped by the ancestor it anchors to.
+ * A rule that sets both `position: relative` and an overflow other than visible is a
+ * containing block AND a scroll container, and the scrollable region does not extend past its
+ * block-start padding edge: anything the child puts above that edge is clipped and cannot be
+ * scrolled to. `overflow-x: auto` alone is enough, because a non-visible overflow-x computes
+ * overflow-y to auto. Returns a reason, or null when the child is safe.
+ */
+function clippedByAncestor(css, childSel, ancestorSel) {
+  const rs = rules(stripComments(css));
+  const merge = (sel) => {
+    const m = new Map();
+    for (const r of rs) if (r.selector === sel) for (const [k, v] of decls(r.body)) m.set(k, v);
+    return m;
+  };
+  const child = merge(childSel);
+  const anc = merge(ancestorSel);
+  if (!child.size) return `${childSel} has no rule in this sheet`;
+  if (!anc.size) return `${ancestorSel} has no rule in this sheet`;
+  if (child.get('position') !== 'absolute') return null;      // not anchored to anything
+  const scrolls = [...anc].some(([k, v]) => k.startsWith('overflow') && v !== 'visible');
+  if (anc.get('position') !== 'relative' || !scrolls) return null;
+  const top = parseFloat(child.get('top'));
+  if (Number.isFinite(top) && top < 0) {
+    return `${childSel} sits ${-top}px above the padding box of ${ancestorSel}, which is a scroll `
+      + 'container, so that much of it is clipped and unreachable';
+  }
+  return null;
+}
 
 /**
  * Every var(--x) that will not resolve. Returns a sorted array of
@@ -273,6 +317,37 @@ function unresolvedVars(css) {
     }
     check(`${sheet.name} exports ${sheet.exportName}`,
       new RegExp(`export\\s+const\\s+${sheet.exportName}\\s*=`).test(js));
+  }
+
+  // -------------------------------------------------------------------------
+  heading(5, 'the equation caption is not clipped by the equation panel');
+  {
+    // Its own fixtures first: the analyser must flag the clipped arrangement and stay quiet on
+    // the two that are fine, or the assertion below proves nothing.
+    const clipped = `.p { position: relative; overflow-x: auto; } .c { position: absolute; top: -8px; }`;
+    const visible = `.p { position: relative; overflow: visible; } .c { position: absolute; top: -8px; }`;
+    const inside = `.p { position: relative; overflow-x: auto; } .c { position: absolute; top: 0; }`;
+    check('a negative top inside a scroll container is flagged',
+      /clipped and unreachable/.test(clippedByAncestor(clipped, '.c', '.p') || ''),
+      String(clippedByAncestor(clipped, '.c', '.p')));
+    eq('…not flagged when the ancestor stays visible', clippedByAncestor(visible, '.c', '.p'), null);
+    eq('…nor when the child sits inside the padding box', clippedByAncestor(inside, '.c', '.p'), null);
+
+    // The shipped sheet. .eq-block is the classic beige panel: position: relative (this restore
+    // added it, to anchor the Explain rail) plus the classic overflow-x: auto for wide equations.
+    // So <Eq label> renders whole only while .eq-label stays inside the padding box.
+    const css = extractTemplate(fs.readFileSync(SHEETS[0].file, 'utf8'));
+    const why = css && clippedByAncestor(css, '.eq-label', '.eq-block');
+    check('chat.css.js: .eq-label is not clipped by .eq-block', why === null, String(why));
+    // And it paints on the panel's own fill, not the page fill, or it reads as a hole in the panel.
+    const labelBg = css && (() => {
+      for (const r of rules(stripComments(css))) if (r.selector === '.eq-label') {
+        const b = decls(r.body).get('background');
+        if (b) return b;
+      }
+      return null;
+    })();
+    eq('…on the panel fill rather than the page fill', labelBg, 'var(--bg-eq)');
   }
 
   console.log('');
