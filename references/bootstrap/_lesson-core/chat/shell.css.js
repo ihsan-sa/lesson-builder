@@ -429,6 +429,28 @@ export const SHELL_STYLES = `
   transform: translateY(-50%);
   display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
 }
+/* The 92px gutter above buys the floating rail its room out of the column's
+   width, which is affordable on a desktop and is a third of a phone's. At
+   390px the article column is 286px, so 24 + 92 of padding leaves the equation
+   168px -- and .eq-body is a scroll container, so it is the equation that gets
+   scrolled out of sight, never the pill. Below this width the rail stops
+   floating and flows under the equation instead, and the block goes back to
+   even padding: the equation gets 236px of the 286 and the block grows by the
+   height of one pill. The block is a flex row, so it has to become a column
+   for a static rail to land beneath rather than beside. 520px is the
+   breakpoint chat/chat.css.js already uses for the same rail; LessonShell
+   collapses its contents rail higher up still, at 551px, and between the two
+   the column is wide enough that the gutter costs the equation nothing. */
+@media (max-width: 520px) {
+  .eq-block { flex-direction: column; align-items: stretch; }
+  .eq-block[data-latex] { padding-right: 24px; }
+  .eq-side {
+    position: static;
+    transform: none;
+    flex-direction: row; justify-content: flex-end; align-items: center;
+    margin-top: 8px;
+  }
+}
 .eq-num {
   font-family: var(--font-mono);
   font-size: 0.72em;

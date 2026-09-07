@@ -1,0 +1,9 @@
+{
+  "name": "phone-width-tests",
+  "private": true,
+  "description": "Playwright evidence that no equation's controls overlap the equation at 390px, in both stylesheets. Run: ./run.sh",
+  "scripts": { "test": "./run.sh" },
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}
