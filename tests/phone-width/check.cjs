@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Measures rendered geometry in three built lessons and asserts two things:
 // nothing an equation carries lands on the equation, and no part of the lesson
-// is squeezed to nothing. See README.md.
+// is squeezed to nothing — including that the four ancestors the collapse
+// measurement skips a part inside are what keeps those parts unnamed. See
+// README.md.
 //
 // Two of the lessons are the two stylesheets the 41 lessons render:
 //   shell    lesson/shell_demo.jsx    mounts LessonShell, so chat/chat.css.js
@@ -12,7 +14,9 @@
 // The third is the negative control for the collapse case, which would
 // otherwise only ever have been seen to stay quiet:
 //   squeezed lesson/squeezed_demo.jsx  every squeezable part twice, once laid
-//            out and once squeezed to nothing (see squeezedCases below)
+//            out and once squeezed to nothing (see squeezedCases below), plus a
+//            part squeezed to nothing inside each of the four ancestors
+//            collapse.cjs skips a part in (see excludedCases below)
 //
 // Two viewports, because the fix is a narrow-width rule and the point of
 // measuring the wide one is that it did not move:
@@ -34,7 +38,7 @@ function resolveDep(spec) {
   throw new Error(`cannot resolve ${spec}; run \`npm install\` in tests/phone-width`);
 }
 const { chromium } = require(resolveDep("playwright"));
-const { MIN_PART_W, describeCollapsed, settle, readParts } = require("./collapse.cjs");
+const { MIN_PART_W, NOT_LESSON_CONTENT, describeCollapsed, settle, readParts } = require("./collapse.cjs");
 
 const BROWSER = process.env.PHONE_WIDTH_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
 const PHONE = { width: 390, height: 844 };
@@ -268,6 +272,45 @@ function squeezedCases(snap) {
     (named.size ? `\n        ${describeCollapsed(snap.parts.collapsed)}` : ""));
 }
 
+// The four exclusions in collapse.cjs, measured. Same page load as
+// squeezedCases: lesson/squeezed_demo.jsx squeezes a code block to nothing
+// inside each of `.katex-mathml`, a `dcg-*` node, `.chat-panel` and
+// `.thread-panel`, and none of the four may be named. Until this existed the
+// guards were unreachable — no demo fixture put a measured part under any of
+// those ancestors — so a mistyped selector or an inverted condition left every
+// case green. Both halves are asserted here: the squeeze inside each ancestor
+// is skipped, and the same squeeze outside all four is still named.
+function excludedCases(snap) {
+  const label = (p) => `${p.kind} ${Math.round(p.inner)}px${p.hidden ? " (hidden)" : ""} — ${p.label}`;
+  for (const sel of NOT_LESSON_CONTENT) {
+    const inside = snap.parts.skipped.filter((p) => p.excludedBy === sel);
+    // Under the floor AND on screen, so that "not named" can only be this
+    // guard's doing: a part the floor would have passed, or one `hidden()`
+    // would have dropped anyway, proves nothing about the selector.
+    const would = inside.filter((p) => !p.hidden && p.inner < MIN_PART_W);
+    check(`excluded: the part squeezed to nothing inside ${sel} is skipped, not named`,
+      inside.length === 1 && would.length === 1,
+      inside.length === 0
+        ? `${sel} skipped nothing — it matched no ancestor of any part. Measured instead: ` +
+          snap.parts.parts.map((p) => p.label).join(" | ")
+        : inside.map(label).join("\n        "));
+  }
+  // The other half, and what keeps the four above from passing vacuously: the
+  // same squeezed code block, outside all four ancestors, is still named. A
+  // measurement that had stopped naming anything would pass every case above.
+  const named = snap.parts.collapsed.filter((p) => p.kind === "code");
+  check("excluded: the same squeeze outside all four ancestors is still named",
+    named.length === 1,
+    `${named.length} code blocks named, expected only the one squeezed outside the four:\n        ` +
+    (describeCollapsed(named) || "none"));
+  // `|| "—"` because an inverted guard skips the parts no selector matched, and
+  // the run that has to report that must print it rather than throw on it.
+  console.log(`\n[not lesson content] ${snap.parts.skipped.length} parts skipped` +
+    (snap.parts.skipped.length
+      ? `\n        ${snap.parts.skipped.map((p) => `${(p.excludedBy || "—").padEnd(15)} ${label(p)}`).join("\n        ")}`
+      : ""));
+}
+
 (async () => {
   const shellUrl = process.env.SHELL_URL, classicUrl = process.env.CLASSIC_URL;
   const squeezedUrl = process.env.SQUEEZED_URL;
@@ -341,7 +384,11 @@ function squeezedCases(snap) {
           `${Math.round(toggle.after.width)}px, collapsed=${toggle.after.collapsed}`);
       }
     }
-    squeezedCases(await measure(browser, squeezedUrl, PHONE));
+    // One page load, read by both: squeezedCases takes the parts that were
+    // measured, excludedCases the parts the exclusions skipped.
+    const squeezed = await measure(browser, squeezedUrl, PHONE);
+    squeezedCases(squeezed);
+    excludedCases(squeezed);
   } finally {
     await browser.close();
   }

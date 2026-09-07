@@ -44,6 +44,12 @@ const PARTS = [
 //   .thread-panel   likewise
 // A part inside any of these is skipped, not measured and passed: a skipped
 // part cannot hide a real collapse because it is not a part of the lesson.
+//
+// Each skip is recorded (see `skipped` below) rather than dropped, because a
+// guard nothing exercises is a guard that could be mistyped or inverted and
+// still leave every case green. lesson/squeezed_demo.jsx squeezes a code block
+// to nothing inside each of these four, and check.cjs asserts one skipped part
+// per entry of this list.
 const NOT_LESSON_CONTENT = [".katex-mathml", '[class*="dcg-"]', ".chat-panel", ".thread-panel"];
 
 // Runs in the page. Every number is a real getBoundingClientRect on the
@@ -73,10 +79,23 @@ function measureParts({ parts, notLessonContent, minWidth }) {
   const hidden = (el) => el.offsetParent === null || getComputedStyle(el).visibility === "hidden";
 
   const measured = [];
+  // What the exclusions skipped, and which selector did it. Kept so the guards
+  // can be asserted on: a part missing from `measured` says nothing on its own,
+  // while a part here says which selector matched and how wide the part it
+  // dropped was.
+  const skipped = [];
   for (const { kind, selector } of parts) {
     let i = 0;
     for (const el of document.querySelectorAll(selector)) {
-      if (notLessonContent.some((sel) => el.closest(sel))) continue;
+      // "A part inside any of these is skipped, not measured and passed."
+      const excludedBy = notLessonContent.find((sel) => el.closest(sel));
+      if (excludedBy) {
+        // Measured before being dropped, so a fixture can show the part WOULD
+        // have been named (visible, under the floor) and the guard is what kept
+        // it quiet.
+        skipped.push({ kind, excludedBy, label: text(el), inner: innerWidth(el), hidden: hidden(el) });
+        continue;
+      }
       if (hidden(el)) continue;
       const r = el.getBoundingClientRect();
       const eq = el.closest(".eq-block");
@@ -94,6 +113,7 @@ function measureParts({ parts, notLessonContent, minWidth }) {
   return {
     viewportWidth: window.innerWidth,
     parts: measured,
+    skipped,
     collapsed: measured.filter((p) => p.inner < minWidth),
     minInner: measured.length ? Math.min(...measured.map((p) => p.inner)) : null,
   };
@@ -133,4 +153,4 @@ async function readParts(page) {
   return page.evaluate(measureParts, { parts: PARTS, notLessonContent: NOT_LESSON_CONTENT, minWidth: MIN_PART_W });
 }
 
-module.exports = { MIN_PART_W, describeCollapsed, settle, readParts };
+module.exports = { MIN_PART_W, NOT_LESSON_CONTENT, describeCollapsed, settle, readParts };
