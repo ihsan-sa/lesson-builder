@@ -9,15 +9,22 @@
 //   the SVG a lesson draws from THEMES_G                   the lesson re-render
 //   the detached tutor pop-out, and its <html>             a second document
 //
+// Both ways a lesson can wire the theme are driven, because both ship: the
+// CONTROLLED body holds `theme` in the lesson and hands the shell both props
+// (cases 1-4), and the UNCONTROLLED body passes neither and leaves the choice
+// to the shell (case 5). The second is the path the two real shell lessons are
+// on, and the one nothing used to press.
+//
 // The pop-out is exercised both ways round: opened while the page is already
 // dark, and then switched back to light with the window still open — those are
 // two different code paths in LessonShell (openPopup, and the effect that
 // re-applies the class), and the second is the one that silently does nothing
 // if the effect is dropped.
 //
-// Env: LESSON_URL   (required; run.sh serves the built lesson)
+// Env: LESSON_URL         (required; run.sh serves the controlled build)
+//      UNCONTROLLED_URL  (required; run.sh serves the uncontrolled build beside it)
 //      SHELL_THEME_BROWSER / SAFE_RENDER_BROWSER — system Chrome/Chromium binary
-//      SHOTS         directory to write the screenshots into
+//      SHOTS             directory to write the screenshots into
 function resolveDep(spec) {
   for (const base of [__dirname, process.cwd(), process.env.LESSON_DIR].filter(Boolean)) {
     try { return require.resolve(spec, { paths: [base] }); } catch (_) {}
@@ -28,6 +35,7 @@ const { chromium } = require(resolveDep("playwright"));
 const path = require("path");
 
 const URL = process.env.LESSON_URL;
+const UNCONTROLLED_URL = process.env.UNCONTROLLED_URL;
 const BROWSER = process.env.SHELL_THEME_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
 const SHOTS = process.env.SHOTS || "";
 
@@ -83,9 +91,9 @@ const READ_POPUP = () => ({
     ? getComputedStyle(document.querySelector(".chat-panel")).backgroundColor : null,
 });
 
-(async () => {
-  if (!URL) { console.error("LESSON_URL is required"); process.exit(2); }
-  const browser = await chromium.launch(BROWSER ? { executablePath: BROWSER } : {});
+// Every case, with the browser handed in. Split out so the launch can sit in the
+// try/finally below rather than inside it.
+async function cases(browser) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
   await page.goto(URL, { waitUntil: "networkidle" });
@@ -153,7 +161,58 @@ const READ_POPUP = () => ({
   }
   if (SHOTS) await popup.screenshot({ path: path.join(SHOTS, "popout-light.png") });
 
-  await browser.close();
+  // The other build, in a page of its own. Nothing above is carried into it: this page
+  // opens light like any other and is switched on its own.
+  console.log("\n5  a lesson that passes NEITHER theme prop switches too — and its graphs do not");
+  const un = await ctx.newPage();
+  await un.goto(UNCONTROLLED_URL, { waitUntil: "networkidle" });
+  await un.waitForSelector(".article .para", { timeout: 30000 });
+  const unLight = await un.evaluate(READ);
+  check("it opens light with no theme prop to open it", /\btheme-light\b/.test(unLight.rootClass || ""),
+    unLight.rootClass);
+  check("the switch reads Dark", (unLight.toggleLabel || "").trim() === "Dark", unLight.toggleLabel);
+  if (SHOTS) await un.screenshot({ path: path.join(SHOTS, "uncontrolled-light.png"), fullPage: false });
+
+  await un.click(".theme-toggle");
+  await un.waitForTimeout(400);
+  const unDark = await un.evaluate(READ);
+  // The shell's own themeOwn/toggleTheme fallback, end to end: no lesson state is in
+  // play, so if that fallback were dropped the class would not move at all.
+  check("the shell root turned dark off the shell's own state",
+    /\btheme-dark\b/.test(unDark.rootClass || ""), unDark.rootClass);
+  check("…and <html> followed", /\btheme-dark\b/.test(unDark.htmlClass || ""), unDark.htmlClass);
+  check("the switch now reads Light", (unDark.toggleLabel || "").trim() === "Light", unDark.toggleLabel);
+  differs("the page background changed", unLight.rootBg, unDark.rootBg);
+  differs("the prose ink changed", unLight.articleInk, unDark.articleInk);
+  differs("the equation card changed", unLight.eqBg, unDark.eqBg);
+  // And what this path costs, on the page rather than in a doc: the SVG colours are JS
+  // values the lesson wrote as attributes, and nothing re-rendered them. references/
+  // template.md says a lesson WITH graphs must hold the theme itself for exactly this
+  // reason. Asserting the colours hold is what makes check.cjs case 5 worth having —
+  // the static check refuses this combination, and this is the page it refuses it for.
+  check("the lesson's SVG stayed on the light palette — the trap this path is",
+    unLight.traceBg === unDark.traceBg && unLight.traceCurve === unDark.traceCurve,
+    `bg ${unLight.traceBg} -> ${unDark.traceBg}, curve ${unLight.traceCurve} -> ${unDark.traceCurve}`);
+  if (SHOTS) await un.screenshot({ path: path.join(SHOTS, "uncontrolled-dark.png"), fullPage: false });
+}
+
+(async () => {
+  if (!URL || !UNCONTROLLED_URL) {
+    console.error("LESSON_URL and UNCONTROLLED_URL are both required; run.sh sets them");
+    process.exit(2);
+  }
+  const browser = await chromium.launch(BROWSER ? { executablePath: BROWSER } : {});
+  try {
+    await cases(browser);
+  } finally {
+    // In a finally, not on the happy path as before: a timeout or a selector that never
+    // appears falls through to the outer .catch(), and run.sh's trap clears the preview
+    // PORT, which the browser is not on. Measured on Playwright 1.62.1 a deliberately
+    // failing check left no Chromium behind either way — playwright kills the browser it
+    // spawned from its own process-exit hook — so what this buys is not depending on that
+    // hook. Same shape as tests/katex-fallback/check.cjs.
+    await browser.close();
+  }
   console.log(`\n${failed === 0 ? "all checks passed" : `${failed} check(s) failed`}`);
   if (SHOTS) console.log(`screenshots: ${SHOTS}`);
   process.exit(failed === 0 ? 0 : 1);

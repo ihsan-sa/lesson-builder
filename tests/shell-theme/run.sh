@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Dark/light evidence in a real browser. Bootstraps a throwaway workspace per
-# references/bootstrap.md, scaffolds ONE lesson from the template with this
-# directory's demo body, builds it with `VITE_TUTOR=1 npx vite build` — the
-# pop-out button lives behind the tutor gate — serves the built bundle with
-# `vite preview`, and drives browser.cjs against it. See README.md.
+# references/bootstrap.md, scaffolds ONE lesson from the template, builds it TWICE
+# with `VITE_TUTOR=1 npx vite build` — the pop-out button lives behind the tutor gate —
+# once with this directory's demo body (the lesson holds the theme) into dist/ and once
+# with the uncontrolled body (the shell holds it) into dist/uncontrolled/, serves the
+# built bundle with `vite preview`, and drives browser.cjs against both. See README.md.
 #
 # Built rather than served from the dev server: what the owner presses is the
 # built page, and that is dist/.
@@ -45,6 +46,17 @@ PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --prefer-offline --silent
 VITE_TUTOR=1 npx vite build >"$WS/build.log" 2>&1 \
   || { echo "build failed"; cat "$WS/build.log"; exit 1; }
 
+# A second build of the SAME lesson directory with the uncontrolled body: the shell is
+# handed neither `theme` nor `onThemeChange`, which is the configuration both lessons
+# that ship on the shell are in. One scaffold and one npm install serve both.
+# `--base ./` makes its asset URLs relative, so the one preview server below serves it
+# out of a subdirectory of the same dist/ and the trap still has one port to clear.
+# AFTER the controlled build, never before: vite empties its outDir, and dist/ is this
+# one's parent.
+cp "$HERE/lesson/theme_uncontrolled.jsx" "$L/src/theme_demo.jsx"
+VITE_TUTOR=1 npx vite build --base ./ --outDir dist/uncontrolled >>"$WS/build.log" 2>&1 \
+  || { echo "uncontrolled build failed"; cat "$WS/build.log"; exit 1; }
+
 (npx vite preview --port "$PREVIEW_PORT" --strictPort >"$WS/preview.log" 2>&1) &
 for _ in $(seq 1 60); do
   curl -sf -o /dev/null "http://localhost:$PREVIEW_PORT/" && break
@@ -57,6 +69,7 @@ SHOTS="$WS/shots"; mkdir -p "$SHOTS"
 # LESSON_DIR lets browser.cjs fall back to the lesson's own playwright install
 # when tests/shell-theme has not been npm installed.
 LESSON_URL="http://localhost:$PREVIEW_PORT/" \
+UNCONTROLLED_URL="http://localhost:$PREVIEW_PORT/uncontrolled/" \
 SHOTS="$SHOTS" \
 LESSON_DIR="$L" \
   node "$HERE/browser.cjs"
