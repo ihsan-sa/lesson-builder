@@ -6,6 +6,12 @@
 // check names every squeezed part and names none of the kept ones. Every part's
 // text says which it is, and check.cjs asserts on that.
 //
+// A third section squeezes a code block inside each of the four ancestors
+// collapse.cjs refuses to measure a part inside (its NOT_LESSON_CONTENT), so
+// those guards are asserted the same way round: the part is squeezed to nothing
+// and still must not be named, and the only thing keeping it unnamed is the
+// guard.
+//
 // THE MECHANISM. A flex child with `min-width: 0` that is squeezed collapses to
 // ZERO width instead of overflowing its parent. Nothing overflows, so the page
 // never scrolls sideways and a page-level overflow check stays green while the
@@ -24,6 +30,17 @@ import { Figure, Table, Code } from "./parts.jsx";
 const ROW = { display: "flex", alignItems: "flex-start" };
 const HOG = { flex: "0 0 100%" };
 const SQUEEZED = { flex: "1 1 0", minWidth: 0, overflowX: "auto" };
+
+// The four ancestors collapse.cjs skips a part inside, one class each, in the
+// order of its NOT_LESSON_CONTENT — `dcg-embed` for the `[class*="dcg-"]`
+// pattern Desmos's internals match. Each holds the same squeeze as the section
+// above, so the part inside it really is 0px wide and really is visible: if the
+// selector stopped matching, the part it had been skipping would be named like
+// any other, which is how check.cjs catches a broken guard.
+//
+// One kind is enough for all four: the guard runs once per element in the same
+// loop for every kind, before the kind is looked at.
+const NOT_LESSON_CONTENT = ["katex-mathml", "dcg-embed", "chat-panel", "thread-panel"];
 
 export default function LessonApp() {
   const katexReady = useKatex();
@@ -57,6 +74,17 @@ export default function LessonApp() {
             <div style={HOG} />
             <div style={SQUEEZED}><Code what="squeezed" /></div>
           </div>
+        </Section>
+        <Section title="Not lesson content">
+          <P>The same squeeze inside each ancestor the check skips. None of these may be named.</P>
+          {NOT_LESSON_CONTENT.map((cls) => (
+            <div className={cls} key={cls}>
+              <div style={ROW}>
+                <div style={HOG} />
+                <div style={SQUEEZED}><Code what={`squeezed inside .${cls}`} /></div>
+              </div>
+            </div>
+          ))}
         </Section>
       </div>
     </div>

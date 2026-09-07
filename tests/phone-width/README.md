@@ -89,6 +89,17 @@ parts twice, once laid out ("kept") and once as a flex child of a row already
 full ("squeezed"), and the fixture asserts both halves on that one page: every
 squeezed part is named, no kept part is, and all four kinds are among the named.
 
+The four skips are measured on that same page. Its third section squeezes a code
+block to nothing inside each of the four ancestors, and one case per ancestor
+asserts that the part is on screen, is under the floor, and is still not named —
+so the guard is what kept it quiet. Break one of the four selectors and the part
+it had been skipping is measured like any other, and that ancestor's case names
+it. The pair's other half is asserted beside them: the same squeeze outside all
+four is still named, so a measurement that had stopped naming anything cannot
+pass the four. Before this the guards were unreachable — no demo lesson put a
+measured part under any of the four — and a mistyped selector left every case
+green.
+
 ## The same measurement over a whole built site
 
 `sweep.cjs` runs it over every lesson of a built site, one page load each, at
