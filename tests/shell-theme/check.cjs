@@ -173,18 +173,31 @@ function shellPropsTag(js) {
   return null;
 }
 
-// Lines carrying a JSX colour attribute whose value reads the graph palette binding:
-// fill={G.bg}, stroke={G.gold}, stopColor={G.axis}. These are attributes on the rendered
-// SVG, so no class swap reaches them. One entry per line, like themeClassSites, so a
+// Every JSX colour attribute whose value reads the graph palette binding: fill={G.bg},
+// stroke={G.gold}, stopColor={G.axis}. These are attributes on the rendered SVG, so no class
+// swap reaches them.
+//
+// Scanned over the whole source, NOT a line at a time. A formatter handed a long conditional
+// breaks the line after the `{`, leaving `fill={` on one line and the `G.bg` it reads on the
+// next; a per-line scan then found no graph anywhere in that lesson and passed it, which is
+// this check's own trap slipping past it. The value pattern spans newlines but stops at the
+// first `}`, so it cannot run on past the end of one attribute into another.
+//
+// The `\s*` sits after the `=` only: a formatter may break there, but nothing writes
+// `fill = {` in JSX, and allowing a space before the `=` would make a plain `const fill = {`
+// object literal a graph site. One entry per attribute, reported on the line it opens, so a
 // failure prints the site rather than a count.
 function graphColourSites(js) {
-  const lines = stripJsComments(js).split('\n');
+  const src = stripJsComments(js);
+  const re = /\b(?:fill|stroke|color|stopColor|floodColor)=\s*\{[^}]*?\bG\.[^}]*\}?/g;
   const out = [];
-  lines.forEach((text, i) => {
-    if (/\b(fill|stroke|color|stopColor|floodColor)=\{[^}]*\bG\./.test(text)) {
-      out.push({ line: i + 1, text: text.trim() });
-    }
-  });
+  let m;
+  while ((m = re.exec(src))) {
+    out.push({
+      line: src.slice(0, m.index).split('\n').length,
+      text: m[0].replace(/\s+/g, ' ').trim(),
+    });
+  }
   return out;
 }
 
@@ -432,6 +445,41 @@ function buttonLabel(js, cls) {
     const commentedGraph = '// <rect fill={G.bg} />\n' + mount('');
     check('a colour attribute named only in a comment is not a graph site',
       graphThemeAudit(commentedGraph).graphs.length === 0, auditDetail(graphThemeAudit(commentedGraph)));
+
+    // The wrapped form, which is what a formatter leaves behind when the colour is a long
+    // conditional: `fill={` ends one line and the `G.bg` it reads starts the next. Reading a
+    // line at a time saw no graph in this lesson at all, so it came back ok — the trap this
+    // case exists to catch, passing silently. Both halves are asserted: the wrapped lesson
+    // that omits the props is flagged, and the wrapped lesson that holds the theme is not,
+    // because a finder that just fired on `fill={` would fail every well-wired lesson too.
+    const wrappedGraph = 'let G = THEMES_G.light;\n'
+      + 'const T = () => (\n  <svg>\n    <rect\n      fill={\n'
+      + '        mode === "hi" ? G.bg : G.bgAlt\n      }\n    />\n'
+      + '    <path\n      stroke={\n        mode === "hi" ? G.gold : G.axis\n      }\n'
+      + '    />\n  </svg>\n);\n';
+    // EVERY colour in it is wrapped. One single-line `fill={G.x}` left in would be found on
+    // its own line and flag the lesson anyway, and the wrapped ones could go back to being
+    // invisible without a single check here going red.
+    check('every colour in the wrapped fixture really is wrapped',
+      !/=\{[^}\n]*\bG\./.test(wrappedGraph), wrappedGraph);
+    const wrappedNeither = wrappedGraph + mount('');
+    const wrappedHeld = wrappedGraph + rebind + mount(' theme={theme} onThemeChange={setTheme}');
+    const wrappedSites = graphThemeAudit(wrappedNeither).graphs;
+    eq('a colour split across a line break is still a graph site', wrappedSites.length, 2);
+    // Guarded, so the per-line finder coming back reports the count above as a FAIL and the
+    // rest of case 5 still runs — reading [0] of an empty list here kills the whole run.
+    if (wrappedSites.length === 2) {
+      eq('…reported on the line the attribute opens, not the line G is read on',
+        wrappedSites[0].line, 5);
+      eq('…and each attribute is its own site', wrappedSites[1].line, 10);
+      check('…printed as the whole expression, wrap flattened',
+        wrappedSites[0].text === 'fill={ mode === "hi" ? G.bg : G.bgAlt }',
+        JSON.stringify(wrappedSites[0].text));
+    }
+    check('so a wrapped lesson that omits both props is flagged',
+      !graphThemeAudit(wrappedNeither).ok, auditDetail(graphThemeAudit(wrappedNeither)));
+    check('…while a wrapped lesson that holds the theme and rebinds G still passes',
+      graphThemeAudit(wrappedHeld).ok, auditDetail(graphThemeAudit(wrappedHeld)));
 
     // The two lesson bodies this directory ships, which are the only lesson sources in
     // this repo — the lessons that ship on the shell live in another one, so this case

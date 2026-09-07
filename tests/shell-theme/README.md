@@ -44,7 +44,7 @@ reads the unmoved colours off the page. Do not "fix" it by adding the props.
 | 2 | `LessonShell.jsx` | exactly one line names a palette class, and it is the one deriving `themeClass` from `theme`; the shell root, the pop-out host and the pop-out's `documentElement` all take that value; an effect keyed on `themeClass` re-applies it to a pop-out that is already open; a **layout** effect keyed on `themeClass` adds the class to the main document's `documentElement` and removes it again |
 | 3 | `shell.css.js` | both theme blocks exist and declare the same token set (fixtures first: a gap in either direction is reported against the block that has it, and one fixture is shaped like the shipped file, header comment and all); no rule outside those blocks writes a colour as a literal; the sheet resets `html, body` and paints them from `--canvas`; the two palettes differ on `--canvas` |
 | 4 | the switch | the `.theme-toggle` label expression evaluates to `Dark` in the light theme and `Light` in the dark one, and the button sits outside the tutor gate |
-| 5 | a lesson's theme wiring | a lesson whose SVG paints from `G` passes `theme` and `onThemeChange` **and** rebinds `G = THEMES_G[theme]`; passing one prop, or both without the rebind, fails; a lesson with no such SVG may leave the theme to the shell; `theme_demo.jsx` passes and `theme_uncontrolled.jsx` is flagged |
+| 5 | a lesson's theme wiring | a lesson whose SVG paints from `G` passes `theme` and `onThemeChange` **and** rebinds `G = THEMES_G[theme]`; passing one prop, or both without the rebind, fails; a lesson with no such SVG may leave the theme to the shell; a colour wrapped across a line break is still found, on the line its attribute opens; `theme_demo.jsx` passes and `theme_uncontrolled.jsx` is flagged |
 
 Case 1 builds every fixture it asserts on and pins down what the finder lets through as well as what
 it catches. Cases 3 and 5 do the same before they read the shipped files.
@@ -59,6 +59,13 @@ reads those off a real page. Nor can it see the lessons that ship: those live in
 here it guards these two bodies and states the rule. The tag is scanned with brace depth rather than
 to the first `>`, because `tutor={<Chatbot ... />}` puts a `>` inside a prop value and stopping there
 reports a lesson that does everything right as the trap.
+
+Colour attributes are found over the whole source rather than a line at a time, and one fixture is
+there to keep it that way. A formatter given a long conditional breaks the line after the `{`, so
+`fill={` ends one line and the `G.bg` it reads starts the next — and a per-line scan found no graph
+anywhere in that lesson, passed it, and let this case's own trap through in silence. The fixture
+wraps *every* colour it contains, because one single-line `fill={G.x}` left in would flag the lesson
+by itself and the wrapped ones could go back to being invisible unnoticed.
 
 Case 3 reads the CSS out of the template literal first, and one of its fixtures is there to keep it
 doing so. The module header is a `//` comment that names both palette classes while explaining
