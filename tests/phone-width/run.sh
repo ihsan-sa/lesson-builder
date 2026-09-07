@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Phone-width geometry evidence. Bootstraps a throwaway workspace per
-# references/bootstrap.md, scaffolds TWO lessons from the template — one that
-# mounts LessonShell and one in the pre-shell shape — builds each with
-# `vite build`, serves the built bundles with `vite preview`, and drives
-# check.cjs against both at 390x844 and 1440x900. See README.md.
+# references/bootstrap.md, scaffolds THREE lessons from the template — one that
+# mounts LessonShell, one in the pre-shell shape, and one deliberately squeezed
+# — builds each with `vite build`, serves the built bundles with `vite preview`,
+# and drives check.cjs against them at 390x844 and 1440x900. See README.md.
 #
 # Built rather than served from the dev server: the overlap is what a reader
 # gets on the live site, and that is dist/.
 #
 #   PHONE_WIDTH_BROWSER=<chrome bin>  optional; else Playwright's own Chromium
 #   PORT=<n>                          optional; the shell lesson's preview port
-#                                     (default 5297). The classic lesson takes
-#                                     the next port up.
+#                                     (default 5297). The classic and squeezed
+#                                     lessons take the next two ports up.
 #   KEEP=1                            keep the temp workspace for inspection
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -19,15 +19,16 @@ SKILL=$(cd "$HERE/../.." && pwd)
 B="$SKILL/references/bootstrap"
 SHELL_PORT="${PORT:-5297}"
 CLASSIC_PORT=$((SHELL_PORT + 1))
+SQUEEZED_PORT=$((SHELL_PORT + 2))
 
 WS=$(mktemp -d "${TMPDIR:-/tmp}/phone-width-ws.XXXX"); echo "workspace: $WS"
 cleanup() {
   # `npx vite preview` runs Vite as a grandchild, so the shell's job pid is
   # npm's and killing it leaves the server holding the port with a cwd this
   # trap is about to delete. Clear by port, the same belt as
-  # tests/katex-fallback: Vite writes no identity file, and both ports are ones
-  # this fixture owns exclusively (--strictPort).
-  fuser -k -TERM "${SHELL_PORT}/tcp" "${CLASSIC_PORT}/tcp" 2>/dev/null || true
+  # tests/katex-fallback: Vite writes no identity file, and all three ports are
+  # ones this fixture owns exclusively (--strictPort).
+  fuser -k -TERM "${SHELL_PORT}/tcp" "${CLASSIC_PORT}/tcp" "${SQUEEZED_PORT}/tcp" 2>/dev/null || true
   if [ -n "${KEEP:-}" ]; then echo "kept $WS"; else rm -rf "$WS"; fi
 }
 trap cleanup EXIT
@@ -48,6 +49,7 @@ scaffold_and_build() {
   sed -i "s/__SLUG_SNAKE__/$snake/g; s/__SLUG__/$slug/g; s/__COURSE_CODE__/DEMO 101/g; s/__LESSON_TITLE__/$title/g" \
     "$L/package.json" "$L/src/main.jsx" "$L/CLAUDE.md" "$L/index.html"
   cp "$HERE/lesson/$body" "$L/src/$snake.jsx"
+  cp "$HERE/lesson/parts.jsx" "$L/src/parts.jsx"
   (cd "$L" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --prefer-offline --silent \
      && npx vite build >"$WS/build-$slug.log" 2>&1) \
     || { echo "build $slug failed"; cat "$WS/build-$slug.log"; exit 1; }
@@ -64,15 +66,20 @@ serve() {
   echo "preview server on $port did not start"; cat "$WS/preview-$port.log"; exit 1
 }
 
-scaffold_and_build shell-demo   shell_demo   "Phone Width Demo (shell)"   shell_demo.jsx
-scaffold_and_build classic-demo classic_demo "Phone Width Demo (classic)" classic_demo.jsx
+scaffold_and_build shell-demo    shell_demo    "Phone Width Demo (shell)"    shell_demo.jsx
+scaffold_and_build classic-demo  classic_demo  "Phone Width Demo (classic)"  classic_demo.jsx
+# The negative control: a lesson whose parts are squeezed to nothing on purpose,
+# so the collapse check is shown to catch a break, not only to stay quiet.
+scaffold_and_build squeezed-demo squeezed_demo "Phone Width Demo (squeezed)" squeezed_demo.jsx
 
 serve "$WS/course/claude_lessons/shell-demo" "$SHELL_PORT"
 serve "$WS/course/claude_lessons/classic-demo" "$CLASSIC_PORT"
+serve "$WS/course/claude_lessons/squeezed-demo" "$SQUEEZED_PORT"
 
 # LESSON_DIR lets check.cjs fall back to a lesson's own playwright install when
 # tests/phone-width has not been npm installed.
 SHELL_URL="http://localhost:$SHELL_PORT/" \
 CLASSIC_URL="http://localhost:$CLASSIC_PORT/" \
+SQUEEZED_URL="http://localhost:$SQUEEZED_PORT/" \
 LESSON_DIR="$WS/course/claude_lessons/shell-demo" \
   node "$HERE/check.cjs"

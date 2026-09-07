@@ -9,12 +9,13 @@
 // the measurement sees a narrow case, a wide case and the captioned case.
 import { useState } from "react";
 import { LessonShell, Eq, M, P, Section, useKatex } from "@core";
+import { Figure, Table, Code } from "./parts.jsx";
 
 const TOPICS = [
   {
     id: "widths",
     title: "Equation widths",
-    sections: ["Short", "Long"],
+    sections: ["Short", "Long", "Parts that are not equations"],
     content: () => (
       <>
         <Section title="Short">
@@ -28,6 +29,13 @@ const TOPICS = [
           <P>A wide one, and one with a caption riding the border.</P>
           <Eq>{"\\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi} \\quad \\text{for all real } x"}</Eq>
           <Eq label="TIME-DEPENDENT FORM">{"i\\hbar \\partial_t \\psi = H\\psi"}</Eq>
+        </Section>
+        <Section title="Parts that are not equations">
+          <P>A figure, a table and a code block: an equation is not the only
+            thing a narrow column can squeeze to nothing.</P>
+          <Figure />
+          <Table />
+          <Code />
         </Section>
       </>
     ),

@@ -1,13 +1,18 @@
 #!/usr/bin/env node
-// Measures rendered geometry in two built lessons and asserts nothing an
-// equation carries lands on the equation. See README.md.
+// Measures rendered geometry in three built lessons and asserts two things:
+// nothing an equation carries lands on the equation, and no part of the lesson
+// is squeezed to nothing. See README.md.
 //
-// Two lessons, because the 41 lessons render two different stylesheets:
+// Two of the lessons are the two stylesheets the 41 lessons render:
 //   shell    lesson/shell_demo.jsx    mounts LessonShell, so chat/chat.css.js
 //            with chat/shell.css.js injected over it (2 of the 41)
 //   classic  lesson/classic_demo.jsx  no shell markup at all, so chat/chat.css.js
 //            alone (the other 39)
 // A measurement taken on one says nothing about the other; both are measured.
+// The third is the negative control for the collapse case, which would
+// otherwise only ever have been seen to stay quiet:
+//   squeezed lesson/squeezed_demo.jsx  every squeezable part twice, once laid
+//            out and once squeezed to nothing (see squeezedCases below)
 //
 // Two viewports, because the fix is a narrow-width rule and the point of
 // measuring the wide one is that it did not move:
@@ -18,7 +23,8 @@
 // decides whether the contents rail starts open from the width at mount, so a
 // page resized after mounting is not the page a reader on a phone loads.
 //
-// Env: SHELL_URL, CLASSIC_URL  (required; run.sh serves each built lesson)
+// Env: SHELL_URL, CLASSIC_URL, SQUEEZED_URL  (required; run.sh serves each
+//      built lesson)
 //      PHONE_WIDTH_BROWSER / SAFE_RENDER_BROWSER — system Chrome/Chromium
 //      binary, so no Playwright browser download is needed.
 function resolveDep(spec) {
@@ -28,6 +34,7 @@ function resolveDep(spec) {
   throw new Error(`cannot resolve ${spec}; run \`npm install\` in tests/phone-width`);
 }
 const { chromium } = require(resolveDep("playwright"));
+const { MIN_PART_W, describeCollapsed, settle, readParts } = require("./collapse.cjs");
 
 const BROWSER = process.env.PHONE_WIDTH_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
 const PHONE = { width: 390, height: 844 };
@@ -138,12 +145,9 @@ async function measure(browser, url, viewport) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   // The lesson gates its first paint on KaTeX settling, so wait for the math
   // itself rather than for load: an equation not yet rendered has no geometry.
-  await page.waitForFunction(() => {
-    const body = document.querySelector(".eq-block[data-latex] .eq-body");
-    return !!body && !!(body.querySelector(".katex") || body.querySelector(".eq-raw"));
-  }, null, { timeout: 30000 });
-  await page.evaluate(() => document.fonts.ready);
+  await settle(page);
   const snap = await page.evaluate(MEASURE);
+  snap.parts = await readParts(page);
   await ctx.close();
   return snap;
 }
@@ -180,7 +184,8 @@ function report(label, snap) {
   console.log(
     `\n[${label}] viewport ${snap.viewportWidth}px  reading column ${Math.round(snap.readingWidth)}px  ` +
     `rail ${Math.round(snap.railWidth)}px${snap.railCollapsed === null ? "" : snap.railCollapsed ? " (collapsed)" : " (open)"}  ` +
-    `scrollWidth ${Math.round(snap.scrollWidth)}px`);
+    `scrollWidth ${Math.round(snap.scrollWidth)}px  ` +
+    `${snap.parts.parts.length} parts, narrowest ${snap.parts.minInner === null ? "n/a" : Math.round(snap.parts.minInner) + "px"}`);
   for (const e of snap.equations) {
     const o = e.sideOverlap, l = e.labelOverlap;
     console.log(
@@ -211,15 +216,69 @@ function commonCases(scope, snap) {
     captioned.map((e) => `eq${e.i} covered ${Math.round(e.labelOverlap.width)}x${Math.round(e.labelOverlap.height)}px: ${e.latex}`).join("\n        "));
   check(`${scope}: the page does not scroll sideways`, snap.scrollWidth <= snap.viewportWidth + 1,
     `scrollWidth ${Math.round(snap.scrollWidth)} > viewport ${snap.viewportWidth}`);
+  // "at phone width, a lesson's tests fail when part of the lesson has been
+  // squeezed to nothing, instead of passing because the page does not scroll
+  // sideways." A squeezed flex child collapses to zero width rather than
+  // overflowing, so the case above stays green while the part is not on screen;
+  // it cannot stand in for this one. See collapse.cjs.
+  check(`${scope}: no part of the lesson is squeezed to nothing`,
+    snap.parts.collapsed.length === 0, describeCollapsed(snap.parts.collapsed));
+  // ...and the pass above has to mean the parts were measured, not that the
+  // lesson had none to measure. Both demo lessons carry all four kinds.
+  const kinds = [...new Set(snap.parts.parts.map((p) => p.kind))].sort();
+  check(`${scope}: all four kinds of squeezable part are there to measure`,
+    ["code", "equation", "figure", "table"].every((k) => kinds.includes(k)),
+    `kinds present: ${kinds.join(", ") || "none"}`);
+}
+
+// The negative control, on its own built lesson: lesson/squeezed_demo.jsx
+// carries each squeezable part twice, once laid out ("kept") and once as a flex
+// child of a row already full ("squeezed"). Both halves are asserted on one
+// page — every squeezed part is named and no kept one is — so a check that had
+// stopped catching anything, and a check that had started failing on parts that
+// are fine, both show up here.
+function squeezedCases(snap) {
+  const label = (p) => `${p.kind}[${p.index}] ${Math.round(p.inner)}px — ${p.label}`;
+  // By key, not by reference: the two arrays come back from the page as
+  // separate JSON, so the same part is two objects on this side.
+  const key = (p) => `${p.kind}[${p.index}]`;
+  const named = new Set(snap.parts.collapsed.map(key));
+  const isNamed = (p) => named.has(key(p));
+  const kept = snap.parts.parts.filter((p) => !isNamed(p));
+  const said = (p) => /squeezed/i.test(p.label);
+
+  check("squeezed: the control lesson rendered both halves of every part",
+    snap.parts.parts.length === 8,
+    `${snap.parts.parts.length} parts, expected 8 (4 kinds x kept/squeezed): ` +
+    snap.parts.parts.map(label).join(" | "));
+  const missed = snap.parts.parts.filter(said).filter((p) => !isNamed(p));
+  check("squeezed: every part squeezed to nothing is named",
+    missed.length === 0, missed.map(label).join("\n        "));
+  const wrongly = snap.parts.parts.filter(isNamed).filter((p) => !said(p));
+  check("squeezed: no part that was left alone is named",
+    wrongly.length === 0, wrongly.map(label).join("\n        "));
+  // A collapse is not only an equation's: a figure, a table and a code block
+  // reduced to nothing the same way have to be caught too.
+  const kinds = [...new Set(snap.parts.collapsed.map((p) => p.kind))].sort();
+  check("squeezed: the equation and the three parts that are not equations are all caught",
+    ["code", "equation", "figure", "table"].every((k) => kinds.includes(k)),
+    `named kinds: ${kinds.join(", ") || "none"}`);
+  console.log(`\n[squeezed control] ${snap.parts.parts.length} parts, ` +
+    `${named.size} named at the ${MIN_PART_W}px floor, ${kept.length} left alone` +
+    (named.size ? `\n        ${describeCollapsed(snap.parts.collapsed)}` : ""));
 }
 
 (async () => {
   const shellUrl = process.env.SHELL_URL, classicUrl = process.env.CLASSIC_URL;
-  if (!shellUrl || !classicUrl) { console.error("SHELL_URL and CLASSIC_URL are required"); process.exit(2); }
+  const squeezedUrl = process.env.SQUEEZED_URL;
+  if (!shellUrl || !classicUrl || !squeezedUrl) {
+    console.error("SHELL_URL, CLASSIC_URL and SQUEEZED_URL are required"); process.exit(2);
+  }
   const launch = { args: ["--no-sandbox"] };
   if (BROWSER) launch.executablePath = BROWSER;
   const browser = await chromium.launch(launch);
-  console.log(`shell: ${shellUrl}\nclassic: ${classicUrl}\nbrowser: ${BROWSER || "playwright chromium"}`);
+  console.log(`shell: ${shellUrl}\nclassic: ${classicUrl}\nsqueezed: ${squeezedUrl}\n` +
+    `browser: ${BROWSER || "playwright chromium"}`);
   try {
     for (const [name, url] of [["shell", shellUrl], ["classic", classicUrl]]) {
       const phone = await measure(browser, url, PHONE);
@@ -282,6 +341,7 @@ function commonCases(scope, snap) {
           `${Math.round(toggle.after.width)}px, collapsed=${toggle.after.collapsed}`);
       }
     }
+    squeezedCases(await measure(browser, squeezedUrl, PHONE));
   } finally {
     await browser.close();
   }
