@@ -173,14 +173,32 @@ function shellPropsTag(js) {
   return null;
 }
 
+// A quote is only a string's delimiter where JS would let one stand. Three conditions decide
+// that, all three syntax rather than guesswork; these two are the pair about what abuts the
+// quote, and `closingQuote` below carries the third, that the string must close on its line.
+// An identifier character joined to the quote on the INSIDE of the would-be string makes the
+// code a syntax error, so the quote is an apostrophe instead:
+//   `x'` cannot OPEN a string  — the quote after the `b` in `Bob's` is not a delimiter.
+//   `'x` cannot CLOSE one      — the quote before the `s` in `it's` is not one either.
+// Pairing any two quotes on a line without asking either question blanked whatever sat between
+// them: `<text>it's</text><rect fill={G.bg} /><text>Bob's</text>` lost its only graph site, so a
+// lesson painting from the palette while passing neither theme prop audited clean — silently, and
+// this check exists to catch exactly that lesson.
+// Getting either question wrong leaves MORE code visible, never less, so the cost is prose
+// reported as a site — loud, and stopped at the gate — not a real site missed without a word.
+const IDENT = /[A-Za-z0-9_$]/;
+const opensString = (js, at) => at === 0 || !IDENT.test(js[at - 1]);
+const closesString = (js, at) => at + 1 >= js.length || !IDENT.test(js[at + 1]);
+
 // The index of the quote closing the one at `open`, or -1 when the line ends first — which means
-// the quote never opened a string at all.
+// the quote never opened a string at all. Quotes that `closesString` rules out are skipped over,
+// not stopped at, so `it's` inside a real string does not end it early.
 function closingQuote(js, open) {
   const q = js[open];
   for (let i = open + 1; i < js.length; i++) {
     if (js[i] === '\n') return -1;
     if (js[i] === '\\') { i++; continue; }
-    if (js[i] === q) return i;
+    if (js[i] === q && closesString(js, i)) return i;
   }
   return -1;
 }
@@ -232,7 +250,7 @@ function stripJsCommentsAndStrings(js) {
     }
     if (c === '`') { tmpl.push({ braces: -1 }); i++; continue; }
     if (c === "'" || c === '"') {
-      const end = closingQuote(js, i);
+      const end = opensString(js, i) ? closingQuote(js, i) : -1;
       if (end === -1) { i++; continue; }                            // an apostrophe in prose
       for (let k = i + 1; k < end; k++) blank(k);                   // delimiters kept
       i = end + 1;
@@ -621,6 +639,40 @@ function buttonLabel(js, cls) {
       + "const HINT = 'write fill={ and then the key you want, e.g. G.bg';\n"
       + 'const T = () => <p>{HINT}</p>;\n';
     eq('…while a real one-line string is still read as text', graphColourSites(quotedProse).length, 0);
+
+    // The same trap one turn on. Bounding a string to its line still never asked whether either
+    // quote OPENED one, so any two apostrophes on a line paired up and blanked what sat between
+    // them — here a real colour, bracketed by `it's` and `Bob's`. The lesson painting from the
+    // palette while passing neither prop then audited clean: the silent miss, which is worse than
+    // the loud false positive above, because nothing is printed and the check reports success.
+    const possessives = 'let G = THEMES_G.light;\n'
+      + 'const T = () => (\n  <svg>\n'
+      + "    <text>it's</text><rect fill={G.bg} /><text>Bob's</text>\n"
+      + '  </svg>\n);\n';
+    // The fixture only bites while the colour really does sit BETWEEN two apostrophes on one line.
+    check('the possessive fixture really does bracket its colour with apostrophes',
+      /'[^'\n]*fill=\{G\.[^'\n]*'/.test(possessives), possessives);
+    eq('a colour between two possessives on one line is still a graph site',
+      graphColourSites(possessives).length, 1);
+    const possessiveAudit = graphThemeAudit(possessives + mount(''));
+    check('so a lesson painting between possessives and passing neither prop is flagged',
+      !possessiveAudit.ok, auditDetail(possessiveAudit));
+    // The suppressed half, without which "a quote never opens a string" would pass the two above:
+    // a real one-line string is still text when its body holds an apostrophe — as a possessive in
+    // a double-quoted body, and as a `\'` escape in a single-quoted one.
+    const apostropheStrings = 'let G = THEMES_G.light;\n'
+      + 'const HINT = "the author\'s note: write fill={ and then G.bg, e.g. Bob\'s key";\n'
+      + "const NOTE = 'the reader\\'s guide says fill={ and then G.bg';\n"
+      + 'const T = () => <p>{HINT}{NOTE}</p>;\n';
+    // Both lines have to be well-formed string literals carrying the pattern in their bodies, or
+    // the count below is zero for the boring reason rather than the one the case is about.
+    check('both fixture lines really are string literals carrying the pattern',
+      (apostropheStrings.match(/fill=\{ and then G\.bg/g) || []).length === 2
+        && /^const HINT = "[^"]*";$/m.test(apostropheStrings)
+        && /^const NOTE = '(?:[^'\\]|\\.)*';$/m.test(apostropheStrings),
+      apostropheStrings);
+    eq('…while a real one-line string holding apostrophes is still read as text',
+      graphColourSites(apostropheStrings).length, 0);
 
     // A `${…}` is code, not text. Blanking a template literal whole would lose a colour built
     // this way, which is a real graph site the gate has to keep catching.
