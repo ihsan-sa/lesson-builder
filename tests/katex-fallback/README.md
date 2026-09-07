@@ -12,8 +12,10 @@ KATEX_FALLBACK_BROWSER=/usr/bin/google-chrome ./run.sh
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md`, scaffolds the template
 lesson with `lesson/katex_demo.jsx`, requires `test_lesson.cjs` to report **17/17**, boots Vite,
-and drives `check.cjs` against it. `KEEP=1` keeps the workspace; `PORT=` moves the dev server off
-5199. Exit code 0 only when every check passes.
+and drives `check.cjs` against it. `PORT=` moves the dev server off 5199. Exit code 0 only when
+every check passes. However the run ends — pass, fail or Ctrl-C — it kills everything it started
+under the workspace (npm, Vite, Vite's esbuild children) and removes the directory; `KEEP=1` keeps
+the directory, never the dev server.
 
 `check.cjs` can also be pointed at an already-running lesson:
 
