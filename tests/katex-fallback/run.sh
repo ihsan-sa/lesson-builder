@@ -3,9 +3,14 @@
 # references/bootstrap.md, scaffolds the template lesson with this directory's
 # demo body, runs test_lesson.cjs (must be 17/17), boots Vite and drives
 # check.cjs against it. See README.md.
+#
+# Teardown: on success, on failure and on Ctrl-C, SIGTERM or SIGHUP the trap
+# ends every process running under the workspace — npm, the Vite dev server it
+# execs and Vite's esbuild children — and removes the workspace. Only SIGKILL
+# escapes it.
 #   KATEX_FALLBACK_BROWSER=<chrome bin>  optional; else Playwright's own Chromium
 #   PORT=<n>                             optional; dev-server port (default 5199)
-#   KEEP=1                               keep the temp workspace for inspection
+#   KEEP=1                               keep the temp workspace (never the server)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SKILL=$(cd "$HERE/../.." && pwd)
@@ -14,7 +19,25 @@ PORT="${PORT:-5199}"
 
 WS=$(mktemp -d "${TMPDIR:-/tmp}/katex-fallback-ws.XXXX"); echo "workspace: $WS"
 VITE_PID=""
+CLEANED=""
+
+# Every process whose cwd is inside the workspace, this shell excepted. npm, the
+# Vite dev server it execs and Vite's esbuild children all run from the lesson
+# dir, and a process that outlives this script is reparented to the user manager
+# and may hold no port at all — its cwd is then the only handle left on it. That
+# is how five of these were found on 2026-09-06, the oldest 4.3 days old, each
+# pinning half a core.
+ws_pids() (
+  cd /   # so find/sed/grep, which inherit the workspace as cwd, are not matches
+  find /proc -mindepth 2 -maxdepth 2 -name cwd \
+    \( -lname "$WS" -o -lname "$WS/*" \) -printf '%h\n' 2>/dev/null |
+    sed 's|^/proc/||' | grep -vx "$$" || true
+)
+
 cleanup() {
+  # INT/TERM/HUP run this and then exit, which runs the EXIT trap as well.
+  if [ -n "$CLEANED" ]; then return 0; fi
+  CLEANED=1
   [ -n "$VITE_PID" ] && kill "$VITE_PID" 2>/dev/null || true
   # `npx vite` runs Vite as a grandchild, so VITE_PID is npm's and the line
   # above leaves the dev server holding $PORT with a cwd this trap is about to
@@ -24,9 +47,21 @@ cleanup() {
   # a fixed one this fixture owns and held exclusively (--strictPort), not one
   # tests/check.sh handed out — this fixture is not in that gate.
   fuser -k -TERM "${PORT}/tcp" 2>/dev/null || true
+  # Neither line above reaches esbuild: Vite spawns it as a grandchild and it
+  # holds no port. Sweep the workspace by cwd, give it a moment, then insist.
+  for pid in $(ws_pids); do kill -TERM "$pid" 2>/dev/null || true; done
+  for _ in $(seq 1 20); do
+    if [ -z "$(ws_pids)" ]; then break; fi
+    sleep 0.1
+  done
+  for pid in $(ws_pids); do kill -KILL "$pid" 2>/dev/null || true; done
   if [ -n "${KEEP:-}" ]; then echo "kept $WS"; else rm -rf "$WS"; fi
 }
 trap cleanup EXIT
+# EXIT alone is not enough: a killed tmux pane or a dropped ssh session sends
+# HUP, bash then dies without running any trap and the dev server is orphaned.
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM HUP
 
 cp -r "$B/_lesson-core" "$WS/_lesson-core"; (cd "$WS/_lesson-core" && npm install --silent)
 cp "$B/workspace-root/gitignore.template" "$WS/.gitignore"
