@@ -173,6 +173,69 @@ function shellPropsTag(js) {
   return null;
 }
 
+// Comments AND the contents of string and template literals blanked, in one left-to-right pass,
+// with newlines kept so line numbers still line up. Only `graphColourSites` reads this:
+// `themeClassSites` and the CSS case must go on seeing `className="lesson-shell theme-light"`,
+// which lives inside a string.
+//
+// Both in one pass because they interleave: an apostrophe in a comment ("// don't") would open a
+// string for a strings-first pass, and a `//` inside a string would open a comment for a
+// comments-first one — either way the rest of the file is blanked and a real graph site below it
+// disappears. `${…}` interpolations are handed back as code, so `stroke={`${G.axis}`}` is still
+// found; the `${` may itself hold another template literal, hence the stack.
+//
+// Not a JS parser: a regex literal holding a quote or a `//` is read as one, the same blind spot
+// `stripJsComments` has always had. A lesson body has no such regex, and the cost of being wrong
+// is a site missed in a fixture, which the cases below would show.
+function stripJsCommentsAndStrings(js) {
+  const out = js.split('');
+  const blank = (i) => { if (i < out.length && out[i] !== '\n') out[i] = ' '; };
+  // One frame per template literal we are inside. `braces` is -1 while we are in the literal's
+  // text and counts the `{`s open once a `${` puts us back in code.
+  const tmpl = [];
+  let i = 0;
+  while (i < js.length) {
+    const c = js[i];
+    if (tmpl.length && tmpl[tmpl.length - 1].braces < 0) {          // template literal text
+      if (c === '\\') { blank(i); blank(i + 1); i += 2; continue; }
+      if (c === '`') { tmpl.pop(); i++; continue; }
+      if (c === '$' && js[i + 1] === '{') { tmpl[tmpl.length - 1].braces = 0; i += 2; continue; }
+      blank(i); i++; continue;
+    }
+    // Code, either at the top level or inside a `${…}`.
+    if (c === '/' && js[i + 1] === '/' && js[i - 1] !== ':') {       // `://` in JSX text is a URL
+      while (i < js.length && js[i] !== '\n') { blank(i); i++; }
+      continue;
+    }
+    if (c === '/' && js[i + 1] === '*') {
+      blank(i); blank(i + 1); i += 2;
+      while (i < js.length && !(js[i] === '*' && js[i + 1] === '/')) { blank(i); i++; }
+      blank(i); blank(i + 1); i += 2;
+      continue;
+    }
+    if (c === '`') { tmpl.push({ braces: -1 }); i++; continue; }
+    if (c === "'" || c === '"') {
+      i++;                                                          // delimiters kept
+      while (i < js.length && js[i] !== c) {
+        if (js[i] === '\\' && i + 1 < js.length) { blank(i); i++; }
+        blank(i); i++;
+      }
+      i++;
+      continue;
+    }
+    if (tmpl.length) {
+      const top = tmpl[tmpl.length - 1];
+      if (c === '{') top.braces++;
+      else if (c === '}') {
+        if (top.braces === 0) { top.braces = -1; i++; continue; }    // end of the `${…}`
+        top.braces--;
+      }
+    }
+    i++;
+  }
+  return out.join('');
+}
+
 // Every JSX colour attribute whose value reads the graph palette binding: fill={G.bg},
 // stroke={G.gold}, stopColor={G.axis}. These are attributes on the rendered SVG, so no class
 // swap reaches them.
@@ -183,19 +246,29 @@ function shellPropsTag(js) {
 // this check's own trap slipping past it. The value pattern spans newlines but stops at the
 // first `}`, so it cannot run on past the end of one attribute into another.
 //
+// Scanned over CODE, though, not over the file: comments and the contents of strings and
+// template literals are blanked first. Spanning newlines is what makes that necessary — a
+// lesson whose help text says "write fill={ ... G.bg" over two lines has no `}` between the
+// two, so the whole paragraph reads as one attribute and a lesson that draws nothing gets
+// reported as a graph site and fails the gate. A per-line scan could not make that mistake,
+// and this is the price of fixing the one it did make.
+//
 // The `\s*` sits after the `=` only: a formatter may break there, but nothing writes
 // `fill = {` in JSX, and allowing a space before the `=` would make a plain `const fill = {`
 // object literal a graph site. One entry per attribute, reported on the line it opens, so a
 // failure prints the site rather than a count.
 function graphColourSites(js) {
-  const src = stripJsComments(js);
+  const src = stripJsCommentsAndStrings(js);
   const re = /\b(?:fill|stroke|color|stopColor|floodColor)=\s*\{[^}]*?\bG\.[^}]*\}?/g;
   const out = [];
   let m;
   while ((m = re.exec(src))) {
     out.push({
       line: src.slice(0, m.index).split('\n').length,
-      text: m[0].replace(/\s+/g, ' ').trim(),
+      // Sliced out of the ORIGINAL source, not the blanked copy: the blanking swaps one
+      // character for one space, so the offsets are the same in both, and a failure prints
+      // `fill={cond === "hi" ? ...}` as it is written rather than with its strings emptied.
+      text: js.slice(m.index, m.index + m[0].length).replace(/\s+/g, ' ').trim(),
     });
   }
   return out;
@@ -480,6 +553,47 @@ function buttonLabel(js, cls) {
       !graphThemeAudit(wrappedNeither).ok, auditDetail(graphThemeAudit(wrappedNeither)));
     check('…while a wrapped lesson that holds the theme and rebinds G still passes',
       graphThemeAudit(wrappedHeld).ok, auditDetail(graphThemeAudit(wrappedHeld)));
+
+    // The bill for scanning the whole source instead of a line at a time: a lesson that only
+    // TALKS about the pattern. Help text saying "write fill={ ... G.bg" over two lines has no
+    // `}` between the two, so the whole paragraph reads as one attribute — and a lesson that
+    // draws nothing at all was reported as a graph site and failed the gate on its prose. A
+    // per-line scan could not make this mistake; blanking comments and string contents before
+    // the scan is what buys back the difference between code and text.
+    const proseText = 'const HELP = `\n'
+      + '  Paint the rect with fill={ and then the palette key\n'
+      + '  you want, e.g. G.bg — a class swap cannot reach an attribute.\n'
+      + '`;\n'
+      + '/*\n  <rect\n    fill={\n      G.bg\n    }\n  />\n*/\n';
+    const proseOnly = proseText + 'const T = () => <p>{HELP}</p>;\n' + mount('');
+    // The fixture only means anything while the pattern really does span lines in it: a `}`
+    // between the `fill={` and the `G.` would make it pass on any finder, including the old one.
+    check('the prose fixture really does carry the pattern across a line break',
+      /fill=\{[^}]*\n[^}]*\bG\./.test(proseText), proseText);
+    eq('a lesson that only writes ABOUT fill={…G} is not a graph site',
+      graphThemeAudit(proseOnly).graphs.length, 0);
+    check('…so it may leave the theme to the shell, like any lesson with no graphs',
+      graphThemeAudit(proseOnly).ok, auditDetail(graphThemeAudit(proseOnly)));
+    // The other half, without which "ignore prose" could just be "ignore everything": the same
+    // help text beside a real wrapped colour still reports the colour, and only the colour.
+    const proseAndGraph = proseText + wrappedGraph + mount('');
+    const mixedAudit = graphThemeAudit(proseAndGraph);
+    eq('…while the same prose beside real wrapped colours reports those and nothing more',
+      mixedAudit.graphs.length, 2);
+    // The count alone would not say WHICH two: the paragraph counted and one wrapped colour
+    // missed also makes two. Only the wrapped attributes carry the conditional.
+    check('…and the two are the wrapped attributes, not the paragraph',
+      mixedAudit.graphs.length === 2
+        && mixedAudit.graphs.every((g) => /^(fill|stroke)=\{ mode === "hi" \?/.test(g.text)),
+      JSON.stringify(mixedAudit.graphs.map((g) => g.text)));
+    check('so a lesson that draws AND talks about it is still flagged', !mixedAudit.ok,
+      auditDetail(mixedAudit));
+    // A `${…}` is code, not text. Blanking a template literal whole would lose a colour built
+    // this way, which is a real graph site the gate has to keep catching.
+    const interpolated = 'let G = THEMES_G.light;\n'
+      + 'const T = () => <rect fill={`${G.bg}`} />;\n';
+    eq('a colour built inside a template interpolation is still a graph site',
+      graphColourSites(interpolated).length, 1);
 
     // The two lesson bodies this directory ships, which are the only lesson sources in
     // this repo — the lessons that ship on the shell live in another one, so this case
