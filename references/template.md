@@ -610,10 +610,10 @@ function LessonApp() {
 
   // LessonShell owns the frame: top bar, contents rail with scroll-spy, the
   // article scroll container, and where the tutor panel is docked. It injects
-  // @core STYLES itself, so there is no <style> tag here. Root-level DOM
-  // handlers are forwarded onto the shell root, which is what the
-  // context-capture gestures need (they must also cover chat replies and
-  // thread panels, not just lesson content).
+  // the shell sheet SHELL_STYLES (@core/chat/shell.css.js) itself, so there is
+  // no <style> tag here. Root-level DOM handlers are forwarded onto the shell
+  // root, which is what the context-capture gestures need (they must also
+  // cover chat replies and thread panels, not just lesson content).
   return (
     <LessonShell
       courseCode="/* TODO: course display code, e.g. 'MATH 101' */"
@@ -850,12 +850,12 @@ What these model, move by move: the opening sentence is the first content-bearin
 ## Notes for assembly agents
 
 - **Do not inline `LessonShell`, `Chatbot`, `STYLES`, or UI primitives.** Everything in `_lesson-core/index.js` comes from `@core`. Local copies drift and fail review.
-- **The shell owns the chrome.** Do not hand-roll a header, a tab bar, a footer or a content wrapper — `LessonShell` renders the top bar, the contents rail (with per-topic section outline and scroll-spy), the article column, and the tutor dock. The lesson supplies `TOPICS` and the active topic's body as children. `LessonShell` also injects `STYLES`, so a lesson needs no `<style>` tag outside the KaTeX loading gate.
+- **The shell owns the chrome.** Do not hand-roll a header, a tab bar, a footer or a content wrapper — `LessonShell` renders the top bar, the contents rail (with per-topic section outline and scroll-spy), the article column, and the tutor dock. The lesson supplies `TOPICS` and the active topic's body as children. `LessonShell` also injects its own sheet, `SHELL_STYLES` from `@core/chat/shell.css.js`, so a lesson needs no `<style>` tag outside the KaTeX loading gate.
 - **The rail outline comes from `<Section title>` headings.** Anything rendered outside a `Section` gets no outline entry and no scroll-spy target.
 - **Equations are first-class.** `<Eq>` renders a numbered card with an "Explain" pill that hands the LaTeX to the tutor as context. Numbering is a CSS counter scoped to the article, so equation numbers read `(<topic>.<n>)` automatically — never hand-number them. Add `label="ON FORMULA SHEET"`-style captions with `<Eq label="...">`; pass `explain={false}` to drop the pill on a specific equation.
 - **The palette is light-only.** The Lumen design specifies one palette; there is no theme toggle and no dark tokens. `let G = THEMES_G.light;` stays as a module-scope binding because every graph component closes over it.
 - **Wrap every graph call site in `<LiveGraph graphKey renderId>`.** Without it the `<<EDIT_GRAPH>>` visual-verification loop screenshots a selector that matches nothing, and Ctrl+Click on a graph captures stray axis labels instead of the graph's key and parameters.
-- **Keep the three context-capture selector lists in sync.** `handleContentClick` here, the capture-phase gate in `@core/chat/Chatbot.jsx`, and the hover rules in `@core/chat/chat.css.js` must name the same classes. A class in the CSS but not the handler shows a pointer cursor and does nothing.
+- **Keep the three context-capture selector lists in sync.** `handleContentClick` here, the capture-phase gate in `@core/chat/Chatbot.jsx`, and the hover rules in `@core/chat/shell.css.js` (which is what a shell lesson gets; `chat/chat.css.js` carries the same list for the 39 pre-shell lessons) must name the same classes. A class in the CSS but not the handler shows a pointer cursor and does nothing.
 - **Keep `routeLessonContext` at the top of `addSnippet`.** It is what lets a student Ctrl+Click lesson content into a focused side-thread; drop it and every capture silently lands in the main composer instead.
 - **Keep `let G = THEMES_G.light;` at module scope.** Graph components close over it by name.
 - **`GRAPH_SCHEMA` keys must equal `DEFAULT_GRAPH_PARAMS` keys.** Phase 4 verifies. If a component clamps with `Math.min(p.nMax, 6)`, the schema `max` must also be 6.

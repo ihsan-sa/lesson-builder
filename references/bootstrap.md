@@ -37,7 +37,8 @@ references/bootstrap/
     package.json             Backend deps (express, cors)
     chat/                    Chatbot + ChatBubble + ThreadPanel + processResponse
                              + buildSystemPrompt + buildActiveContext + chatState
-                             + chat.css.js + graphSchema + observationQueue
+                             + chat.css.js + shell.css.js + graphSchema
+                             + observationQueue
     ui/                      Eq, primitives (P, Section, KeyConcept, CollapsibleBlock,
                              RefImg, PracticeProblem, FormulaSheetBox, SummaryBox),
                              primitives-interactive (Slider, Toggle, …), DesmosGraph

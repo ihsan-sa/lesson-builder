@@ -2,9 +2,9 @@
 # The release gate: every fixture under tests/ that needs no model call, no browser and no
 # network. One command, so a change that breaks the run record, staging, worktrees, the
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
-# branch collisions, the proxy's reader, the lessons' stylesheet or the built bundle's tutor gate
-# cannot land. `cc-land`
-# runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a person
+# branch collisions, the proxy's reader, the lessons' stylesheets or the built bundle's tutor
+# gate cannot land. `cc-land` runs this as a gate on every PR (it treats an executable
+# tests/check.sh as one), and a person
 # runs it the same way.
 #
 #   tests/check.sh                 every deterministic fixture, in parallel

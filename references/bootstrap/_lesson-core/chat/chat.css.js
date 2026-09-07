@@ -5,6 +5,9 @@
 // This is the lessons' original stylesheet, plus only those newer rules whose
 // selectors it has no rule for: a block is refused if ANY class in its selector
 // is already styled above, so nothing appended can override the original look.
+// One declaration is a deliberate exception -- .eq-block { position: relative },
+// which anchors the Explain rail and paints nothing. The comment beside it, at
+// the forward-ported seam below, says why it had to come across.
 //
 // 39 of the 41 lessons predate LessonShell and have none of its markup, so a
 // sheet written around the shell restyles them into a layout they were never

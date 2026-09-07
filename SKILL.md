@@ -175,7 +175,8 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
                                 discovered by the spawned claude CLI)
   _lesson-core/                 Shared module (imported via @core)
     chat/                       Chatbot, ChatBubble, ThreadPanel, processResponse,
-                                buildSystemPrompt, chatState, chat.css.js
+                                buildSystemPrompt, chatState, chat.css.js,
+                                shell.css.js
     ui/                         Eq, M, P, Section, KeyConcept, CollapsibleBlock,
                                 RefImg, PracticeProblem, FormulaSheetBox, SummaryBox,
                                 DesmosGraph
