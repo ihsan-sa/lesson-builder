@@ -11,7 +11,7 @@ import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
 import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
 import { useShell } from "../ui/shellContext.js";
-import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/LessonShell.jsx";
+import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/icons.jsx";
 
 // Student-facing answer style. "hints" leaves the PEDAGOGY POLICY exactly as
 // written; "direct" relaxes only the withhold-first ordering (see
