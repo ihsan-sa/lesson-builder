@@ -61,6 +61,7 @@ EXCLUDED=(
   "safe-render|needs a Chromium (the sanitiser is tested in a real DOM)|cd tests/safe-render && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && SAFE_RENDER_BROWSER=/usr/bin/google-chrome node run.cjs"
   "katex-fallback|needs a Chromium and a Vite dev server|cd tests/katex-fallback && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && KATEX_FALLBACK_BROWSER=/usr/bin/google-chrome ./run.sh"
   "resume-metadata|needs a Chromium and a Vite dev server|cd tests/resume-metadata && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && RESUME_METADATA_BROWSER=/usr/bin/google-chrome ./run.sh"
+  "phone-width|needs a Chromium, two vite builds and the KaTeX CDN|cd tests/phone-width && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && PHONE_WIDTH_BROWSER=/usr/bin/google-chrome ./run.sh"
   "cancellation --real|the fake CLI covers it here; this one spends tokens on the real CLI|cd tests/cancellation && REAL_CLAUDE=1 ./run.sh"
   "thread-actors --real|the fake CLI covers it here; this one spends tokens on the real CLI|cd tests/thread-actors && REAL_CLAUDE=1 ./run.sh"
   "teaching evals|graded by a model, per evals/teaching/rubric.md|see evals/teaching/README.md"

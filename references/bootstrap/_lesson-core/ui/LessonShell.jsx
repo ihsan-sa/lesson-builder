@@ -15,6 +15,10 @@ import { TUTOR_ENABLED } from "../constants/build.js";
 // places it and hands the placement controls down through ShellContext so the
 // dock switcher can render inside the panel header.
 //
+// The rail starts open, except at a width too narrow to hold it beside an
+// article of ARTICLE_MIN_W — a phone — where it starts collapsed to its number
+// strip. See railFits below.
+//
 // The section outline is derived from the DOM (`.section-title` inside the
 // article), not from a per-topic manifest — so any lesson built from the
 // standard `<Section title>` primitive gets an outline with no extra authoring.
@@ -32,6 +36,15 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 const viewportW = () => (typeof window === "undefined" ? 1440 : window.innerWidth);
 const viewportH = () => (typeof window === "undefined" ? 900 : window.innerHeight);
+
+// The contents rail may sit beside the article only while the article still
+// gets ARTICLE_MIN_W — the same three terms sideMax() clamps the tutor dock by.
+// It does not hold on a phone: at 390px the open rail leaves .article 128px and
+// .article-col 72px, which is narrower than an equation block's own padding, so
+// .eq-body computes to zero width and the equation is not on screen at all
+// (measured — tests/phone-width). Below 551px the shell starts with the rail
+// collapsed to its 48px number strip, which clears the minimum with room over.
+const railFits = () => viewportW() >= RAIL_W + STRIP + ARTICLE_MIN_W;
 
 // Pointer-capture drag. onMove receives deltas from the pointerdown origin, so
 // callers close over the value at drag start and never accumulate rounding.
@@ -91,7 +104,7 @@ export function LessonShell({
   // Root-level handlers the lesson needs for context capture
   ...rootProps
 }) {
-  const [railOpen, setRailOpen] = useState(true);
+  const [railOpen, setRailOpen] = useState(railFits);
   const [dock, setDockRaw] = useState("side");
   const [sideW, setSideW] = useState(SIDE_DEFAULT);
   const [bottomH, setBottomH] = useState(BOTTOM_DEFAULT);
@@ -286,6 +299,11 @@ export function LessonShell({
   // wide on a large screen would push the article off the layout.
   useEffect(() => {
     const refit = () => {
+      // Only ever closes, and only at a width that cannot give the article its
+      // minimum beside the rail: a reader who opens the rail on a phone keeps
+      // it open until the window is resized (or the phone rotated) into a width
+      // with no room for it. Widening again never reopens a rail a reader shut.
+      if (!railFits()) setRailOpen(false);
       setSideW((w) => clamp(w, SIDE_MIN, sideMax()));
       setBottomH((h) => clamp(h, BOTTOM_MIN, bottomMax()));
     };
