@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { ShellContext } from "./shellContext.js";
-import { STYLES } from "../chat/chat.css.js";
+import { SHELL_STYLES } from "../chat/shell.css.js";
 import { injectKatexStylesheet } from "../hooks/useKatex.js";
 import { TUTOR_ENABLED } from "../constants/build.js";
 
@@ -226,7 +226,7 @@ export function LessonShell({
     // never its interactivity (Eq falls back to LaTeX source).
     injectKatexStylesheet(d);
     const st = d.createElement("style");
-    st.textContent = STYLES + "\nhtml,body{margin:0;padding:0;height:100%;background:var(--surface);}";
+    st.textContent = SHELL_STYLES + "\nhtml,body{margin:0;padding:0;height:100%;background:var(--surface);}";
     d.head.appendChild(st);
     const host = d.createElement("div");
     host.className = "theme-light";
@@ -385,7 +385,7 @@ export function LessonShell({
   return (
     <ShellContext.Provider value={shellCtx}>
       <div className={`lesson-shell theme-light ${chatOpen ? "ctx-active" : ""}`} {...rootProps}>
-        <style>{STYLES}</style>
+        <style>{SHELL_STYLES}</style>
 
         {/* ── Top bar ── */}
         <div className="topbar">
