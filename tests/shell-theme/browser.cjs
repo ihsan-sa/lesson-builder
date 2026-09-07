@@ -56,6 +56,12 @@ const READ = () => {
   return {
     rootClass: attr(".lesson-shell", "class"),
     rootBg: cs(".lesson-shell", "backgroundColor"),
+    // The page behind the shell. The shell root is not the whole document: the UA's body margin
+    // shows html and body at every edge, and a scroll runs past the shell onto them.
+    htmlClass: document.documentElement.getAttribute("class"),
+    htmlBg: getComputedStyle(document.documentElement).backgroundColor,
+    bodyBg: getComputedStyle(document.body).backgroundColor,
+    bodyMargin: getComputedStyle(document.body).marginTop,
     topbarBg: cs(".topbar", "backgroundColor"),
     articleInk: cs(".article .para", "color"),
     eqBg: cs(".eq-block", "backgroundColor"),
@@ -88,6 +94,10 @@ const READ_POPUP = () => ({
   console.log("\n1  the page opens light, and the button offers dark");
   const light = await page.evaluate(READ);
   check("the shell root carries theme-light", /\btheme-light\b/.test(light.rootClass || ""), light.rootClass);
+  check("…and so does <html>", /\btheme-light\b/.test(light.htmlClass || ""), light.htmlClass);
+  check("the UA body margin is gone", light.bodyMargin === "0px", light.bodyMargin);
+  check("the page canvas matches the shell", light.bodyBg === light.rootBg,
+    `body ${light.bodyBg}, shell ${light.rootBg}`);
   check("the switch reads Dark", (light.toggleLabel || "").trim() === "Dark", light.toggleLabel);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, "light.png"), fullPage: false });
 
@@ -96,8 +106,15 @@ const READ_POPUP = () => ({
   await page.waitForTimeout(400); // the token transitions are 150-220ms
   const dark = await page.evaluate(READ);
   check("the shell root carries theme-dark", /\btheme-dark\b/.test(dark.rootClass || ""), dark.rootClass);
+  check("…and <html> followed", /\btheme-dark\b/.test(dark.htmlClass || ""), dark.htmlClass);
+  check("…and no light class is left on it", !/\btheme-light\b/.test(dark.htmlClass || ""), dark.htmlClass);
   check("the switch now reads Light", (dark.toggleLabel || "").trim() === "Light", dark.toggleLabel);
   differs("the page background changed", light.rootBg, dark.rootBg);
+  // The white frame this used to leave: body kept the UA colour while the shell went dark.
+  differs("the page canvas behind the shell changed with it", light.bodyBg, dark.bodyBg);
+  check("…and still matches the shell", dark.bodyBg === dark.rootBg,
+    `body ${dark.bodyBg}, shell ${dark.rootBg}`);
+  differs("the document element repainted too", light.htmlBg, dark.htmlBg);
   differs("the top bar changed", light.topbarBg, dark.topbarBg);
   differs("the prose ink changed", light.articleInk, dark.articleInk);
   differs("the equation card changed", light.eqBg, dark.eqBg);

@@ -63,19 +63,56 @@ function themeClassSites(js) {
   return out;
 }
 
+// The CSS out of `export const SHELL_STYLES = ` ... ` `. Everything below reads THIS, never the
+// .js around it: the module header is a `//` comment that names both palette classes while
+// explaining them, and a rule walker handed the whole file takes that header as the selector of
+// the first rule — which quietly counted the dark block's tokens as declared in the light one and
+// made case 3's headline check unfailable in one direction. Returns null when the file is not
+// shaped as one template literal, which is a failure worth reporting rather than an empty pass.
+function extractTemplate(js) {
+  const open = js.indexOf('`');
+  if (open === -1) return null;
+  const close = js.lastIndexOf('`');
+  if (close <= open) return null;
+  return js.slice(open + 1, close);
+}
+
+// Flatten CSS to (selector, body) pairs, one per rule that carries declarations.
+function rules(css) {
+  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(noComments))) {
+    out.push({ selector: m[1].trim().split(/\s+/).join(' '), body: m[2] });
+  }
+  return out;
+}
+
+const isPaletteBlock = (sel) => /(^|[\s,])(:root|\.theme-dark|\.theme-light)([\s,]|$)/.test(sel);
+
+// Rules outside the two palette blocks that write a colour as a literal. A literal cannot follow
+// the switch: it is one colour in both themes, which is how the tutor tab-strip hovers stayed the
+// light canvas and painted near-white over a dark strip.
+function literalColourSites(css) {
+  const out = [];
+  for (const r of rules(css)) {
+    if (isPaletteBlock(r.selector)) continue;
+    const found = r.body.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g);
+    if (found) out.push({ selector: r.selector, body: r.body.trim().replace(/\s+/g, ' ') });
+  }
+  return out;
+}
+
 // The custom properties each theme block of a sheet declares. Same selector convention as
 // chat.css.js and tests/css-vars-defined: `:root, .theme-dark` is the dark block, `.theme-light`
 // the light one.
 function paletteTokens(css) {
-  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const blocks = { dark: new Set(), light: new Set() };
-  const re = /([^{}]+)\{([^{}]*)\}/g;
-  let m;
-  while ((m = re.exec(noComments))) {
-    const sel = m[1].trim().split(/\s+/).join(' ');
-    const names = [...m[2].matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)].map((d) => d[1]);
-    if (/(^|[\s,])(:root|\.theme-dark)([\s,]|$)/.test(sel)) for (const n of names) blocks.dark.add(n);
-    if (/(^|[\s,])\.theme-light([\s,]|$)/.test(sel)) for (const n of names) blocks.light.add(n);
+  for (const r of rules(css)) {
+    const names = [...r.body.matchAll(/(--[A-Za-z0-9_-]+)\s*:/g)].map((d) => d[1]);
+    if (/(^|[\s,])(:root|\.theme-dark)([\s,]|$)/.test(r.selector)) for (const n of names) blocks.dark.add(n);
+    if (/(^|[\s,])\.theme-light([\s,]|$)/.test(r.selector)) for (const n of names) blocks.light.add(n);
   }
   return blocks;
 }
@@ -87,6 +124,19 @@ function tokenGaps(css) {
     missingFromDark: [...light].filter((n) => !dark.has(n)).sort(),
     missingFromLight: [...dark].filter((n) => !light.has(n)).sort(),
   };
+}
+
+// The hook call that mentions `needle`: from the `hook(` that opens it to the `]);` that closes
+// its dependency array. Enough to read what the effect does, what it cleans up and what it is
+// keyed on, without pulling a parser in for four lines of source.
+function hookBlock(js, hook, needle) {
+  const at = js.indexOf(needle);
+  if (at === -1) return null;
+  const open = js.lastIndexOf(`${hook}(`, at);
+  if (open === -1) return null;
+  const close = js.indexOf(']);', at);
+  if (close === -1) return null;
+  return js.slice(open, close + 3);
 }
 
 // The text between the open tag and </button> of the button carrying `cls`.
@@ -143,11 +193,27 @@ function buttonLabel(js, cls) {
     // to reach into it too, which is an effect that re-runs on themeClass.
     check('an effect re-applies it to an already-open pop-out',
       /popupHost\.className = themeClass;[\s\S]{0,220}\}, \[popupHost, themeClass\]\);/.test(js));
+
+    // And the main document's own <html>, which is what the sheet's html,body rule paints from.
+    // A LAYOUT effect: a plain one runs after the paint, so the page would show one frame of the
+    // palette :root carries around a shell already in the other.
+    const rootEffect = hookBlock(js, 'useLayoutEffect', 'document.documentElement');
+    check('a layout effect puts the class on the main document element', Boolean(rootEffect),
+      'no useLayoutEffect touching document.documentElement');
+    if (rootEffect) {
+      check('…adding it', /classList\.add\(themeClass\)/.test(rootEffect), rootEffect);
+      check('…removing it again on the way out', /classList\.remove\(themeClass\)/.test(rootEffect),
+        rootEffect);
+      check('…and keyed on themeClass, so switching re-runs it',
+        /\}, \[themeClass\]\);$/.test(rootEffect.trim()), rootEffect);
+    }
   }
 
   // -------------------------------------------------------------------------
   heading(3, 'shell.css.js declares the same tokens in both palettes');
-  {
+  // Labelled so an unreadable sheet leaves THIS case and not main(): a bare `return` here would
+  // skip case 4, the summary and the exit code, and the run would report success.
+  sheet: {
     // Fixtures first, so the assertion on the real sheet means something.
     const matched = `:root, .theme-dark { --ink: #eee; --canvas: #000; }\n.theme-light { --ink: #111; --canvas: #fff; }`;
     const lightShort = `:root, .theme-dark { --ink: #eee; --canvas: #000; }\n.theme-light { --ink: #111; }`;
@@ -163,7 +229,38 @@ function buttonLabel(js, cls) {
       && tokenGaps(darkShort).missingFromLight.length === 0,
       JSON.stringify(tokenGaps(darkShort)));
 
-    const css = fs.readFileSync(SHELL_CSS, 'utf8');
+    // The shape the real file is in, and the reason everything below reads the template literal
+    // rather than the .js: the module header is a `//` comment that names both palette classes.
+    // Handed the whole file, a rule walker reads that header as the first rule's selector, adds
+    // the dark block's tokens to the LIGHT set as well, and then no gap in the dark block can
+    // ever be reported. The fixture has exactly that header and a real gap under it.
+    const asShipped = [
+      '// :root, .theme-dark carries the dark palette and .theme-light the light one.',
+      'export const SHELL_STYLES = `',
+      ':root, .theme-dark { --ink: #eee; --canvas: #000; }',
+      '.theme-light { --ink: #111; }',
+      '`;',
+    ].join('\n');
+    check('the header comment naming both classes does not hide a gap',
+      tokenGaps(extractTemplate(asShipped)).missingFromLight.join(' ') === '--canvas',
+      JSON.stringify(tokenGaps(extractTemplate(asShipped))));
+    check('…and reading the .js instead of the literal is what hid it',
+      tokenGaps(asShipped).missingFromLight.length === 0,
+      'the whole-file reading now reports the gap too, so this case no longer says anything');
+
+    // Literal colours, on fixtures of their own.
+    const tokenised = '.a:hover { background: var(--tab-hover); }';
+    const literal = '.a:hover { background: rgba(250, 249, 246, 0.5); }';
+    const inPalette = ':root, .theme-dark { --tab-hover: rgba(14, 16, 20, 0.5); }';
+    eq('a rule painting from a token is not a literal site', literalColourSites(tokenised).length, 0);
+    eq('a rule painting from a literal is', literalColourSites(literal).length, 1);
+    eq('…while a literal inside a palette block is where colours belong',
+      literalColourSites(inPalette).length, 0);
+
+    const js = fs.readFileSync(SHELL_CSS, 'utf8');
+    const css = extractTemplate(js);
+    check('shell.css.js exports a template literal', css !== null, 'SHELL_STYLES is not one');
+    if (!css) break sheet;
     const { dark, light } = paletteTokens(css);
     check('shell.css.js has a dark palette block', dark.size > 0,
       'no rule matching :root or .theme-dark declares a custom property');
@@ -184,6 +281,22 @@ function buttonLabel(js, cls) {
     check('the two palettes actually differ on --canvas',
       Boolean(darkCanvas) && Boolean(lightCanvas) && darkCanvas !== lightCanvas,
       `dark ${darkCanvas}, light ${lightCanvas}`);
+
+    // Every other rule has to go through a token, or it is one colour in both themes.
+    const literals = literalColourSites(css);
+    check('no rule outside the palette blocks writes a colour as a literal', literals.length === 0,
+      literals.map((r) => `${r.selector} { ${r.body} }`).join('\n      '));
+
+    // The page behind the shell. Without this the UA's body margin frames a dark lesson in white
+    // and a scroll runs past the shell onto white.
+    const htmlBody = rules(css).find((r) => /^html, ?body$/.test(r.selector));
+    check('the sheet resets html and body', Boolean(htmlBody),
+      'no `html, body` rule in SHELL_STYLES');
+    if (htmlBody) {
+      check('…and paints them from --canvas', /background:\s*var\(--canvas\)/.test(htmlBody.body),
+        htmlBody.body.trim());
+      check('…with the UA margin gone', /margin:\s*0/.test(htmlBody.body), htmlBody.body.trim());
+    }
   }
 
   // -------------------------------------------------------------------------

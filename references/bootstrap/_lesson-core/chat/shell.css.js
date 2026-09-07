@@ -63,6 +63,12 @@ export const SHELL_STYLES = `
   --rose-soft: rgba(208, 140, 172, 0.10);
   --rose-border: rgba(208, 140, 172, 0.32);
 
+  /* Hovering a tutor session tab moves it off the strip (--surface-2) the same
+     way selecting it does: the page colour at half opacity, which lands within
+     a shade of the active tab's --surface in either theme. A veil rather than a
+     tone, so it reads the same over a tab and over the gap beside one. */
+  --tab-hover: rgba(14, 16, 20, 0.5);
+
   --font-display: 'Source Serif 4', Georgia, 'Times New Roman', serif;
   --font-ui: 'Inter Tight', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
@@ -125,6 +131,12 @@ export const SHELL_STYLES = `
   --rose-soft: rgba(156, 90, 120, 0.07);
   --rose-border: rgba(156, 90, 120, 0.30);
 
+  /* Hovering a tutor session tab moves it off the strip (--surface-2) the same
+     way selecting it does: the page colour at half opacity, which lands within
+     a shade of the active tab's --surface in either theme. A veil rather than a
+     tone, so it reads the same over a tab and over the gap beside one. */
+  --tab-hover: rgba(250, 249, 246, 0.5);
+
   --font-display: 'Source Serif 4', Georgia, 'Times New Roman', serif;
   --font-ui: 'Inter Tight', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
@@ -161,6 +173,15 @@ export const SHELL_STYLES = `
   --ctx-hover-bg: rgba(201, 100, 66, 0.05);
   --ctx-flash-bg: rgba(201, 100, 66, 0.14);
 }
+
+/* The page behind the shell. The shell root is not the whole document: the
+   UA's 8px body margin shows html and body at every edge, and a scroll runs
+   past the shell onto them, so without this a dark lesson is framed in white.
+   They paint from --canvas, which resolves on the document element -- which is
+   why LessonShell puts the theme class there as well as on its own root. The
+   pop-out appends its own html,body rule after this sheet and keeps --surface:
+   that document is the tutor panel and nothing else. */
+html, body { margin: 0; padding: 0; background: var(--canvas); }
 
 /* ───────────────────────────────────────────────────────────────
    Shell: fixed-height flex column filling the viewport
@@ -935,7 +956,7 @@ ol.info-list li::marker { color: var(--accent); font-family: var(--font-mono); f
   white-space: nowrap;
   transition: background var(--t-micro) var(--ease);
 }
-.chat-tab:hover { background: rgba(250, 249, 246, 0.5); }
+.chat-tab:hover { background: var(--tab-hover); }
 .chat-tab.active { background: var(--surface); color: var(--ink); font-weight: 500; }
 .chat-tab-label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .chat-tab-x {
@@ -956,7 +977,7 @@ ol.info-list li::marker { color: var(--accent); font-family: var(--font-mono); f
   cursor: pointer;
   padding: 0;
 }
-.chat-tab-add:hover { background: rgba(250, 249, 246, 0.6); }
+.chat-tab-add:hover { background: var(--tab-hover); }
 
 /* ── Panel header ── */
 .chat-header {

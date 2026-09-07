@@ -15,10 +15,11 @@ import { TUTOR_ENABLED } from "../constants/build.js";
 // `tutor` prop; the shell places it and hands the placement controls down
 // through ShellContext so the dock switcher can render inside the panel header.
 //
-// The theme is a class on the shell root, and the pop-out window gets the same
-// class: both palettes are declared in SHELL_STYLES, so everything styled from
-// the tokens repaints on the swap. See the theme block below for the one thing
-// that does not follow on its own.
+// The theme is a class, on three elements: the shell root, the main document's
+// <html> (the page behind the shell, which the sheet's html,body rule paints)
+// and the tutor pop-out's host and document. Both palettes are declared in
+// SHELL_STYLES, so everything styled from the tokens repaints on the swap. See
+// the theme block below for the one thing that does not follow on its own.
 //
 // The rail starts open, except at a width too narrow to hold it beside an
 // article of ARTICLE_MIN_W — a phone — where it starts collapsed to its number
@@ -130,10 +131,11 @@ export function LessonShell({
   const active = topics[activeIdx] || {};
 
   // ── Theme ──
-  // The class on the shell root is the whole mechanism: both palettes live in
-  // SHELL_STYLES, so every rule under this root repaints on the class change
-  // with nothing re-rendering. The pop-out is a second document and gets the
-  // same class put on it by hand, below.
+  // The class is the whole mechanism: both palettes live in SHELL_STYLES, so
+  // every rule under an element carrying it repaints on the swap with nothing
+  // re-rendering. Three elements carry it, each set below: the shell root, the
+  // main document's <html> (the page the shell does not cover), and the pop-out
+  // -- a second document, so its host and its own <html> both need it.
   //
   // Uncontrolled by default, so a lesson gets the switch for free. What a
   // CONTROLLED theme buys is the one thing a class cannot reach: SVG graph
@@ -287,6 +289,18 @@ export function LessonShell({
     setDockRaw("popup");
     if (setChatOpen) setChatOpen(true);
   }, [lessonTitle, setChatOpen, themeClass]);
+
+  // The main document. The shell root is not the whole page — the UA's body
+  // margin shows html and body at every edge — and the html,body rule in
+  // SHELL_STYLES paints them from --canvas, which resolves where it is
+  // declared. So the document element carries the class too. A layout effect,
+  // not an effect: an effect runs after the paint, which would show one frame
+  // of the palette :root carries around a shell already in the other one.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.classList.add(themeClass);
+    return () => root.classList.remove(themeClass);
+  }, [themeClass]);
 
   // A pop-out already open when the theme is switched: same two elements again.
   useEffect(() => {

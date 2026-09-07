@@ -32,12 +32,23 @@ here holds the theme, which is what `references/template.md` prescribes.
 | | Case | Must hold |
 |-|------|-----------|
 | 1 | the site finder, on fixtures of its own | a literal palette class in JSX is a site, reported on its line; deriving the class from a theme is one site on the mapping line and the JSX interpolating it is not; a palette class named only in a comment is not a site |
-| 2 | `LessonShell.jsx` | exactly one line names a palette class, and it is the one deriving `themeClass` from `theme`; the shell root, the pop-out host and the pop-out's `documentElement` all take that value; an effect keyed on `themeClass` re-applies it to a pop-out that is already open |
-| 3 | `shell.css.js` | both theme blocks exist and declare the same token set (fixtures first: a gap in either direction is reported against the block that has it), and the two palettes differ on `--canvas` |
+| 2 | `LessonShell.jsx` | exactly one line names a palette class, and it is the one deriving `themeClass` from `theme`; the shell root, the pop-out host and the pop-out's `documentElement` all take that value; an effect keyed on `themeClass` re-applies it to a pop-out that is already open; a **layout** effect keyed on `themeClass` adds the class to the main document's `documentElement` and removes it again |
+| 3 | `shell.css.js` | both theme blocks exist and declare the same token set (fixtures first: a gap in either direction is reported against the block that has it, and one fixture is shaped like the shipped file, header comment and all); no rule outside those blocks writes a colour as a literal; the sheet resets `html, body` and paints them from `--canvas`; the two palettes differ on `--canvas` |
 | 4 | the switch | the `.theme-toggle` label expression evaluates to `Dark` in the light theme and `Light` in the dark one, and the button sits outside the tutor gate |
 
 Case 1 builds every fixture it asserts on and pins down what the finder lets through as well as what
 it catches. Case 3 does the same before it reads the shipped sheet.
+
+Case 3 reads the CSS out of the template literal first, and one of its fixtures is there to keep it
+doing so. The module header is a `//` comment that names both palette classes while explaining
+them; a rule walker handed the whole `.js` file takes that header as the first rule's selector,
+counts the dark block's tokens as declared in the light one too, and can then never report a gap in
+the dark block — the direction the sheet's own comment calls the dangerous one.
+
+The literal-colour clause is the other half of "everything follows". A `var(--x)` follows the switch
+and a written-out colour cannot: the tutor tab-strip hovers held the light canvas as an `rgba()`
+literal, so hovering a session tab in dark mode painted a near-white block. They go through
+`--tab-hover` now, declared in both blocks.
 
 Case 2's `documentElement` clause is not belt and braces. The pop-out is a second document, and the
 `html,body{...background:var(--surface)}` rule the shell injects into it paints from a custom
@@ -48,10 +59,15 @@ the tutor panel keeps whichever palette `:root` carries and the panel floats on 
 
 | | Case | Must hold |
 |-|------|-----------|
-| 1 | first paint | the shell root carries `theme-light` and the switch reads **Dark** |
-| 2 | pressing it | root class is `theme-dark`, the switch reads **Light**, and the page background, top bar, prose ink, equation card, contents rail and the lesson's SVG (face and curve) all changed colour |
+| 1 | first paint | the shell root and `<html>` both carry `theme-light`, the body margin is 0, the page canvas matches the shell, and the switch reads **Dark** |
+| 2 | pressing it | root and `<html>` are `theme-dark` with no light class left over, the switch reads **Light**, and the top bar, prose ink, equation card, contents rail, the lesson's SVG (face and curve) and the page canvas behind the shell all changed colour |
 | 3 | the pop-out, opened dark | its host and its `<html>` both carry `theme-dark` |
 | 4 | switching back with it open | page and pop-out both return to `theme-light`, and the pop-out's paper and the tutor panel inside it repaint |
+
+Case 1 and 2's page-canvas clauses are about the document behind the shell. `.lesson-shell` is not
+the whole page: the UA's 8px body margin shows `html` and `body` at every edge, and a scroll runs
+past the shell onto them, so a dark lesson used to sit in a white frame. Reading `.lesson-shell`
+alone never saw it.
 
 Cases 3 and 4 are two different code paths in `LessonShell` — `openPopup` sets the class as it
 builds the window, and an effect re-applies it afterwards. Case 4 is the one that silently does
