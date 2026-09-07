@@ -1,6 +1,8 @@
 // All CSS for LessonShell: Lumen design tokens, shell layout (top bar, contents
 // rail, article), content blocks, tutor panel + docking, bubbles, threads,
-// context menu, collapsible blocks. Injected by LessonShell and by nothing else.
+// context menu, collapsible blocks. Injected by LessonShell and imported by it
+// alone — tests/shell-reach holds that, because it is what lets the shell's own
+// class names stand in for the shell in a built bundle.
 //
 // WHY THIS IS A SECOND SHEET, separate from chat/chat.css.js:
 // this sheet is written around the shell's markup, and only 2 of the 41 lessons

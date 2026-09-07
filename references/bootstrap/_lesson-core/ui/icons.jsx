@@ -2,12 +2,16 @@
 // panel share.
 //
 // They live here rather than in LessonShell.jsx because Chatbot needs six of
-// them and every one of the 41 lessons imports Chatbot. While they sat in the
-// shell, that one import named LessonShell.jsx in all 41 import graphs — the 39
-// pre-shell lessons included — so "LessonShell does not reach the classic
-// lessons" was only ever true with an exception. Rollup dropped the unused
-// shell from those bundles regardless; the caveat is what kept being read
-// wrong. Keep new shared icons here, not in a component file.
+// them and every one of the 41 lessons imports Chatbot, so a lesson that wanted
+// an icon had to import a component file to get one.
+//
+// Moving them did NOT take LessonShell.jsx out of the 41 import graphs: index.js
+// re-exports it and every lesson imports index.js. What keeps the shell out of
+// the 39 classic lessons' bundles, before this move and after it, is Rollup
+// dropping an export nothing reaches — measured on built bundles by
+// tests/shell-reach.
+//
+// Keep new shared icons here, not in a component file.
 //
 // Every export is a function; nothing here runs at import time.
 

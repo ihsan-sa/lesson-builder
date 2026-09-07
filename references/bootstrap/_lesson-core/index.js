@@ -17,6 +17,9 @@ export { PEDAGOGY_POLICY, TEACHING_COMMUNICATION, TEACHING_EXEMPLARS } from "./c
 // and tutor placement (side / bottom / in-app window / real browser window).
 // A lesson passes its <Chatbot> in as the `tutor` prop; the shell decides
 // where it lives and hands the dock controls to it through ShellContext.
+// A static re-export, so ui/LessonShell.jsx is in all 41 lessons' import graphs;
+// only Rollup keeps it out of the 39 classic bundles. tests/shell-reach measures
+// that on the built bundles.
 export { LessonShell } from "./ui/LessonShell.jsx";
 export { useShell } from "./ui/shellContext.js";
 

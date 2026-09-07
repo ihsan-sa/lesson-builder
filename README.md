@@ -153,6 +153,10 @@ tests/hosted-build/            Fixture for the build-time tutor gate: one lesson
                                (default, hosted under a --base with VITE_TUTOR=1, dev-mode, and a
                                base missing its trailing slash), asserted against the emitted
                                bundles (node + a lesson npm install)
+tests/shell-reach/             Fixture for what reaches the 39 classic lessons: one lesson built
+                               three ways from two bodies that differ only by the <LessonShell>
+                               wrapper, asserting the shell is in neither classic bundle and in the
+                               shelled one (node + a lesson npm install)
 tests/check.sh                 The release gate: one command that runs every fixture needing no
                                model call, no browser and no network, in parallel, and prints the
                                excluded ones with the command that runs each. Non-zero if any fails,

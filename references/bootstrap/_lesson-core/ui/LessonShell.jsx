@@ -26,10 +26,15 @@ import { TUTOR_ENABLED } from "../constants/build.js";
 // article of ARTICLE_MIN_W — a phone — where it starts collapsed to its number
 // strip. See railFits below.
 //
-// Only index.js names this file, so only a lesson that asks for LessonShell
-// gets it. The icons it shares with the tutor panel live in ./icons.jsx: every
-// one of the 41 lessons imports Chatbot, and six of those icons with it, so
-// while they sat here that import put this file in all 41 import graphs.
+// This file is in all 41 lessons' import graphs: every lesson imports "@core",
+// which resolves to index.js, and index.js re-exports LessonShell statically.
+// What keeps it out of the 39 classic lessons' BUNDLES is Rollup dropping an
+// export nothing reaches. tests/shell-reach builds a classic lesson and a shell
+// one and reads both bundles, so that is measured rather than assumed. Dropping
+// the barrel export would settle it at the source and is not available: the two
+// shell lessons import LessonShell from "@core".
+//
+// The icons this file shares with the tutor panel live in ./icons.jsx.
 //
 // The section outline is derived from the DOM (`.section-title` inside the
 // article), not from a per-topic manifest — so any lesson built from the
