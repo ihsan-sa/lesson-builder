@@ -9,12 +9,17 @@ cd tests/thread-actors
 ./run.sh                 # deterministic, no tokens: fake `claude` on PATH
 REAL_CLAUDE=1 ./run.sh   # also the probes against the real CLI (~8 short haiku turns)
 PORT=3921 ./run.sh       # 3901 is the app's own port; the default here is 3911
+SELFCHECK=0 ./run.sh     # skip the two negative controls below
 ```
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md` (core copy + `npm
 install`, template lesson scaffold), starts the lesson's proxy with `fake-claude/claude` first on
 PATH, and drives `check.cjs` against it, then prints the proxy's thread log lines. `KEEP=1` keeps
-the workspace. Exit code 0 only when every check passes. No dependencies beyond Node.
+the workspace. No dependencies beyond Node.
+
+Exit code 0 only when every check passes — and **3 when the proxy itself went away**, which is a
+different thing from a check failing (1) or the harness itself breaking (2). See "When the proxy
+dies" below.
 
 `fake-claude/claude` speaks the CLI's `-p` protocol and makes session identity **observable**:
 every invocation appends its `{argv, stdin}` to `$FAKE_STATE/argv.jsonl`, and each session id owns
@@ -37,7 +42,7 @@ Each case opens its own chat and its own thread; none reads state a previous cas
 | 3a | a thread's Stop | With a main turn and a thread turn streaming as two processes, `/chat/cancel` on the thread kills the thread's whole tree and ends its stream `cancelled` — and the main turn's tree is untouched and still streaming. |
 | 3b | the main turn's Stop | The mirror: cancelling the main turn leaves the running thread alone. Then discarding the chat (`/session/close` without `keepContext`) does take its threads with it — tree gone, handle 404. |
 | 4 | reload | After `/session/close {keepContext:true}` + `/session/open`, re-opening the thread returns the handle it had, its next turn resumes the same forked session without forking again, it still has its own history — and the resumed chat still has not heard it. |
-| 5 | the CLI did not fork | `NOFORK`: the proxy kills the turn (`THREAD_FORK_MISSING` then `THREAD_FORK_KILLED`), the thread's stream ends `error` and never `done`, and no id is recorded — so the thread has nothing to fold (409) and its next turn forks again rather than resuming the main session. On the main session's own history: **the killed turn's reply never reached it**, the rest of the conversation is intact, and the student's own message is there — the CLI reads stdin before it says which session it is, so that one line is the residue the kill cannot undo (`proxy.js`, "Thread sessions"). |
+| 5 | the CLI did not fork | `NOFORK`: the proxy kills the turn (`THREAD_FORK_MISSING` then `THREAD_FORK_KILLED`), the thread's stream ends `error` and never `done`, and no id is recorded — so the thread has nothing to fold (409) and its next turn forks again rather than resuming the main session. On the main session's own history: **the killed turn's reply never reached it**, the rest of the conversation is intact, and the student's own message is there — the CLI reads stdin before it says which session it is, so that one line is the residue the kill cannot undo (`proxy.js`, "Thread sessions"). And the proxy **survives** killing its own turn: read out of `proxy.js`, every `res.write` in it is behind a `writableEnded` check, which is what stops one stopped turn ending the whole server ("Why the proxy was dying"). |
 | 6 | bad input | Missing / malformed `threadId`, unknown chat, malformed handle -> 400/404, no session created. |
 | 7 | client rules (`chat/processResponse.js`, the module `Chatbot.jsx` imports) | `<<REINFORCE>>` in a **thread** reply is collected exactly as it is on the main transcript (one list, one chat) and stripped from the display; `<<SUGGEST>>` is still stripped in thread scope and reported back as `thread-tag-deferred`. |
 | 9 | the fold rules | `chat/turnState.js` run against its own fixtures: a fold that lands while the main tutor is streaming is inserted **before** that bubble (appending past it splits the reply and strands the first half `_streaming`), and is simply appended when nothing is in flight; a restored transcript re-queues only an undelivered fold; a turn settles the folds whose text it actually drained and leaves a fold enqueued after that drain pending for the next turn. |
@@ -48,7 +53,93 @@ Each case opens its own chat and its own thread; none reads state a previous cas
 `--real` (via `REAL_CLAUDE=1`) runs cases 1, 2, 4, 6, 7, 8, 9 and the static half of 11 against the
 real CLI — the ones that prove `--fork-session` actually forks. Cases 3, 5, 10 and the live half of
 11 are fake-only (they need a killable tree, a CLI that refuses to fork, or a fold that costs no
-tokens).
+tokens). `--only 5` (or `--only 1,5`) runs just the numbered cases; the negative controls below use
+it, and every case builds its own state, so any subset is a valid run.
+
+## When the proxy dies
+
+Every case here measures a running proxy, so a proxy that has gone leaves nothing to measure. This
+used to be reported as whatever assertion came next. The run that prompted the change printed
+
+```
+FAIL 5: and killed the turn that was running in the main session
+HARNESS ERROR: TypeError: fetch failed
+```
+
+— a failure about thread forking, when in fact the wait timed out because the proxy was already
+gone and the *next* request is where the connection refused surfaced. Nothing about forking had
+been tested at all, and because the red was read as a known flake, every review that night was
+told to disregard it.
+
+So `check.cjs` now asks one question wherever a run can fail without an answer: **is the proxy
+still there?** Every request goes through `proxyFetch`, every wait that runs out (`waitForLog`,
+`pidResuming`, `waitForInvocation`) and every stream that breaks mid-read calls `proxyDeath()`,
+which probes `/whoami` and reads `server/.proxy.json`. If the proxy answers, nothing changes — the
+wait returns false and the check fails as a real red. If it does not, the run stops with a report
+instead of an assertion, and exits **3**:
+
+```
+PROXY GONE — the proxy under test stopped answering. This run measured nothing about thread behaviour.
+  where:    waited 8000ms for /THREAD_FORK_KILLED/ in chat.log and it never came
+  probe:    GET http://127.0.0.1:3962/whoami — connect ECONNREFUSED 127.0.0.1:3962
+  identity: server/.proxy.json still names pid 1524655, which is not alive — it died without running its exit handler
+  so far:   4 check(s) ran, 0 of them failed — with the proxy gone, none of that is a verdict on this commit.
+  This is NOT a failed assertion about thread forking. ...
+```
+
+`identity` is the useful line. The proxy removes `.proxy.json` from a `process.on("exit")`
+handler, so the file **surviving with a dead pid** means the proxy never got to run that handler —
+`SIGKILL`, or the kernel — and the file being **gone** means it did: a signal it handles, or a
+crash node exited on. Those last two are told apart by `run.sh`, which adds the half only the
+parent knows: the wait status of the process it started (`exited 1` for a crash, `killed by signal
+N` for a kill) and the proxy's own last lines, which carry the stack. That is how the death below
+was found.
+
+### The two negative controls
+
+Run at the end of `run.sh` (`SELFCHECK=0` skips them), both driving case 5 alone. They exist
+because "the report is right" is not something a suite can assert about itself:
+
+1. **The proxy dies.** A watcher `SIGKILL`s the proxy the instant `THREAD_FORK_MISSING` reaches the
+   log — the same moment the reported run lost it, with case 5 waiting on `THREAD_FORK_KILLED`.
+   Requires exit 3, the words `PROXY GONE`, and **no `FAIL` line whatsoever**.
+2. **The behaviour dies.** The mirror: the workspace's proxy copy is edited so `failForkMissing()`
+   is replaced by recording the parent's id — the exact leak case 5 exists to catch — and the proxy
+   is left running. Requires exit 1, no `PROXY GONE`, and `FAIL` lines that name the forking. Case
+   5 is not weakened by any of this; this control is what shows it still bites.
+
+## Why the proxy was dying
+
+Not guessed — reproduced. Twenty-four runs, four at a time, on a box already at load 6–9 killed
+two of them, and the report above put the same stack in front of both:
+
+```
+proxy pid 1799772 exited 1
+Error [ERR_STREAM_WRITE_AFTER_END]: write after end
+    at ServerResponse.write ... at proxy.js:835        <- `event: text`, a raw res.write
+    at Object.push (ndjson.js:32)
+    at Socket.<anonymous> (proxy.js:435)               <- the CLI's stdout
+```
+
+The proxy stops an unforked turn by ending its response (`failForkMissing`) and killing the CLI.
+The kill is not instant — `killTree` walks `ps` first — so the CLI's next stdout chunk still
+arrives, and the streaming callback wrote it to the response that had just ended. `res.write`
+after `end()` does not throw. It emits `error` on the response a tick later, past the `catch`
+around that callback and with nothing listening, and node's answer to an unhandled `error` event
+is to end the process. So one stopped turn exited the whole proxy and took every other chat with
+it. Load is the trigger, not the cause: it widens the gap between the end and the next chunk.
+
+**So yes, it can be made to survive, and now does.** `proxy.js` already had the guard — `sse()`
+checks `res.writableEnded` — and four writes in that one callback went around it. They go through
+`sse` now, which is the whole fix; the turn's tokens are still accounted, only the writing is
+dropped. Measured on one workspace, case 5 alone, same box: **unfixed died 4 times in 20 runs, fixed 0 times in 20**.
+
+This was a defect in the lesson server, not only in the reporting. A student whose thread failed
+to fork lost the entire tutor — every chat in the lesson, not just that thread.
+
+Case 5 now reads `proxy.js` and requires every `res.write` in it to be behind a `writableEnded`
+check. A source check, because the crash is a race: a green case 5 does not prove the writes are
+guarded, and it was exactly that unearned green that let this sit for days.
 
 ## Transcripts
 

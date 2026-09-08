@@ -79,7 +79,10 @@ EXCLUDED=(
 # assertions are about how long a process lives — so they get the box to themselves in turn. This
 # is insurance, not the fix for anything: `thread-actors` really was dying here with its proxy gone
 # (ECONNREFUSED on the request after a cancel), and the cause was in the proxy — `kill(-pid)` on a
-# group it no longer led — fixed in `_lesson-core/server/proxy.js` § signalTree. The chain costs
+# group it no longer led — fixed in `_lesson-core/server/proxy.js` § signalTree. That was not the
+# only cause: a second turned up under load on 2026-09-08, a write to a response the proxy had
+# already ended, and a run whose proxy has gone now says so (exit 3) instead of blaming the
+# assertion that came next — `tests/thread-actors/README.md` has both. The chain costs
 # the gate nothing: it is shorter than `attestation`, which is the critical path on its own.
 SERIAL=(cancellation thread-actors)
 

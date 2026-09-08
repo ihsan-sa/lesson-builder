@@ -1,6 +1,18 @@
 // Thread-actor evidence. Drives a running proxy (PROXY_URL) whose `claude` is
-// tests/thread-actors/fake-claude (or the real CLI with --real). Exit 0 only
-// when every assertion holds. See README.md for the scenarios.
+// tests/thread-actors/fake-claude (or the real CLI with --real). See README.md
+// for the scenarios.
+//
+//   --real        the probes that need the real CLI (see README)
+//   --only 5      run only the numbered cases given (comma-separated). run.sh's
+//                 negative controls drive case 5 on its own.
+//
+// Exit 0 when every assertion holds, 1 when one does not, 2 on a harness error
+// — and 3 when the PROXY ITSELF is gone. That last code is the difference
+// between "the behaviour under test is broken" and "there was nothing to test":
+// every request and every wait here goes through a choke point that asks the
+// proxy whether it is still answering, and a failure with the proxy gone is
+// reported as its own outcome instead of as the assertion that happened to be
+// next in line. See ProxyGone below and the report at the bottom.
 //
 // Each case builds its own chat and its own thread: nothing here reads state a
 // previous case happened to leave behind, so a case can be read — and a
@@ -15,16 +27,72 @@ const CORE_DIR = process.env.CORE_DIR;
 const LESSON_DIR = process.env.LESSON_DIR;
 const FAKE_STATE = process.env.FAKE_STATE;
 
-let failures = 0;
-const ok = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
-const post = async (route, body) => { const r = await fetch(BASE + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
-const sessionsList = async () => (await (await fetch(BASE + "/sessions")).json()).sessions;
+// --only 5, or --only 1,5. No flag runs every case.
+const onlyAt = process.argv.indexOf("--only");
+const ONLY = onlyAt >= 0 ? new Set((process.argv[onlyAt + 1] || "").split(",").map((s) => s.trim())) : null;
+const runs = (n) => !ONLY || ONLY.has(String(n));
+
+let failures = 0, checks = 0;
+const ok = (cond, msg) => { checks++; console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const chatLog = () => { try { return fs.readFileSync(path.join(LESSON_DIR, "server", "chat.log"), "utf8"); } catch (_) { return ""; } };
+
+// --------------------------------------------------------- the proxy is gone
+// Thrown, never asserted: an assertion that ran with the proxy already gone is
+// not a fact about thread behaviour, so it must not be printed as one. This is
+// the flake the lessons planning session reported — case 5 waited for
+// THREAD_FORK_KILLED until it timed out and printed a FAIL about forking, and
+// only the NEXT request revealed the connection refused underneath it.
+class ProxyGone extends Error {
+  constructor(report) { super(report.where); this.report = report; }
+}
+// Is the proxy this suite measures still there? `/whoami` because it is the
+// cheapest real route on it and takes no session. Returns null when the proxy
+// answers — then whatever went wrong is the caller's own business.
+async function proxyDeath(where) {
+  let probe;
+  try {
+    const r = await fetch(BASE + "/whoami", { signal: AbortSignal.timeout(4000) });
+    await r.text().catch(() => {});
+    return null;
+  } catch (err) { probe = err.cause ? err.cause.message : err.message; }
+  // The proxy writes .proxy.json when it binds and removes it from a
+  // process.on("exit") handler, which a crash runs as well as a signal it
+  // handles — so the file SURVIVING with a dead pid means it never got there
+  // (SIGKILL, or the kernel). run.sh prints the half that tells a crash from a
+  // signal: the wait status of the process it started, and its last words.
+  let identity = "server/.proxy.json is gone too — the proxy exited through its own handler";
+  try {
+    const rec = JSON.parse(fs.readFileSync(path.join(LESSON_DIR, "server", ".proxy.json"), "utf8"));
+    let alive = false;
+    try { process.kill(rec.pid, 0); alive = true; } catch (err) { alive = err.code === "EPERM"; }
+    identity = `server/.proxy.json still names pid ${rec.pid}, which is ${alive ? "alive but not answering" : "not alive — it died without running its exit handler"}`;
+  } catch (_) {}
+  return { where, probe, identity };
+}
+// Every request to the proxy goes through here, so a connection that fails at
+// the network layer becomes ProxyGone at the point it happens rather than a
+// bare "fetch failed" three assertions later.
+async function proxyFetch(route, init) {
+  try { return await fetch(BASE + route, init); }
+  catch (err) {
+    const method = (init && init.method) || "GET";
+    const death = await proxyDeath(`${method} ${route}: ${err.cause ? err.cause.message : err.message}`);
+    if (death) throw new ProxyGone(death);
+    throw err;
+  }
+}
+const post = async (route, body) => { const r = await proxyFetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+const sessionsList = async () => (await (await proxyFetch("/sessions")).json()).sessions;
 // A log line written after the response the check was waiting on — a kill logs
-// its survivors only once the tree is really gone.
+// its survivors only once the tree is really gone. A wait that runs out is the
+// other half of the flake: with the proxy gone the line was never coming, and
+// saying so is the report. With the proxy alive it is a real red, and false
+// goes back to the caller to be asserted on as before.
 const waitForLog = async (re, from, ms = 8000) => {
   for (const t = Date.now(); Date.now() - t < ms;) { if (re.test(chatLog().slice(from))) return true; await sleep(200); }
+  const death = await proxyDeath(`waited ${ms}ms for ${re} in chat.log and it never came`);
+  if (death) throw new ProxyGone(death);
   return false;
 };
 
@@ -37,8 +105,21 @@ const invocations = () => {
     return fs.readFileSync(path.join(FAKE_STATE, "argv.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   } catch (_) { return []; }
 };
-const resumedIn = (inv) => { const i = inv.argv.indexOf("--resume"); return i >= 0 ? inv.argv[i + 1] : null; };
+const resumedIn = (inv) => { if (!inv) return null; const i = inv.argv.indexOf("--resume"); return i >= 0 ? inv.argv[i + 1] : null; };
 const forkedIn = (inv) => inv.argv.includes("--fork-session");
+// The fake CLI appends its argv line as it starts, and startTurn resolves as
+// soon as the turn is under way — which can be the instant before. For a turn
+// still streaming, wait for the line rather than racing it: reading it too
+// early crashed the harness with "cannot read properties of undefined", which
+// named nothing. Null on timeout, so the caller's own check reports it.
+const waitForInvocation = async (pred, ms = 8000) => {
+  for (const t = Date.now(); Date.now() - t < ms;) {
+    const hit = invocations().filter(pred).slice(-1)[0];
+    if (hit) return hit;
+    await sleep(100);
+  }
+  return null;
+};
 
 // Live (non-zombie) pids of the tree under rootPid: descendants plus process-group members.
 function tree(rootPid) {
@@ -62,12 +143,16 @@ async function pidResuming(sid, timeoutMs = 10000) {
     if (hit) return +hit.split(/\s+/)[0];
     await sleep(200);
   }
+  // Same rule as waitForLog: no CLI ever appeared, and if the proxy is gone
+  // that is why — it never got to spawn one.
+  const death = await proxyDeath(`waited ${timeoutMs}ms for a fake-claude resuming ${sid} and none appeared`);
+  if (death) throw new ProxyGone(death);
   return null;
 }
 
 // One /chat turn, read to the end. Returns { events, text, ended }.
 async function turn(sessionId, message) {
-  const res = await fetch(BASE + "/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
+  const res = await proxyFetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
   if (!res.ok) return { status: res.status, events: [], text: "", body: await res.json().catch(() => ({})) };
   const events = await readStream(res, () => {});
   const done = events.find((e) => e.event === "done");
@@ -80,7 +165,7 @@ function startTurn(sessionId, message, until) {
   return new Promise(async (resolve, reject) => {
     const events = [];
     let started = false, endTurn;
-    const res = await fetch(BASE + "/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
+    const res = await proxyFetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
     if (!res.ok) return reject(new Error(`/chat ${res.status}`));
     const t = { events, ended: new Promise((r) => (endTurn = r)) };
     readStream(res, (ev, data) => { if (!started && until(ev, data)) { started = true; resolve(t); } }, events).then((all) => { endTurn(all); if (!started) resolve(t); });
@@ -92,7 +177,16 @@ function readStream(res, onEvent, into) {
   return (async () => {
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ""; let ev = null;
     while (true) {
-      const { done, value } = await reader.read(); if (done) break;
+      // A read that errors is the socket going away under the turn — the same
+      // death the request wrappers catch, seen from mid-stream instead.
+      let done, value;
+      try { ({ done, value } = await reader.read()); }
+      catch (err) {
+        const death = await proxyDeath(`the turn's response stream stopped mid-read after ${events.length} events: ${err.cause ? err.cause.message : err.message}`);
+        if (death) throw new ProxyGone(death);
+        throw err;
+      }
+      if (done) break;
       buf += dec.decode(value, { stream: true }); const lines = buf.split("\n"); buf = lines.pop();
       for (const line of lines) {
         if (line.startsWith("event: ")) ev = line.slice(7).trim();
@@ -125,7 +219,7 @@ const newChat = async () => {
   // Isolation. A thread asserts something false; the main conversation must
   // never have heard it. (Brief: "a misconception explored in a thread leaks
   // back into the main tutor context" is the bug being fixed.)
-  {
+  if (runs(1)) {
     const main = await newChat();
     const before = invocations().length;
     const logAt = chatLog().length;   // this case's own slice of chat.log
@@ -179,7 +273,7 @@ const newChat = async () => {
   // ---------------------------------------------------------------- case 2
   // Fold-back. The ONE route from a thread to the main conversation, and it
   // runs through a summary the student sees first.
-  {
+  if (runs(2)) {
     const main = await newChat();
     const logAt = chatLog().length;
     await turn(main, "FACT-B: this fixture is about integrals.");
@@ -218,7 +312,7 @@ const newChat = async () => {
   // ---------------------------------------------------------------- case 3
   // Cancellation, both directions. P0 #2's Stop now holds PER THREAD: each
   // side has its own session, so it has its own process tree.
-  if (!REAL) {
+  if (!REAL && runs(3)) {
     const longMsg = "LONG";
     const isRunning = (ev) => ev === "status";
 
@@ -230,8 +324,8 @@ const newChat = async () => {
       const mainTurn = await startTurn(main, longMsg, isRunning);
       const threadTurn = await startTurn(handle, threadMsg("t1", longMsg), isRunning);
       const mainPid = await pidResuming(main);
-      const threadCli = resumedIn(invocations().filter((i) => /LONG/.test(i.stdin) && /THREAD:t1/.test(i.stdin)).slice(-1)[0]);
-      const threadPid = await pidResuming(threadCli);
+      const threadCli = resumedIn(await waitForInvocation((i) => /LONG/.test(i.stdin) && /THREAD:t1/.test(i.stdin)));
+      const threadPid = threadCli ? await pidResuming(threadCli) : null;
       ok(mainPid && threadPid && mainPid !== threadPid, `3a: main turn (pid ${mainPid}) and thread turn (pid ${threadPid}) are two processes`);
       ok(threadCli !== main, "3a: the thread's long turn runs on the forked session");
       const mainBefore = mainTurn.events.length;
@@ -255,8 +349,8 @@ const newChat = async () => {
       const handle = (await post("/thread/open", { sessionId: main, threadId: "t1" })).body.threadSessionId;
       await turn(handle, threadMsg("t1", "seed the fork"));
       const threadTurn = await startTurn(handle, threadMsg("t1", longMsg), isRunning);
-      const threadCli = resumedIn(invocations().filter((i) => /LONG/.test(i.stdin) && /THREAD:t1/.test(i.stdin)).slice(-1)[0]);
-      const threadPid = await pidResuming(threadCli);
+      const threadCli = resumedIn(await waitForInvocation((i) => /LONG/.test(i.stdin) && /THREAD:t1/.test(i.stdin)));
+      const threadPid = threadCli ? await pidResuming(threadCli) : null;
       const mainTurn = await startTurn(main, longMsg, isRunning);
       const mainPid = await pidResuming(main);
       const threadBefore = threadTurn.events.length;
@@ -283,7 +377,7 @@ const newChat = async () => {
   // ---------------------------------------------------------------- case 4
   // Reload. The tab closes with keepContext, resumes, and re-opens its thread:
   // same handle, same forked session, nothing re-forked.
-  {
+  if (runs(4)) {
     const main = await newChat();
     await turn(main, "FACT-D: this fixture is about eigenvalues.");
     const handle = (await post("/thread/open", { sessionId: main, threadId: "t3" })).body.threadSessionId;
@@ -312,7 +406,7 @@ const newChat = async () => {
   // The CLI did not fork. An id equal to the parent's means the MAIN session
   // is what is answering, so this turn is writing into the main conversation.
   // The proxy kills it there and then and fails the turn.
-  if (!REAL) {
+  if (!REAL && runs(5)) {
     const main = await newChat();
     const logAt = chatLog().length;
     await turn(main, "FACT-E: this fixture is about limits.");
@@ -324,6 +418,21 @@ const newChat = async () => {
     ok(!nofork.events.some((e) => e.event === "done"), "5: and never completes");
     ok(/THREAD_FORK_MISSING/.test(chatLog().slice(logAt)), "5: the proxy logged THREAD_FORK_MISSING rather than recording the parent's id");
     ok(await waitForLog(/THREAD_FORK_KILLED/, logAt), "5: and killed the turn that was running in the main session");
+
+    // ...and survived doing it. The kill is not instant (killTree walks `ps`
+    // first), so the CLI's next stdout chunk reaches the streaming callback
+    // after failForkMissing has already ended the response. Writing it raw is
+    // what used to take the whole proxy down: res.write after end() does not
+    // throw, it emits `error` on the response a tick later — past the catch
+    // around that callback, with no listener — and node exits the process, so
+    // every other chat died with this one. Read as source because the crash is
+    // a race: 24 runs under load showed it twice, so a green case 5 is not
+    // evidence the writes are guarded. See README, "Why the proxy was dying".
+    const rawWrites = fs.readFileSync(path.join(CORE_DIR, "server", "proxy.js"), "utf8")
+      .split("\n").map((l, i) => [i + 1, l])
+      .filter(([, l]) => /res\.write\(/.test(l) && !/writableEnded/.test(l));
+    ok(rawWrites.length === 0, `5: and the proxy survives its own kill — every res.write in proxy.js is behind a writableEnded check${rawWrites.length ? ` (unguarded at line ${rawWrites.map(([n]) => n).join(", ")})` : ""}`);
+
     ok((await post("/thread/fold", { sessionId: handle })).status === 409, "5: with no forked session recorded, the thread has nothing to fold -> 409");
 
     // What the kill is worth, measured on the main session's own history. The
@@ -344,7 +453,7 @@ const newChat = async () => {
 
   // ---------------------------------------------------------------- case 6
   // Bad input. Nothing here should create a session or reach argv.
-  {
+  if (runs(6)) {
     const main = await newChat();
     const sessionsBefore = (await sessionsList()).length;
     ok((await post("/thread/open", { sessionId: main })).status === 400, "6: /thread/open with no threadId -> 400");
@@ -360,7 +469,7 @@ const newChat = async () => {
   // A <<REINFORCE>> emitted inside a thread is collected exactly as it is on
   // the main transcript — the roadmap's "reinforcement missing inside threads"
   // was already stale; the state-mutating tags are still deferred.
-  {
+  if (runs(7)) {
     const seen = [];
     const r = processResponse("Right.<<REINFORCE>>Prefer worked examples<<END_REINFORCE>>", { scope: "thread", onError: (t, d) => seen.push([t, d]) });
     ok(r.reinforced.length === 1 && r.reinforced[0] === "Prefer worked examples", `7: <<REINFORCE>> in a thread reply is captured (${JSON.stringify(r.reinforced)})`);
@@ -375,7 +484,7 @@ const newChat = async () => {
   // ---------------------------------------------------------------- case 8
   // Client wiring this suite cannot drive headlessly (no DOM), asserted
   // against the workspace's core copy so a refactor that drops it is caught.
-  {
+  if (runs(8)) {
     const src = (f) => { try { return fs.readFileSync(path.join(CORE_DIR, f), "utf8"); } catch (_) { return ""; } };
     const chatbot = src("chat/Chatbot.jsx"), panel = src("chat/ThreadPanel.jsx");
     ok((chatbot.match(/role: "fold"/g) || []).length === 1, "8: the fold path appends exactly one fold message to the main transcript");
@@ -396,7 +505,7 @@ const newChat = async () => {
   // ---------------------------------------------------------------- case 9
   // The fold rules themselves (chat/turnState.js, the module Chatbot.jsx
   // imports), run against their own fixtures rather than read as source.
-  {
+  if (runs(9)) {
     const card = { role: "fold", content: "S", obs: "OBS-1", foldPending: true };
 
     // Kept: a fold that lands while the main tutor is streaming goes BEFORE
@@ -429,7 +538,7 @@ const newChat = async () => {
   // A fold takes its turn in the thread's OWN queue. Two CLIs resuming one
   // session id at once is what the per-session queue exists to prevent, and
   // the loser's turn is lost from the thread's history.
-  if (!REAL) {
+  if (!REAL && runs(10)) {
     const main = await newChat();
     const handle = (await post("/thread/open", { sessionId: main, threadId: "t4" })).body.threadSessionId;
     await turn(handle, threadMsg("t4", "seed the fork"));
@@ -458,7 +567,7 @@ const newChat = async () => {
   // tutor feature worked. Brief: "do not widen the dev path beyond the
   // endpoints the client actually calls; a route nobody calls is not
   // coverage" — so this case asserts the carried set from both sides.
-  {
+  if (runs(11)) {
     // Static, both directions. A client endpoint the middleware does not
     // carry is index.html at runtime; a route no client endpoint claims is a
     // dev-only path nobody calls.
@@ -477,7 +586,7 @@ const newChat = async () => {
     const unclaimed = ROUTES.filter((r) => !apiPaths.some((u) => claims(r, u)));
     ok(unclaimed.length === 0, `11: and it carries nothing the client never calls (${unclaimed.join(" ") || "none spare"})`);
   }
-  if (!REAL) {
+  if (!REAL && runs(11)) {
     // Live, against the proxy this fixture is already running: the real
     // middleware in front of a stand-in for the fallback Vite would apply.
     const { lessonChatProxy } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "server", "viteLessonProxy.js")).href);
@@ -532,4 +641,29 @@ const newChat = async () => {
 
   console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
-})().catch((e) => { console.error("HARNESS ERROR:", e); process.exit(2); });
+})().catch(report);
+
+// The one place a run that never got to finish is explained. A ProxyGone says
+// the process this suite measures went away, so the checks that did run are
+// not a verdict on the commit and the ones that did not run are not a silence
+// about it — which is the whole point: this must not read like a thread-forking
+// failure. Anything else is a harness error and reads as one.
+function report(e) {
+  if (!(e instanceof ProxyGone)) { console.error("HARNESS ERROR:", e); process.exit(2); }
+  const r = e.report;
+  console.error([
+    "",
+    "PROXY GONE — the proxy under test stopped answering. This run measured nothing about thread behaviour.",
+    `  where:    ${r.where}`,
+    `  probe:    GET ${BASE}/whoami — ${r.probe}`,
+    `  identity: ${r.identity}`,
+    `  so far:   ${checks} check(s) ran, ${failures} of them failed — with the proxy gone, none of that is a verdict on this commit.`,
+    "  This is NOT a failed assertion about thread forking. Re-run the suite; if it recurs, the proxy is dying and that is the bug.",
+    "",
+  ].join("\n"));
+  process.exit(3);
+}
+// startTurn keeps reading its stream in the background, so a socket that dies
+// under it rejects with nobody awaiting. Without this, node ends the process
+// its own way and the run says nothing at all.
+process.on("unhandledRejection", report);
