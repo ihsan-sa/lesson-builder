@@ -1,8 +1,12 @@
 #!/usr/bin/env node
-// Runs the collapse measurement over every lesson of a BUILT site at phone
-// width, one page load each. check.cjs measures this fixture's two scaffolded
-// demo lessons; this measures a real corpus, which is how the check was shown
-// to fail on the pre-#24 build and pass on the fixed one. See README.md.
+// Runs BOTH phone-width measurements over every lesson of a BUILT site, one
+// page load each at 390x844: overlap.cjs (a control or caption sitting on the
+// equation it belongs to — the defect the owner reported on 2026-09-06) and
+// collapse.cjs (a part squeezed to nothing). check.cjs measures this fixture's
+// scaffolded demo lessons; this measures a real corpus, which is how the
+// collapse check was shown to fail on the pre-#24 build and pass on the fixed
+// one. The site is only ever read: nothing here writes into a build. See
+// README.md.
 //
 //   SITE_URL=http://127.0.0.1:5xxx/ node tests/phone-width/sweep.cjs
 //
@@ -13,9 +17,15 @@
 //                     Playwright browser download is needed.
 //      LESSON_DIR     optional; another place to resolve playwright from.
 //
-// Exit 0 when no part of any lesson is collapsed, 1 when one is (naming it), 2
-// on a usage error. The last line reports how many lessons were measured and
-// the narrowest part found across all of them.
+// Per lesson it prints whether anything overlaps an equation and whether any
+// part is collapsed, naming the lesson and the part when it does. Exit 0 when
+// no lesson has either, 1 when one does, 2 on a usage error. The last line
+// reports how many lessons and equations were measured, the narrowest part
+// found, and how many lessons had an overlap or a collapse.
+//
+// An equation with no ink on screen is one no overlap could have been seen on,
+// so those are counted and reported rather than passed in silence: a lesson
+// whose math never rendered must not read as a lesson nothing lands on.
 function resolveDep(spec) {
   for (const base of [__dirname, process.cwd(), process.env.LESSON_DIR].filter(Boolean)) {
     try { return require.resolve(spec, { paths: [base] }); } catch (_) {}
@@ -24,6 +34,7 @@ function resolveDep(spec) {
 }
 const { chromium } = require(resolveDep("playwright"));
 const { MIN_PART_W, describeCollapsed, settle, readParts } = require("./collapse.cjs");
+const { readEquations, overlaps, describeOverlaps, blankEquations } = require("./overlap.cjs");
 
 const PHONE = { width: 390, height: 844 };
 const BROWSER = process.env.PHONE_WIDTH_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
@@ -58,6 +69,9 @@ async function lessonPaths(browser, site) {
   if (BROWSER) launch.executablePath = BROWSER;
   const browser = await chromium.launch(launch);
   let bad = 0, minInner = null, minWhere = "", measured = 0;
+  // Counted separately, because "41 of 41 ok" has to say which defect it looked
+  // for: a lesson can have an overlap with nothing collapsed, and vice versa.
+  let collapsedLessons = 0, overlapLessons = 0, equations = 0, blank = 0;
   try {
     const paths = await lessonPaths(browser, site);
     if (!paths.length) { console.error(`no lesson links found at ${site}`); process.exit(2); }
@@ -72,17 +86,30 @@ async function lessonPaths(browser, site) {
         await page.goto(new URL(p, site).href, { waitUntil: "domcontentloaded" });
         await settle(page);
         const snap = await readParts(page);
+        const eqs = await readEquations(page);
         measured++;
+        equations += eqs.length;
         if (snap.minInner !== null && (minInner === null || snap.minInner < minInner)) {
           minInner = snap.minInner; minWhere = p;
         }
-        const status = snap.collapsed.length ? "COLLAPSED" : "ok";
-        console.log(`  ${status.padEnd(9)} ${p.padEnd(42)} ${String(snap.parts.length).padStart(3)} parts  ` +
-          `narrowest ${snap.minInner === null ? "n/a" : Math.round(snap.minInner) + "px"}`);
-        if (snap.collapsed.length) { bad++; console.log(`        ${describeCollapsed(snap.collapsed)}`); }
+        const covered = overlaps(eqs);
+        const noInk = blankEquations(eqs);
+        blank += noInk.length;
+        if (covered.length) overlapLessons++;
+        if (snap.collapsed.length) collapsedLessons++;
+        // Both defects in one status, because a lesson can have either or both
+        // and a run that printed only the first would hide the second.
+        const flags = [covered.length ? "OVERLAP" : "", snap.collapsed.length ? "COLLAPSED" : ""].filter(Boolean);
+        console.log(`  ${(flags.join("+") || "ok").padEnd(18)} ${p.padEnd(42)} ${String(snap.parts.length).padStart(3)} parts  ` +
+          `narrowest ${(snap.minInner === null ? "n/a" : Math.round(snap.minInner) + "px").padEnd(6)}  ` +
+          `${String(eqs.length).padStart(3)} equations` +
+          `${noInk.length ? `, ${noInk.length} with no math on screen` : ""}`);
+        if (covered.length) { console.log(`        ${describeOverlaps(eqs)}`); }
+        if (snap.collapsed.length) { console.log(`        ${describeCollapsed(snap.collapsed)}`); }
+        if (covered.length || snap.collapsed.length) bad++;
       } catch (e) {
         bad++;
-        console.log(`  ERROR     ${p}\n        ${e.message.split("\n")[0]}`);
+        console.log(`  ${"ERROR".padEnd(18)} ${p}\n        ${e.message.split("\n")[0]}`);
       } finally {
         await ctx.close();
       }
@@ -90,8 +117,10 @@ async function lessonPaths(browser, site) {
   } finally {
     await browser.close();
   }
-  console.log(`\n${measured} lessons measured, floor ${MIN_PART_W}px, narrowest part ` +
-    `${minInner === null ? "n/a" : Math.round(minInner) + "px"}${minWhere ? ` (${minWhere})` : ""}, ` +
-    `${bad} with a collapsed part`);
+  console.log(`\n${measured} lessons measured, ${equations} equations` +
+    `${blank ? `, ${blank} of them with no math on screen (no overlap could have been seen there)` : ""}` +
+    `\n${overlapLessons} lessons with a control or caption on the equation, ` +
+    `${collapsedLessons} with a collapsed part (floor ${MIN_PART_W}px, narrowest part ` +
+    `${minInner === null ? "n/a" : Math.round(minInner) + "px"}${minWhere ? ` (${minWhere})` : ""})`);
   process.exit(bad > 0 ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -1,7 +1,7 @@
 {
   "name": "phone-width-tests",
   "private": true,
-  "description": "Playwright evidence that at 390px no equation's controls overlap the equation and no part of the lesson is squeezed to nothing, in both stylesheets. Run: ./run.sh",
+  "description": "Playwright evidence that at 390px no equation's controls overlap the equation and no part of the lesson is squeezed to nothing, in both stylesheets. Run: ./run.sh; sweep.cjs runs both measurements over a real built site, sweep-negative.sh shows them going red.",
   "scripts": { "test": "./run.sh" },
   "devDependencies": {
     "playwright": "^1.58.2"
