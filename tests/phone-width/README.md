@@ -18,6 +18,17 @@ Needs a Chromium, three `vite build`s and the KaTeX CDN, so it is not in
 measurements run over a whole built site with `sweep.cjs`, and are shown going
 red with `sweep-negative.sh` — both below.
 
+**This directory has a consumer outside this repo.** The lessons repo
+(`~/dev/lessons`, github.com/ihsan-sa/lessons) runs `sweep.cjs` as the
+verification for its own owner-facing asks: a row about how lessons render on a
+phone is closed there against a run of this code, and its runner tells "could
+not measure" apart from "measured and bad", so a missing browser reports nothing
+rather than reading as a pass. **Tell that repo before moving or renaming this
+directory, or renaming `sweep.cjs`** — agreed between the two sides on
+2026-09-08. The dependency also runs the other way: the sweep recipe in
+`tests/check.sh` invokes `bin/serve-dist.mjs`, which is that repo's script, and
+they will tell us before changing its flags, defaults or exit codes.
+
 ## What it builds
 
 Three lessons, because the 41 lessons render two different stylesheets and a
