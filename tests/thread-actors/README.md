@@ -9,7 +9,7 @@ cd tests/thread-actors
 ./run.sh                 # deterministic, no tokens: fake `claude` on PATH
 REAL_CLAUDE=1 ./run.sh   # also the probes against the real CLI (~8 short haiku turns)
 PORT=3921 ./run.sh       # 3901 is the app's own port; the default here is 3911
-SELFCHECK=0 ./run.sh     # skip the two negative controls below
+SELFCHECK=0 ./run.sh     # skip the three negative controls below
 ```
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md` (core copy + `npm
@@ -79,12 +79,18 @@ wait returns false and the check fails as a real red. If it does not, the run st
 instead of an assertion, and exits **3**:
 
 ```
-PROXY GONE — the proxy under test stopped answering. This run measured nothing about thread behaviour.
+PROXY GONE — the proxy under test stopped answering. No assertion in this run is a verdict on thread behaviour.
   where:    waited 8000ms for /THREAD_FORK_KILLED/ in chat.log and it never came
   probe:    GET http://127.0.0.1:3962/whoami — connect ECONNREFUSED 127.0.0.1:3962
   identity: server/.proxy.json still names pid 1524655, which is not alive — it died without running its exit handler
   so far:   4 check(s) ran, 0 of them failed — with the proxy gone, none of that is a verdict on this commit.
-  This is NOT a failed assertion about thread forking. ...
+  in flight: case 5 — a thread turn whose CLI answered as the MAIN session — ...
+  evidence:  what case 5 left behind, which needs no proxy to read:
+               - the proxy logged THREAD_FORK_MISSING — the CLI answered as the main session instead of forking
+               - the turn ended `error` — the proxy refused it, which is what case 5 requires of it
+               - no reply from that turn reached the main conversation (watched .../hist-<main>.txt for 5s ...)
+  Nothing case 5 left behind accuses the behaviour under test.
+  This is NOT a failed assertion about thread forking. Re-run the suite; ...
 ```
 
 `identity` is the useful line. The proxy removes `.proxy.json` from a `process.on("exit")`
@@ -95,18 +101,53 @@ parent knows: the wait status of the process it started (`exited 1` for a crash,
 N` for a kill) and the proxy's own last lines, which carry the stack. That is how the death below
 was found.
 
-### The two negative controls
+### `in flight` and `evidence`: was a regression in play as well?
 
-Run at the end of `run.sh` (`SELFCHECK=0` skips them), both driving case 5 alone. They exist
+A death and a regression are not exclusive, and the run that has both used to report neither: the
+broken proxy never refuses the turn, so the kill lands mid-stream and **not one assertion has run**
+— `0 check(s) ran, 0 of them failed`, and a reader is handed nothing but "re-run". That is the
+same advice the original flake sat behind for days. So exit 3 is not allowed to mean "we learned
+nothing".
+
+Assertions are not a run's only evidence. `runs(n)` records the case in flight, and a case may
+register an `evidence(subject, probe)` whose probe reads the marks it left **outside** the proxy —
+files the proxy's death does not erase. Case 5's probe (`forkLeakEvidence`) reads three:
+
+* `THREAD_FORK_MISSING` in `chat.log` — the proxy saw the CLI answer as the parent;
+* whether an `error` event ever reached the run — `failForkMissing` is the only thing that sends
+  one, so this is "did the proxy refuse the turn", answerable even though the turn never returned;
+* the **main session's transcript**. The CLI is not a child the proxy's death reaps, so a turn
+  nothing stopped runs on and appends its reply there ~3s later (`fake-claude`, `NOFORK`). That
+  reply, on disk, with the proxy already gone, is the leak itself.
+
+A regression is reported only when the proxy saw the unforked id, **nothing refused the turn**, and
+the reply landed. The middle clause is load-bearing: `failForkMissing` `SIGTERM`s the CLI and the
+watcher `SIGKILL`s the proxy ~100ms later, and which lands first is a real race — a refused turn
+whose CLI outlived the proxy long enough to write is the death's doing, not the code's, and the
+report says so. When there is a regression the report drops the re-run advice and says **`Do NOT
+just re-run`** instead.
+
+### The three negative controls
+
+Run at the end of `run.sh` (`SELFCHECK=0` skips them), all driving case 5 alone. They exist
 because "the report is right" is not something a suite can assert about itself:
 
-1. **The proxy dies.** A watcher `SIGKILL`s the proxy the instant `THREAD_FORK_MISSING` reaches the
-   log — the same moment the reported run lost it, with case 5 waiting on `THREAD_FORK_KILLED`.
-   Requires exit 3, the words `PROXY GONE`, and **no `FAIL` line whatsoever**.
-2. **The behaviour dies.** The mirror: the workspace's proxy copy is edited so `failForkMissing()`
-   is replaced by recording the parent's id — the exact leak case 5 exists to catch — and the proxy
-   is left running. Requires exit 1, no `PROXY GONE`, and `FAIL` lines that name the forking. Case
-   5 is not weakened by any of this; this control is what shows it still bites.
+1. **The proxy dies, and nothing is wrong.** A watcher `SIGKILL`s the proxy the instant
+   `THREAD_FORK_MISSING` reaches the log — the same moment the reported run lost it, with case 5
+   waiting on `THREAD_FORK_KILLED`. Requires exit 3, the words `PROXY GONE`, **no `FAIL` line
+   whatsoever**, no `A REGRESSION WAS IN PLAY`, and the re-run advice still there: this one really
+   is environmental.
+2. **The behaviour dies, and the proxy is fine.** The mirror: the workspace's proxy copy is edited
+   so `failForkMissing()` is replaced by recording the parent's id — the exact leak case 5 exists
+   to catch — and the proxy is left running. Requires exit 1, no `PROXY GONE`, and `FAIL` lines
+   that name the forking. Case 5 is not weakened by any of this; this control is what shows it
+   still bites.
+3. **Both at once.** The same edit as 2 with the same kill as 1. Requires exit 3, `0 check(s) ran`
+   and still no `FAIL` line — and then, from the evidence alone, `A REGRESSION WAS IN PLAY`, the
+   reply named as having reached the main conversation, and `Do NOT just re-run`.
+
+Only the workspace copy under `$WS` is ever edited, and it is restored after each control; the
+shipped `references/bootstrap` proxy is untouched.
 
 ## Why the proxy was dying
 
