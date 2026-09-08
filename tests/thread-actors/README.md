@@ -9,12 +9,16 @@ cd tests/thread-actors
 ./run.sh                 # deterministic, no tokens: fake `claude` on PATH
 REAL_CLAUDE=1 ./run.sh   # also the probes against the real CLI (~8 short haiku turns)
 PORT=3921 ./run.sh       # 3901 is the app's own port; the default here is 3911
+SELFCHECK=0 ./run.sh     # skip the two negative controls below
 ```
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md` (core copy + `npm
 install`, template lesson scaffold), starts the lesson's proxy with `fake-claude/claude` first on
 PATH, and drives `check.cjs` against it, then prints the proxy's thread log lines. `KEEP=1` keeps
-the workspace. Exit code 0 only when every check passes. No dependencies beyond Node.
+the workspace. No dependencies beyond Node.
+
+Exit code 0 only when every check passes — and **3 when the proxy itself went away**, which is a
+different thing from a check failing (1). See "When the proxy dies" below.
 
 `fake-claude/claude` speaks the CLI's `-p` protocol and makes session identity **observable**:
 every invocation appends its `{argv, stdin}` to `$FAKE_STATE/argv.jsonl`, and each session id owns
@@ -48,7 +52,57 @@ Each case opens its own chat and its own thread; none reads state a previous cas
 `--real` (via `REAL_CLAUDE=1`) runs cases 1, 2, 4, 6, 7, 8, 9 and the static half of 11 against the
 real CLI — the ones that prove `--fork-session` actually forks. Cases 3, 5, 10 and the live half of
 11 are fake-only (they need a killable tree, a CLI that refuses to fork, or a fold that costs no
-tokens).
+tokens). `--only 5` (or `--only 1,5`) runs just the numbered cases; the negative controls below use
+it, and every case builds its own state, so any subset is a valid run.
+
+## When the proxy dies
+
+Every case here measures a running proxy, so a proxy that has gone leaves nothing to measure. This
+used to be reported as whatever assertion came next. The run that prompted the change printed
+
+```
+FAIL 5: and killed the turn that was running in the main session
+HARNESS ERROR: TypeError: fetch failed
+```
+
+— a failure about thread forking, when in fact the wait timed out because the proxy was already
+gone and the *next* request is where the connection refused surfaced. Nothing about forking had
+been tested at all, and because the red was read as a known flake, every review that night was
+told to disregard it.
+
+So `check.cjs` now asks one question wherever a run can fail without an answer: **is the proxy
+still there?** Every request goes through `proxyFetch`, every wait that runs out (`waitForLog`,
+`pidResuming`, `waitForInvocation`) and every stream that breaks mid-read calls `proxyDeath()`,
+which probes `/whoami` and reads `server/.proxy.json`. If the proxy answers, nothing changes — the
+wait returns false and the check fails as a real red. If it does not, the run stops with a report
+instead of an assertion, and exits **3**:
+
+```
+PROXY GONE — the proxy under test stopped answering. This run measured nothing about thread behaviour.
+  where:    waited 8000ms for /THREAD_FORK_KILLED/ in chat.log and it never came
+  probe:    GET http://127.0.0.1:3962/whoami — connect ECONNREFUSED 127.0.0.1:3962
+  identity: server/.proxy.json still names pid 1524655, which is not alive — it died without running its exit handler
+  so far:   4 check(s) ran, 0 of them failed — with the proxy gone, none of that is a verdict on this commit.
+  This is NOT a failed assertion about thread forking. ...
+```
+
+`identity` is the useful line: the proxy removes `.proxy.json` on its way out, so the file
+**surviving with a dead pid** means it was killed or crashed, and the file being **gone** means it
+ran its own signal handler — it was asked to stop. `run.sh` adds the half only the parent knows,
+the wait status of the process it started (`killed by signal 9`) and the proxy's own last lines.
+
+### The two negative controls
+
+Run at the end of `run.sh` (`SELFCHECK=0` skips them), both driving case 5 alone. They exist
+because "the report is right" is not something a suite can assert about itself:
+
+1. **The proxy dies.** A watcher `SIGKILL`s the proxy the instant `THREAD_FORK_MISSING` reaches the
+   log — the same moment the reported run lost it, with case 5 waiting on `THREAD_FORK_KILLED`.
+   Requires exit 3, the words `PROXY GONE`, and **no `FAIL` line whatsoever**.
+2. **The behaviour dies.** The mirror: the workspace's proxy copy is edited so `failForkMissing()`
+   is replaced by recording the parent's id — the exact leak case 5 exists to catch — and the proxy
+   is left running. Requires exit 1, no `PROXY GONE`, and `FAIL` lines that name the forking. Case
+   5 is not weakened by any of this; this control is what shows it still bites.
 
 ## Transcripts
 
