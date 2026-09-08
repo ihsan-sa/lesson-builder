@@ -14,14 +14,15 @@
 # seconds one fixture may take before it is killed and counted failed (default 600).
 #
 # Environment: node and git, from a clean checkout. Nothing here calls a model or opens a browser.
-# Six fixtures do need packages: `ast-inventory` and `attestation` install `@babel/parser`,
+# Seven fixtures do need packages: `ast-inventory`, `attestation` and `shell-theme` install
+# `@babel/parser` (the last reads lesson bodies as syntax trees, not as text),
 # `cancellation` and `thread-actors` copy `_lesson-core` and install its express/cors, and
 # `hosted-build` and `shell-reach` each scaffold a lesson and install the template's own devDeps
 # (vite, react, the babel pair; Playwright's browser download is skipped) because they assert on
 # real `vite build` output.
-# All six use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
+# All seven use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
 # registry — that is the one dependency this gate has beyond node and git, and on a cold cache those
-# six fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
+# seven fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
 # Every fixture builds its own temp state and cleans it up; the checkout is not written to.
 # The run points TMPDIR at one directory of its own, so after the last fixture finishes any
 # process still sitting in a directory under it is a proxy or dev server that fixture started
