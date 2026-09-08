@@ -10,8 +10,9 @@ cd tests/shell-theme && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install \
   && SHELL_THEME_BROWSER=/usr/bin/google-chrome ./run.sh    # by hand: press it in a built lesson
 ```
 
-`check.cjs` is node only — no `npm install`, no network, no browser — and runs in well under a
-second. `run.sh` builds one scaffolded lesson twice with `vite build`, once with each of the two
+`check.cjs` needs node and `@babel/parser` — case 5 reads a lesson body as a syntax tree, and the
+parser is installed from the npm cache at the version the lesson template pins, as
+`tests/ast-inventory` installs it. No browser, no network beyond that, about a second. `run.sh` builds one scaffolded lesson twice with `vite build`, once with each of the two
 lesson bodies below, serves both out of `dist/` and drives them with Playwright; `KEEP=1` keeps the
 workspace and the six screenshots (light, dark, the pop-out at both, and the uncontrolled build at
 both). Exit code 0 only when every case passes.
@@ -44,7 +45,7 @@ reads the unmoved colours off the page. Do not "fix" it by adding the props.
 | 2 | `LessonShell.jsx` | exactly one line names a palette class, and it is the one deriving `themeClass` from `theme`; the shell root, the pop-out host and the pop-out's `documentElement` all take that value; an effect keyed on `themeClass` re-applies it to a pop-out that is already open; a **layout** effect keyed on `themeClass` adds the class to the main document's `documentElement` and removes it again |
 | 3 | `shell.css.js` | both theme blocks exist and declare the same token set (fixtures first: a gap in either direction is reported against the block that has it, and one fixture is shaped like the shipped file, header comment and all); no rule outside those blocks writes a colour as a literal; the sheet resets `html, body` and paints them from `--canvas`; the two palettes differ on `--canvas` |
 | 4 | the switch | the `.theme-toggle` label expression evaluates to `Dark` in the light theme and `Light` in the dark one, and the button sits outside the tutor gate |
-| 5 | a lesson's theme wiring | a lesson whose SVG paints from `G` passes `theme` and `onThemeChange` **and** rebinds `G = THEMES_G[theme]`; passing one prop, or both without the rebind, fails; a lesson with no such SVG may leave the theme to the shell; a colour wrapped across a line break is still found, on the line its attribute opens, while the same pattern in prose, help text or a commented-out block is not a site at all and ordinary apostrophes around a real colour do not hide it; `theme_demo.jsx` passes and `theme_uncontrolled.jsx` is flagged |
+| 5 | a lesson's theme wiring | a lesson whose SVG paints from `G` passes `theme` and `onThemeChange` **and** rebinds `G = THEMES_G[theme]`; passing one prop, or both without the rebind, fails; a lesson with no such SVG may leave the theme to the shell; a colour wrapped across a line break is still found, on the line its attribute opens, while the same pattern in prose, help text or a commented-out block is not a site at all and no quoting or punctuation around a real colour hides it; a lesson that does not parse is refused, not reported graph-free; `theme_demo.jsx` passes and `theme_uncontrolled.jsx` is flagged |
 
 Case 1 builds every fixture it asserts on and pins down what the finder lets through as well as what
 it catches. Cases 3 and 5 do the same before they read the shipped files.
@@ -60,34 +61,35 @@ here it guards these two bodies and states the rule. The tag is scanned with bra
 to the first `>`, because `tutor={<Chatbot ... />}` puts a `>` inside a prop value and stopping there
 reports a lesson that does everything right as the trap.
 
-Colour attributes are found over the whole source rather than a line at a time, and one fixture is
-there to keep it that way. A formatter given a long conditional breaks the line after the `{`, so
-`fill={` ends one line and the `G.bg` it reads starts the next — and a per-line scan found no graph
-anywhere in that lesson, passed it, and let this case's own trap through in silence. The fixture
-wraps *every* colour it contains, because one single-line `fill={G.x}` left in would flag the lesson
-by itself and the wrapped ones could go back to being invisible unnoticed.
+**Colour attributes come from a parse of the lesson, not from a scan of its characters.** Four
+scans tried in turn, and each bought one quoting shape and lost the next. A line-at-a-time scan
+lost the colour a formatter had wrapped — `fill={` ends one line and the `G.bg` it reads starts the
+next — and passed a lesson with this case's own trap in it. Reading the whole source instead
+reported help text that says "write `fill={` and then the palette key you want, e.g. `G.bg`" over
+two lines as a graph site, because there is no `}` between the two. Blanking string bodies let
+`the reader's guide` blank every colour below it. Asking what abuts each quote let
+`<text>it's</text><rect fill={G.bg} /><text>Bob's</text>` lose its only site — and still lost it in
+`<text>the '90s</text><rect fill={G.bg} /><text>students' work</text>`, where the first quote opens
+a string JS would accept and the second closes one. That last one is the shape a scan cannot be
+taught: JSX prose is not JavaScript text, so no rule about quotes tells them apart. Only the
+grammar does.
 
-Spanning lines is why the scan has to tell code from text, and three more fixtures are there for
-that. Help text that says "write `fill={` and then the palette key you want, e.g. `G.bg`" over two
-lines has no `}` between the two, so the paragraph reads as one attribute — a lesson that draws
-nothing was reported as a graph site and failed the gate on its prose, which the per-line scan
-could never have done. Comments and the contents of strings and template literals are blanked
-before the scan, one character for one space so line numbers and the printed site still come off
-the real source. Three conditions decide whether a `'` or `"` is a delimiter at all, and each one is
-JS syntax rather than a guess: it must close on its own line, because a string literal cannot hold
-a raw newline; it cannot open a string with a word character right before it, because `x'` is a
-syntax error; and it cannot close one with a word character right after it, because `'x` is. Miss
-the first and an apostrophe in prose — `the reader's guide` — blanks every colour below it. Miss
-the other two and any two apostrophes on a line pair up and blank what sits between them:
-`<text>it's</text><rect fill={G.bg} /><text>Bob's</text>` lost its only graph site, so a lesson
-painting from the palette while passing neither prop audited clean — reported as a success, which
-is worse than the loud false positive the first condition removed. Being wrong on any of the three
-leaves more code visible, never less, so the cost is prose reported as a site rather than a real
-site missed. A `${…}` is handed back as code: ``stroke={`${G.axis}`}`` paints from `G` and stays a
-site. Each fixture asserts both halves — the prose-only lesson is not flagged and the same prose
-beside two real wrapped colours reports those two; the apostrophe does not hide the colour below
-it, the colour between two possessives is still reported, and a real one-line string is still
-text, apostrophes in its body and all.
+So `check.cjs` parses the lesson with `@babel/parser` and reports JSX attributes: a colour name, a
+value that reads `G`. A comment, a string body, a template literal's text and JSX prose stop being
+special cases, because none of them is an attribute; a wrap after the `{` stops mattering, because
+it is the same node either way; ``stroke={`${G.axis}`}`` is still a site, because the interpolation
+is an expression inside the attribute. Three lines decide a site and dropping any one is red at the
+gate — the type test the other two stand on, the name test (`data-palette={G.name}` paints
+nothing), the value test (`fill="#fff"` is a fixed colour). A lesson that does not parse is refused
+rather than reported graph-free, or a file nobody could read would pass the gate in silence.
+
+The fixtures assert both halves throughout, because "ignore prose" must not become "ignore
+everything": the prose-only lesson is not flagged and the same prose beside two real wrapped
+colours reports those two; a real one-line string is still text, apostrophes and escapes in its
+body and all; and every quoting shape above, plus quoted phrases either side of a colour, reports
+that colour and flags the lesson that paints from it while passing neither prop. The wrapped
+fixture wraps *every* colour it contains, because one single-line `fill={G.x}` left in would flag
+the lesson by itself and the wrapped ones could go back to being invisible unnoticed.
 
 Case 3 reads the CSS out of the template literal first, and one of its fixtures is there to keep it
 doing so. The module header is a `//` comment that names both palette classes while explaining

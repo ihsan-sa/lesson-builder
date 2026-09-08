@@ -8,14 +8,19 @@
  * pop-out's host and its <html>; both palettes live in the sheet, so everything styled from the
  * tokens repaints on the class change with nothing re-rendering.
  *
- * This fixture is text-only, and text is enough for three ways that mechanism breaks: a palette
- * class written as a literal somewhere the theme cannot reach it, a token declared in one theme
- * block but not the other, and a lesson that paints an SVG from THEMES_G while leaving the theme
- * to the shell — which gets a dark page with light-palette graphs on it. What text cannot check —
+ * This fixture runs no browser, and reading the source is enough for three ways that mechanism
+ * breaks: a palette class written as a literal somewhere the theme cannot reach it, a token
+ * declared in one theme block but not the other, and a lesson that paints an SVG from THEMES_G
+ * while leaving the theme to the shell — which gets a dark page with light-palette graphs on it.
+ * The sheet and the shell component are read as text; a lesson body is read as a syntax tree,
+ * because telling a colour attribute from prose that mentions one is a question about the
+ * grammar and four scans in a row got it wrong. What no reading of the source can check —
  * that the built page actually paints both ways, uncontrolled lesson and pop-out included — is
  * tests/shell-theme/README.md's by-hand demonstration, tests/shell-theme/run.sh.
  *
- * Node only. No npm install, no network, no browser. Runs in well under a second.
+ * Node plus one dependency: `@babel/parser`, at the version the lesson template pins, because
+ * case 5 reads a lesson body as a syntax tree rather than as text. Installed from the npm cache
+ * the way tests/ast-inventory installs it. No browser, no model. Runs in about a second.
  * Exit code 0 only when every check passes.
  *
  * What the cases assert is in README.md.
@@ -23,7 +28,9 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const SKILL = path.resolve(__dirname, '..', '..');
 const CORE = path.join(SKILL, 'references', 'bootstrap', '_lesson-core');
@@ -130,7 +137,8 @@ function tokenGaps(css) {
 
 // The hook call that mentions `needle`: from the `hook(` that opens it to the `]);` that closes
 // its dependency array. Enough to read what the effect does, what it cleans up and what it is
-// keyed on, without pulling a parser in for four lines of source.
+// keyed on. The parser below is for the lesson bodies case 5 reads; four lines of the shell's
+// own source do not need one.
 function hookBlock(js, hook, needle) {
   const at = js.indexOf(needle);
   if (at === -1) return null;
@@ -152,14 +160,16 @@ function hookBlock(js, hook, needle) {
 // That lesson gets a dark page with light-palette graphs on it, which is what both lessons
 // on the shell ship today.
 //
-// What text can see: which props the <LessonShell> tag carries, whether any JSX colour
-// attribute reads G, and whether some line rebinds G from a theme. What it cannot see is
+// What the source can show: which props the <LessonShell> tag carries, whether any JSX colour
+// attribute reads G, and whether some line rebinds G from a theme. What it cannot show is
 // whether the value handed to theme= is really state, or whether the rebind runs on every
 // render — browser.cjs reads those off a real page.
 
-// The opening <LessonShell ...> tag as text. Scanned with brace depth rather than to the
-// first `>`: `tutor={<Chatbot ... />}` puts a `>` inside a prop value, and stopping there
-// reads a lesson's props as ending before `theme=` is ever reached.
+// The opening <LessonShell ...> tag as text — this one asks which props a tag carries, not
+// whether a run of characters is code, so it is not the question the parse below answers.
+// Scanned with brace depth rather than to the first `>`: `tutor={<Chatbot ... />}` puts a `>`
+// inside a prop value, and stopping there reads a lesson's props as ending before `theme=` is
+// ever reached.
 function shellPropsTag(js) {
   const at = js.indexOf('<LessonShell');
   if (at === -1) return null;
@@ -173,137 +183,103 @@ function shellPropsTag(js) {
   return null;
 }
 
-// A quote is only a string's delimiter where JS would let one stand. Three conditions decide
-// that, all three syntax rather than guesswork; these two are the pair about what abuts the
-// quote, and `closingQuote` below carries the third, that the string must close on its line.
-// An identifier character joined to the quote on the INSIDE of the would-be string makes the
-// code a syntax error, so the quote is an apostrophe instead:
-//   `x'` cannot OPEN a string  — the quote after the `b` in `Bob's` is not a delimiter.
-//   `'x` cannot CLOSE one      — the quote before the `s` in `it's` is not one either.
-// Pairing any two quotes on a line without asking either question blanked whatever sat between
-// them: `<text>it's</text><rect fill={G.bg} /><text>Bob's</text>` lost its only graph site, so a
-// lesson painting from the palette while passing neither theme prop audited clean — silently, and
-// this check exists to catch exactly that lesson.
-// Getting either question wrong leaves MORE code visible, never less, so the cost is prose
-// reported as a site — loud, and stopped at the gate — not a real site missed without a word.
-const IDENT = /[A-Za-z0-9_$]/;
-const opensString = (js, at) => at === 0 || !IDENT.test(js[at - 1]);
-const closesString = (js, at) => at + 1 >= js.length || !IDENT.test(js[at + 1]);
+// ── Code or running text: a question for the grammar ───────────────────────
+// Four hand-written answers to it each bought one quoting shape and lost the next. A line-at-a-time
+// scan lost a colour a formatter had wrapped. Scanning the whole source reported help text that
+// only MENTIONS `fill={ … G.bg` as a graph site. Blanking string bodies let `the reader\'s guide`
+// blank every colour below it. Asking what abuts each quote let
+// `<text>it\'s</text><rect fill={G.bg} /><text>Bob\'s</text>` lose its only site — and still lost it
+// in `<text>the \'90s</text><rect fill={G.bg} /><text>students\' work</text>`, where the quote before
+// the colour opens a string JS would accept and the one after it closes one, so the colour is
+// blanked and a lesson that paints from the palette while passing neither theme prop audits clean.
+// Silently: nothing is printed and the check reports success, which is the failure this file exists
+// to stop.
+//
+// There is no fifth quote rule here. JSX prose is not JavaScript text, so no rule about quotes can
+// tell the two apart; only the grammar can. The lesson is parsed, and a comment, a string body, a
+// template literal\'s text and JSX prose stop being special cases — none of them is a JSXAttribute.
 
-// The index of the quote closing the one at `open`, or -1 when the line ends first — which means
-// the quote never opened a string at all. Quotes that `closesString` rules out are skipped over,
-// not stopped at, so `it's` inside a real string does not end it early.
-function closingQuote(js, open) {
-  const q = js[open];
-  for (let i = open + 1; i < js.length; i++) {
-    if (js[i] === '\n') return -1;
-    if (js[i] === '\\') { i++; continue; }
-    if (js[i] === q && closesString(js, i)) return i;
+// The parser, brought in the way tests/ast-inventory brings it: the version the lesson template
+// pins, from the npm cache when it is warm. One install for the run, in a directory of this
+// fixture\'s own, removed on exit.
+function loadParser() {
+  const pkg = JSON.parse(fs.readFileSync(
+    path.join(SKILL, 'references', 'bootstrap', 'lesson-template', 'package.json'), 'utf8'));
+  const spec = `@babel/parser@${pkg.devDependencies['@babel/parser']}`;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shell-theme-deps-'));
+  process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"name":"shell-theme-deps","private":true}\n');
+  const r = spawnSync('npm', ['install', '--no-save', '--silent', '--prefer-offline', spec],
+    { cwd: root, encoding: 'utf8' });
+  if (r.status !== 0) {
+    process.stderr.write(`could not install ${spec}:\n${r.stderr || r.stdout}\n`);
+    process.exit(1);
   }
-  return -1;
+  return require(path.join(root, 'node_modules', '@babel', 'parser'));
+}
+const parser = loadParser();
+
+// The lesson as a syntax tree. A source that does not parse THROWS: answering "no graph sites"
+// for a file nobody could read would be this check reporting success on a lesson it never saw,
+// which is the same silent pass one level up.
+function parseLesson(js) {
+  try {
+    return parser.parse(js, { sourceType: 'module', plugins: ['jsx'] });
+  } catch (e) {
+    throw new Error(`the lesson does not parse: ${e.message}`);
+  }
 }
 
-// Comments AND the contents of string and template literals blanked, in one left-to-right pass,
-// with newlines kept so line numbers still line up. Only `graphColourSites` reads this:
-// `themeClassSites` and the CSS case must go on seeing `className="lesson-shell theme-light"`,
-// which lives inside a string.
-//
-// Both in one pass because they interleave: an apostrophe in a comment ("// don't") would open a
-// string for a strings-first pass, and a `//` inside a string would open a comment for a
-// comments-first one — either way the rest of the file is blanked and a real graph site below it
-// disappears. `${…}` interpolations are handed back as code, so `stroke={`${G.axis}`}` is still
-// found; the `${` may itself hold another template literal, hence the stack.
-//
-// A `'` or `"` only opens a string when its partner is on the same line, because a JS string
-// literal cannot hold a raw newline. Ordinary JSX prose can hold an apostrophe — `the reader's
-// guide` — and reading that as a string blanked the rest of the file, taking every real graph
-// site under it with it. A backtick has no such bound: a template literal is meant to span lines.
-//
-// Not a JS parser: a regex literal holding a quote or a `//` is read as one, the same blind spot
-// `stripJsComments` has always had. A lesson body has no such regex, and the cost of being wrong
-// is a site missed in a fixture, which the cases below would show.
-function stripJsCommentsAndStrings(js) {
-  const out = js.split('');
-  const blank = (i) => { if (i < out.length && out[i] !== '\n') out[i] = ' '; };
-  // One frame per template literal we are inside. `braces` is -1 while we are in the literal's
-  // text and counts the `{`s open once a `${` puts us back in code.
-  const tmpl = [];
-  let i = 0;
-  while (i < js.length) {
-    const c = js[i];
-    if (tmpl.length && tmpl[tmpl.length - 1].braces < 0) {          // template literal text
-      if (c === '\\') { blank(i); blank(i + 1); i += 2; continue; }
-      if (c === '`') { tmpl.pop(); i++; continue; }
-      if (c === '$' && js[i + 1] === '{') { tmpl[tmpl.length - 1].braces = 0; i += 2; continue; }
-      blank(i); i++; continue;
-    }
-    // Code, either at the top level or inside a `${…}`.
-    if (c === '/' && js[i + 1] === '/' && js[i - 1] !== ':') {       // `://` in JSX text is a URL
-      while (i < js.length && js[i] !== '\n') { blank(i); i++; }
-      continue;
-    }
-    if (c === '/' && js[i + 1] === '*') {
-      blank(i); blank(i + 1); i += 2;
-      while (i < js.length && !(js[i] === '*' && js[i + 1] === '/')) { blank(i); i++; }
-      blank(i); blank(i + 1); i += 2;
-      continue;
-    }
-    if (c === '`') { tmpl.push({ braces: -1 }); i++; continue; }
-    if (c === "'" || c === '"') {
-      const end = opensString(js, i) ? closingQuote(js, i) : -1;
-      if (end === -1) { i++; continue; }                            // an apostrophe in prose
-      for (let k = i + 1; k < end; k++) blank(k);                   // delimiters kept
-      i = end + 1;
-      continue;
-    }
-    if (tmpl.length) {
-      const top = tmpl[tmpl.length - 1];
-      if (c === '{') top.braces++;
-      else if (c === '}') {
-        if (top.braces === 0) { top.braces = -1; i++; continue; }    // end of the `${…}`
-        top.braces--;
-      }
-    }
-    i++;
+/** Every node in the tree, parents before children — scripts/lesson-ast.cjs\'s walk. */
+function walk(node, visit) {
+  if (!node || typeof node.type !== 'string') return;
+  visit(node);
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'extra' || key.endsWith('Comments')) continue;
+    const v = node[key];
+    if (Array.isArray(v)) {
+      for (const c of v) if (c && typeof c.type === 'string') walk(c, visit);
+    } else if (v && typeof v.type === 'string') walk(v, visit);
   }
-  return out.join('');
+}
+
+// Does this subtree read the graph palette binding — `G.bg`, `G[key]`, `` `${G.axis}` ``? Asked of
+// the attribute\'s value, so a string literal answers no on its own: `fill="none"` holds no member
+// expression, and neither does a lesson\'s prose.
+function readsPalette(node) {
+  let found = false;
+  walk(node, (n) => {
+    if (n.type === 'MemberExpression' && n.object.name === 'G') {
+      found = true;
+    }
+  });
+  return found;
 }
 
 // Every JSX colour attribute whose value reads the graph palette binding: fill={G.bg},
-// stroke={G.gold}, stopColor={G.axis}. These are attributes on the rendered SVG, so no class
-// swap reaches them.
+// stroke={G.gold}, stopColor={G.axis}. These are attributes on the rendered SVG, so no class swap
+// reaches them.
 //
-// Scanned over the whole source, NOT a line at a time. A formatter handed a long conditional
-// breaks the line after the `{`, leaving `fill={` on one line and the `G.bg` it reads on the
-// next; a per-line scan then found no graph anywhere in that lesson and passed it, which is
-// this check's own trap slipping past it. The value pattern spans newlines but stops at the
-// first `}`, so it cannot run on past the end of one attribute into another.
+// Three lines decide it and dropping any one of them is red at the gate. The first is the type
+// test the other two stand on: without it the walk hands them nodes that have no `name` and the
+// run dies on its first fixture — loudly, which is the point. The second is the attribute's name
+// (`data-palette={G.name}` paints nothing) and the third is its value (`fill="#fff"` is a fixed
+// colour); each of those has a fixture in case 5 that goes red on its own. WHERE the attribute is
+// written decides nothing and is never asked, because the parse has already answered it.
 //
-// Scanned over CODE, though, not over the file: comments and the contents of strings and
-// template literals are blanked first. Spanning newlines is what makes that necessary — a
-// lesson whose help text says "write fill={ ... G.bg" over two lines has no `}` between the
-// two, so the whole paragraph reads as one attribute and a lesson that draws nothing gets
-// reported as a graph site and fails the gate. A per-line scan could not make that mistake,
-// and this is the price of fixing the one it did make.
-//
-// The `\s*` sits after the `=` only: a formatter may break there, but nothing writes
-// `fill = {` in JSX, and allowing a space before the `=` would make a plain `const fill = {`
-// object literal a graph site. One entry per attribute, reported on the line it opens, so a
-// failure prints the site rather than a count.
+// A formatter that breaks the line after the `{` changes none of this: `fill={` and the `G.bg` on
+// the next line are one attribute node either way. One entry per attribute, on the line the
+// attribute opens, printed from the caller\'s own source with the wrap flattened, so a failure
+// prints the site rather than a count.
+const COLOUR_ATTRS = new Set(['fill', 'stroke', 'color', 'stopColor', 'floodColor']);
 function graphColourSites(js) {
-  const src = stripJsCommentsAndStrings(js);
-  const re = /\b(?:fill|stroke|color|stopColor|floodColor)=\s*\{[^}]*?\bG\.[^}]*\}?/g;
   const out = [];
-  let m;
-  while ((m = re.exec(src))) {
-    out.push({
-      line: src.slice(0, m.index).split('\n').length,
-      // Sliced out of the ORIGINAL source, not the blanked copy: the blanking swaps one
-      // character for one space, so the offsets are the same in both, and a failure prints
-      // `fill={cond === "hi" ? ...}` as it is written rather than with its strings emptied.
-      text: js.slice(m.index, m.index + m[0].length).replace(/\s+/g, ' ').trim(),
-    });
-  }
+  walk(parseLesson(js), (n) => {
+    if (n.type !== 'JSXAttribute') return;
+    if (!COLOUR_ATTRS.has(n.name.name)) return;
+    if (!readsPalette(n.value)) return;
+    out.push({ line: n.loc.start.line, text: js.slice(n.start, n.end).replace(/\s+/g, ' ').trim() });
+  });
   return out;
 }
 
@@ -591,8 +567,9 @@ function buttonLabel(js, cls) {
     // TALKS about the pattern. Help text saying "write fill={ ... G.bg" over two lines has no
     // `}` between the two, so the whole paragraph reads as one attribute — and a lesson that
     // draws nothing at all was reported as a graph site and failed the gate on its prose. A
-    // per-line scan could not make this mistake; blanking comments and string contents before
-    // the scan is what buys back the difference between code and text.
+    // per-line scan could not make this mistake; parsing is what buys back the difference between
+    // code and text, and it costs nothing here — the help text is a template literal and the
+    // block below it is a comment, so neither holds a JSXAttribute.
     const proseText = 'const HELP = `\n'
       + '  Paint the rect with fill={ and then the palette key\n'
       + '  you want, e.g. G.bg — a class swap cannot reach an attribute.\n'
@@ -633,8 +610,8 @@ function buttonLabel(js, cls) {
       graphColourSites(apostrophe).length, 1);
     check('so a lesson with prose above its graph is still flagged for the props',
       !graphThemeAudit(apostrophe + mount('')).ok, auditDetail(graphThemeAudit(apostrophe + mount(''))));
-    // And the other half, or "only a string when it closes on its line" would just be "never a
-    // string": a real single-quoted string on one line is still text.
+    // And the other half, or "prose is not a string" would just be "nothing is a string": a real
+    // single-quoted string is still text, pattern and all.
     const quotedProse = 'let G = THEMES_G.light;\n'
       + "const HINT = 'write fill={ and then the key you want, e.g. G.bg';\n"
       + 'const T = () => <p>{HINT}</p>;\n';
@@ -657,9 +634,9 @@ function buttonLabel(js, cls) {
     const possessiveAudit = graphThemeAudit(possessives + mount(''));
     check('so a lesson painting between possessives and passing neither prop is flagged',
       !possessiveAudit.ok, auditDetail(possessiveAudit));
-    // The suppressed half, without which "a quote never opens a string" would pass the two above:
-    // a real one-line string is still text when its body holds an apostrophe — as a possessive in
-    // a double-quoted body, and as a `\'` escape in a single-quoted one.
+    // The suppressed half, without which "ignore what the quotes say" would just be "ignore
+    // nothing": a real one-line string is still text when its body holds an apostrophe — as a
+    // possessive in a double-quoted body, and as a `\'` escape in a single-quoted one.
     const apostropheStrings = 'let G = THEMES_G.light;\n'
       + 'const HINT = "the author\'s note: write fill={ and then G.bg, e.g. Bob\'s key";\n'
       + "const NOTE = 'the reader\\'s guide says fill={ and then G.bg';\n"
@@ -674,8 +651,75 @@ function buttonLabel(js, cls) {
     eq('…while a real one-line string holding apostrophes is still read as text',
       graphColourSites(apostropheStrings).length, 0);
 
-    // A `${…}` is code, not text. Blanking a template literal whole would lose a colour built
-    // this way, which is a real graph site the gate has to keep catching.
+    // The shape the last fix left behind, and why this finder parses instead of scanning. Asking
+    // what abuts each quote is still a rule about quotes, and JSX prose is not JS text: in
+    // `<text>the '90s</text><rect fill={G.bg} /><text>students' work</text>` the first quote opens
+    // a string JS would accept and the second closes one, so everything between them — the only
+    // colour on the page — was blanked, and the lesson painting from the palette while passing
+    // neither prop audited clean. Silently, which is the failure this file exists to stop.
+    //
+    // Every shape below has hidden a colour from this check or would have next. Each is one line of
+    // a lesson carrying exactly one real colour, and each must report that colour and flag the
+    // lesson: punctuation around a site decides nothing.
+    const punctuated = {
+      'a quotation opened before it and closed after it':
+        '<text>He said "the fill is</text><rect fill={G.bg} /><text>green"</text>',
+      'the same quotation in single quotes':
+        "<text>he said 'the fill is</text><rect fill={G.bg} /><text>green'</text>",
+      'a decade before it and a plural possessive after':
+        "<text>the '90s</text><rect fill={G.bg} /><text>students' work</text>",
+      'a quoted phrase either side':
+        '<text>the "big" one</text><rect fill={G.bg} /><text>a "small" one</text>',
+      'a quoted word carrying a plural s':
+        '<text>two "fill"s</text><rect fill={G.bg} /><text>the "end"</text>',
+      'a contraction either side': "<text>it's</text><rect fill={G.bg} /><text>Bob's</text>",
+      'an apostrophe that opens no string': "<text>'tis the season</text><rect fill={G.bg} />",
+      'a real JSX string attribute beside prose quotes':
+        '<text x="1">a "b"</text><rect fill={G.bg} /><text>c "d"</text>',
+    };
+    for (const [what, body] of Object.entries(punctuated)) {
+      // Each fixture only bites while the quoting really does reach the colour: a quote on the
+      // same line, ahead of the attribute, is what every scan here has choked on.
+      check(`the fixture with ${what} really does quote ahead of its colour`,
+        /["'][^\n]*fill=\{G\.bg\}/.test(body), body);
+      const lesson = `let G = THEMES_G.light;\nconst T = () => (\n  <svg>\n    ${body}\n  </svg>\n);\n`;
+      const sites = graphColourSites(lesson);
+      check(`a real colour is found with ${what}`,
+        sites.length === 1 && sites[0].text === 'fill={G.bg}', JSON.stringify(sites));
+      const audit = graphThemeAudit(lesson + mount(''));
+      check(`…and the lesson with ${what}, passing neither prop, is flagged`,
+        !audit.ok, auditDetail(audit));
+    }
+
+    // What decides a site, and what each of the deciding lines in graphColourSites is worth. The
+    // first fixture is why the finder can stop asking WHERE a run of characters sits: a text scan
+    // read the `fill={` in this object literal as an attribute, and a rule about the space before
+    // the `=` was all that stood between it and a false site. The other two are the fixtures for
+    // the name test and the value test — drop either line and its own fixture goes red.
+    const objectLiteral = 'let G = THEMES_G.light;\n'
+      + 'const fill={ hue: G.bg };\nconst T = () => <p>{fill.hue}</p>;\n';
+    eq('an object literal is not a JSX attribute, so not a graph site',
+      graphColourSites(objectLiteral).length, 0);
+    const notAColour = 'let G = THEMES_G.light;\n'
+      + 'const T = () => <rect data-palette={G.name} />;\n';
+    eq('an attribute that names the palette without painting from it is not a site',
+      graphColourSites(notAColour).length, 0);
+    const fixedColour = 'let G = THEMES_G.light;\n'
+      + 'const T = () => <rect fill="#fff" stroke={theme.axis} />;\n';
+    eq('a colour attribute that does not read G is not a site',
+      graphColourSites(fixedColour).length, 0);
+
+    // And the answer for a lesson nobody can parse is not "no graphs". Reporting zero sites for a
+    // file this check never read is the same silent pass, one level up: the lesson would leave the
+    // theme to the shell with the gate\'s blessing.
+    const unparseable = 'const T = () => (<svg><rect fill={G.bg} />;\n';
+    let refusal = null;
+    try { graphColourSites(unparseable); } catch (e) { refusal = e.message; }
+    check('a lesson that does not parse is refused, not reported as graph-free',
+      refusal !== null && /does not parse/.test(refusal), JSON.stringify(refusal));
+
+    // A `${…}` is code, not text, and the parse says so: the interpolation is an expression
+    // inside the attribute. Treating a template literal as text whole loses this real graph site.
     const interpolated = 'let G = THEMES_G.light;\n'
       + 'const T = () => <rect fill={`${G.bg}`} />;\n';
     eq('a colour built inside a template interpolation is still a graph site',
