@@ -14,6 +14,16 @@
 // reported as its own outcome instead of as the assertion that happened to be
 // next in line. See ProxyGone below and the report at the bottom.
 //
+// Exit 3 does not mean "we learned nothing", and the report must not read that
+// way: a run that says only "re-run" teaches the reader that a red from this
+// suite means nothing, which is how the original flake sat for days. So the
+// report also names the case that was in flight, and — where the case has
+// registered one — reads the marks that case left on disk, which the proxy's
+// death does not erase. If those show the behaviour was already broken, the
+// report says a regression was in play and says NOT to just re-run. If they do
+// not, it says so too, and the run reads as environmental. See `evidence`,
+// forkLeakEvidence (case 5's) and report().
+//
 // Each case builds its own chat and its own thread: nothing here reads state a
 // previous case happened to leave behind, so a case can be read — and a
 // failure understood — on its own.
@@ -30,7 +40,15 @@ const FAKE_STATE = process.env.FAKE_STATE;
 // --only 5, or --only 1,5. No flag runs every case.
 const onlyAt = process.argv.indexOf("--only");
 const ONLY = onlyAt >= 0 ? new Set((process.argv[onlyAt + 1] || "").split(",").map((s) => s.trim())) : null;
-const runs = (n) => !ONLY || ONLY.has(String(n));
+// Which case the run is inside, so a proxy that dies mid-run can be reported
+// against the case that was in flight instead of only as "the proxy is gone".
+// Recorded here because every case begins with `runs(n)`.
+let flight = null;
+const runs = (n) => { const yes = !ONLY || ONLY.has(String(n)); if (yes) flight = { n, subject: null, probe: null }; return yes; };
+// The evidence a case leaves OUTSIDE the proxy — files that are still there
+// once it is gone. A case registers this as soon as the state the probe needs
+// exists; only report() reads it, and only when the proxy died in that case.
+const evidence = (subject, probe) => { if (flight) { flight.subject = subject; flight.probe = probe; } };
 
 let failures = 0, checks = 0;
 const ok = (cond, msg) => { checks++; console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
@@ -151,10 +169,13 @@ async function pidResuming(sid, timeoutMs = 10000) {
 }
 
 // One /chat turn, read to the end. Returns { events, text, ended }.
-async function turn(sessionId, message) {
+// `into` is an array the caller already holds, filled as the events arrive
+// rather than returned at the end — the only way a turn the proxy died under
+// still says what it had received, since it never returns at all.
+async function turn(sessionId, message, into) {
   const res = await proxyFetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
-  if (!res.ok) return { status: res.status, events: [], text: "", body: await res.json().catch(() => ({})) };
-  const events = await readStream(res, () => {});
+  if (!res.ok) return { status: res.status, events: into || [], text: "", body: await res.json().catch(() => ({})) };
+  const events = await readStream(res, () => {}, into);
   const done = events.find((e) => e.event === "done");
   return { status: 200, events, text: done ? done.data.text : events.filter((e) => e.event === "text").map((e) => e.data.text).join("") };
 }
@@ -210,6 +231,52 @@ const newChat = async () => {
   if (r.status !== 200 || !r.body.sessionId) throw new Error("/session/init failed: " + JSON.stringify(r));
   return r.body.sessionId;
 };
+
+// ---------------------------------------- case 5's evidence, with no proxy left
+// A thread turn the CLI answered as the MAIN session leaves three marks that do
+// not need the proxy alive to be read, so a run the proxy dies under can still
+// say whether the leak case 5 exists for was in play:
+//
+//   * chat.log holds THREAD_FORK_MISSING, written the moment the proxy saw the
+//     unforked id — so we know the run reached the state case 5 is about;
+//   * the proxy refuses such a turn by ending it `error`, and `seen` is the
+//     events this run had received, so "did anything stop this turn" is
+//     answerable even though the turn never returned;
+//   * the CLI is not a child the proxy's death reaps. A turn nothing stopped
+//     runs on and appends its reply to the MAIN session's transcript ~3s later
+//     (fake-claude, NOFORK). That reply, on disk, is the leak itself.
+async function forkLeakEvidence(mainId, logAt, seen) {
+  const missing = /THREAD_FORK_MISSING/.test(chatLog().slice(logAt));
+  const refused = seen.some((e) => e.event === "error");
+  const hist = path.join(FAKE_STATE || "", "hist-" + mainId + ".txt");
+  const leakedNow = () => { try { return /ack: \[THREAD:t9/.test(fs.readFileSync(hist, "utf8")); } catch (_) { return false; } };
+  // Past fake-claude's own 3s NOFORK answer, because before that its silence
+  // says nothing: the reply had not been due yet either way.
+  let leaked = false;
+  for (const t = Date.now(); !leaked && Date.now() - t < 5000;) { leaked = leakedNow(); if (!leaked) await sleep(250); }
+  return {
+    found: [
+      missing ? "the proxy logged THREAD_FORK_MISSING — the CLI answered as the main session instead of forking"
+              : "the proxy had not logged THREAD_FORK_MISSING — the CLI had not yet said which session it was answering as",
+      refused ? "the turn ended `error` — the proxy refused it, which is what case 5 requires of it"
+              : "no `error` event ever reached this run — nothing seen here refused the turn",
+      leaked
+        ? (refused
+            ? `the reply still reached the main conversation (${hist}) — the proxy was killed before it finished stopping a turn it had already refused, so that is the death's doing`
+            : `AND the thread's reply is now in the main conversation's transcript (${hist})`)
+        : `no reply from that turn reached the main conversation (watched ${hist} for 5s, past the CLI's own 3s answer)`,
+    ],
+    // The leak, spelled out: the proxy saw the unforked id, nothing refused the
+    // turn, and its reply landed in the main conversation. `!refused` is the
+    // load-bearing clause — brief: "a run whose proxy dies with no regression
+    // present ... does not accuse the behaviour under test". failForkMissing
+    // SIGTERMs the CLI and a mid-case kill takes the proxy ~100ms later, so a
+    // REFUSED turn whose CLI outlived the proxy long enough to write is the
+    // death's doing, not the code's. Both orders happen; only this tells them
+    // apart.
+    regression: missing && !refused && leaked,
+  };
+}
 
 (async () => {
   const { isPickable, insertFoldCard, pendingFolds, settleFolds } = await import(require("url").pathToFileURL(path.join(CORE_DIR, "chat", "turnState.js")).href);
@@ -411,7 +478,14 @@ const newChat = async () => {
     const logAt = chatLog().length;
     await turn(main, "FACT-E: this fixture is about limits.");
     const handle = (await post("/thread/open", { sessionId: main, threadId: "t9" })).body.threadSessionId;
-    const nofork = await turn(handle, threadMsg("t9", "NOFORK-PROBE the CLI answers as the parent session"));
+    // Registered BEFORE the turn that can kill the run, and given `seen` so it
+    // can read a turn that never returns. If the proxy dies from here on,
+    // report() asks this whether the leak was in play rather than only saying
+    // the proxy is gone. See forkLeakEvidence.
+    const seen = [];
+    evidence("a thread turn whose CLI answered as the MAIN session — the proxy must stop it before its reply reaches the main conversation",
+      () => forkLeakEvidence(main, logAt, seen));
+    const nofork = await turn(handle, threadMsg("t9", "NOFORK-PROBE the CLI answers as the parent session"), seen);
     const first = invocations().slice(-1)[0];
     ok(resumedIn(first) === main && forkedIn(first), "5: the turn did ask for a fork");
     ok(nofork.events.some((e) => e.event === "error"), "5: the thread's turn ends `error` — not a normal-looking reply the student would trust");
@@ -647,20 +721,49 @@ const newChat = async () => {
 // the process this suite measures went away, so the checks that did run are
 // not a verdict on the commit and the ones that did not run are not a silence
 // about it — which is the whole point: this must not read like a thread-forking
-// failure. Anything else is a harness error and reads as one.
-function report(e) {
+// failure. But it must not read like nothing either, so it goes on to name the
+// case in flight and, if that case registered an `evidence` probe, what that
+// case left on disk — which is where "was a regression in play as well?" is
+// answered. Anything else is a harness error and reads as one.
+let reported = false;
+async function report(e) {
+  if (reported) return;
+  reported = true;
   if (!(e instanceof ProxyGone)) { console.error("HARNESS ERROR:", e); process.exit(2); }
   const r = e.report;
-  console.error([
+  const out = [
     "",
-    "PROXY GONE — the proxy under test stopped answering. This run measured nothing about thread behaviour.",
+    "PROXY GONE — the proxy under test stopped answering. No assertion in this run is a verdict on thread behaviour.",
     `  where:    ${r.where}`,
     `  probe:    GET ${BASE}/whoami — ${r.probe}`,
     `  identity: ${r.identity}`,
     `  so far:   ${checks} check(s) ran, ${failures} of them failed — with the proxy gone, none of that is a verdict on this commit.`,
-    "  This is NOT a failed assertion about thread forking. Re-run the suite; if it recurs, the proxy is dying and that is the bug.",
-    "",
-  ].join("\n"));
+  ];
+  // What was in flight, and what it left on disk. A report with only "re-run"
+  // in it teaches the reader that a red from this suite means nothing — which
+  // is how the original flake sat for days. Assertions are not the only
+  // evidence a run has: the marks a case leaves outlive the proxy, and they
+  // are what say whether a regression was in play as well.
+  let ev = null;
+  if (flight) {
+    out.push(`  in flight: case ${flight.n}${flight.subject ? ` — ${flight.subject}` : " (see check.cjs for what it covers)"}`);
+    if (flight.probe) {
+      try { ev = await flight.probe(); } catch (err) { out.push(`  evidence:  case ${flight.n} left evidence that could not be read: ${err.message}`); }
+    }
+  }
+  if (ev) {
+    out.push(`  evidence:  what case ${flight.n} left behind, which needs no proxy to read:`);
+    for (const line of ev.found) out.push(`               - ${line}`);
+  }
+  if (ev && ev.regression) {
+    out.push(`  A REGRESSION WAS IN PLAY. The behaviour case ${flight.n} covers was already broken when the proxy went away,`,
+             "  and the evidence above is on disk, not an assertion that needs the proxy back. Do NOT just re-run:",
+             `  read case ${flight.n} and fix what it names first, then re-run to find out whether the proxy also has a problem.`);
+  } else {
+    if (ev) out.push("  Nothing case " + flight.n + " left behind accuses the behaviour under test.");
+    out.push("  This is NOT a failed assertion about thread forking. Re-run the suite; if it recurs, the proxy is dying and that is the bug.");
+  }
+  console.error([...out, ""].join("\n"));
   process.exit(3);
 }
 // startTurn keeps reading its stream in the background, so a socket that dies

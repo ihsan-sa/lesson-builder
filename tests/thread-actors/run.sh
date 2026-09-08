@@ -4,18 +4,21 @@
 # starts the lesson's proxy with tests/thread-actors/fake-claude first on PATH
 # and drives check.cjs against it. See README.md.
 #
-# After the suite it runs two negative controls, which are what make its
-# reporting believable rather than claimed. One kills the proxy in the middle of
-# case 5, at the instant the reported flake lost it, and requires the run to
-# name the proxy and NOT print a failure about thread forking. The other leaves
-# the proxy up and breaks what case 5 tests, and requires the opposite: red,
-# naming the forking, and no mention of the proxy. `SELFCHECK=0` skips both.
+# After the suite it runs three negative controls, which are what make its
+# reporting believable rather than claimed. Control 1 kills the proxy in the
+# middle of case 5, at the instant the reported flake lost it, and requires the
+# run to name the proxy and NOT print a failure — or an accusation — about
+# thread forking. Control 2 leaves the proxy up and breaks what case 5 tests,
+# and requires the opposite: red, naming the forking, and no mention of the
+# proxy. Control 3 does BOTH at once — the case that used to report neither —
+# and requires the report to name the leak from what is on disk, with no
+# assertion having run and the proxy already gone. `SELFCHECK=0` skips all three.
 #
 #   REAL_CLAUDE=1   also run the isolation + fold probes against the real
 #                   `claude` (spends tokens: ~8 short haiku turns)
 #   PORT=<n>        proxy port (default 3911 — 3901 is the app's own).
-#                   The controls use PORT+2 and PORT+3.
-#   SELFCHECK=0     skip the two negative controls
+#                   The controls use PORT+2, PORT+3 and PORT+4.
+#   SELFCHECK=0     skip the three negative controls
 #   KEEP=1          keep the temp workspace for inspection
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); SKILL=$(cd "$HERE/../.." && pwd); B="$SKILL/references/bootstrap"
@@ -122,31 +125,52 @@ if [ -n "${REAL_CLAUDE:-}" ]; then
 fi
 
 # ----------------------------------------------------------- negative controls
-# Both drive case 5 alone (`--only 5`) against a proxy started for the purpose,
-# and both are about the OUTPUT, not the exit code: what a person reads when the
-# run goes red has to be the reason it went red. Last, because the second one
-# edits the workspace's copy of the proxy.
+# All three drive case 5 alone (`--only 5`) against a proxy started for the
+# purpose, and all three are about the OUTPUT, not the exit code: what a person
+# reads when the run goes red has to be the reason it went red. Last, because
+# two of them edit the workspace's copy of the proxy.
 SC_FAIL=0
 sc() { # $1 = condition already evaluated by the caller as "" / "no", $2 = message
   if [ "$1" = ok ]; then echo "PASS $2"; else echo "FAIL $2"; SC_FAIL=$((SC_FAIL + 1)); fi
 }
+# SIGKILL the running proxy the instant THREAD_FORK_MISSING reaches chat.log —
+# the instant the reported run lost it, with case 5's turn still in flight.
+# SIGKILL because a crash is what happened: it leaves .proxy.json behind, and
+# reading that back is part of what the report says. Used by controls 1 and 3,
+# which differ only in whether the leak is live underneath it.
+WATCHER=""
+kill_proxy_on_fork_missing() {
+  local target=$PROXY_PID
+  ( for _ in $(seq 1 600); do
+      if grep -q THREAD_FORK_MISSING "$L/server/chat.log" 2>/dev/null; then kill -9 "$target" 2>/dev/null; exit 0; fi
+      sleep 0.1
+    done ) & WATCHER=$!
+}
+reap_watcher() { [ -n "$WATCHER" ] || return 0; kill "$WATCHER" 2>/dev/null || true; wait "$WATCHER" 2>/dev/null || true; WATCHER=""; }
+# The real forking leak, put back: the proxy records the id the CLI answered
+# with even when it equals the parent's, which is what case 5 exists to catch.
+# It edits the THROWAWAY copy under $WS and puts it back after — #39's fix in
+# the shipped references/bootstrap proxy is never touched. Used by controls 2
+# and 3.
+break_fork_guard() {
+  cp "$WS/_lesson-core/server/proxy.js" "$WS/proxy.js.orig"
+  sed -i 's|return failForkMissing();|session.cliSessionId = parsed.session_id;|' "$WS/_lesson-core/server/proxy.js"
+  ! cmp -s "$WS/proxy.js.orig" "$WS/_lesson-core/server/proxy.js" || { echo "could not break the proxy — the sed target moved"; exit 1; }
+}
+restore_fork_guard() { cp "$WS/proxy.js.orig" "$WS/_lesson-core/server/proxy.js"; }
 if [ "${SELFCHECK:-1}" != 0 ]; then
   echo
-  echo "=== negative control 1: the proxy dies mid-case-5 ==="
-  # Killed at the instant the reported run lost it: THREAD_FORK_MISSING is in
-  # the log and case 5 is waiting for THREAD_FORK_KILLED, which will now never
-  # come. SIGKILL because a crash is what happened — it leaves .proxy.json
-  # behind, and reading that back is part of what the report says.
+  echo "=== negative control 1: the proxy dies mid-case-5, with nothing wrong ==="
+  # THREAD_FORK_MISSING is in the log and case 5 is waiting for
+  # THREAD_FORK_KILLED, which will now never come. The proxy had already
+  # refused the turn, so this run must read as environmental: it names the
+  # proxy, and it neither fails nor accuses the behaviour under test.
   rm -f "$L/server/chat.log"
   GONE_PORT=$((PORT + 2))
   start_proxy "$HERE/fake-claude" "$GONE_PORT"
-  KILL_TARGET=$PROXY_PID
-  ( for _ in $(seq 1 600); do
-      if grep -q THREAD_FORK_MISSING "$L/server/chat.log" 2>/dev/null; then kill -9 "$KILL_TARGET" 2>/dev/null; exit 0; fi
-      sleep 0.1
-    done ) & WATCHER=$!
+  kill_proxy_on_fork_missing
   RC=0; run_check "$(cat "$L/server/.proxy-port")" --only 5 >"$WS/control-gone.out" 2>&1 || RC=$?
-  kill "$WATCHER" 2>/dev/null || true; wait "$WATCHER" 2>/dev/null || true
+  reap_watcher
   stop_proxy
   sed 's/^/    /' "$WS/control-gone.out"
   [ "$RC" = 3 ] && sc ok "control 1: the run reports the proxy, exit 3 (not 1, which would claim an assertion failed)" \
@@ -158,20 +182,37 @@ if [ "${SELFCHECK:-1}" != 0 ]; then
   else
     sc ok "control 1: and prints no FAIL about thread forking — the assertion never ran against anything"
   fi
+  # The other half of "reads as environmental": the report went and looked at
+  # what case 5 left on disk, and what it found must not be read as a
+  # regression, because there was not one.
+  #
+  # Asserted on the refusal and NOT on the transcript, because the transcript
+  # is a genuine race: failForkMissing SIGTERMs the CLI and the watcher SIGKILLs
+  # the proxy ~100ms later, and which lands first decides whether the CLI lives
+  # to append its reply 3s on. Both were seen here. The refusal is what settles
+  # it either way — a turn the proxy had already refused is not evidence
+  # against the code, whatever the death did to it afterwards.
+  grep -q "A REGRESSION WAS IN PLAY" "$WS/control-gone.out" \
+    && sc no "control 1: it accused the behaviour under test, which had done its job" \
+    || sc ok "control 1: and does not accuse the behaviour under test"
+  grep -q "the proxy refused it, which is what case 5 requires of it" "$WS/control-gone.out" \
+    && sc ok "control 1: because it read what case 5 left behind and found the proxy had already refused the turn" \
+    || sc no "control 1: the report never established that the proxy had refused the turn"
+  grep -q "Re-run the suite" "$WS/control-gone.out" \
+    && sc ok "control 1: so a re-run IS the whole answer here, and it says so" \
+    || sc no "control 1: an environmental death should still send the reader back for a re-run"
 
   echo
   echo "=== negative control 2: the proxy is fine and case 5's subject is broken ==="
   # The mirror. The proxy now records the id the CLI answered with even when it
   # equals the parent's — which is the leak case 5 exists to catch — so the run
   # must go red NAMING the forking, and must not blame the proxy for dying.
-  cp "$WS/_lesson-core/server/proxy.js" "$WS/proxy.js.orig"
-  sed -i 's|return failForkMissing();|session.cliSessionId = parsed.session_id;|' "$WS/_lesson-core/server/proxy.js"
-  ! cmp -s "$WS/proxy.js.orig" "$WS/_lesson-core/server/proxy.js" || { echo "could not break the proxy for control 2 — the sed target moved"; exit 1; }
+  break_fork_guard
   rm -f "$L/server/chat.log"
   start_proxy "$HERE/fake-claude" "$((PORT + 3))"
   RC=0; run_check "$(cat "$L/server/.proxy-port")" --only 5 >"$WS/control-broken.out" 2>&1 || RC=$?
   stop_proxy
-  cp "$WS/proxy.js.orig" "$WS/_lesson-core/server/proxy.js"
+  restore_fork_guard
   sed 's/^/    /' "$WS/control-broken.out"
   [ "$RC" = 1 ] && sc ok "control 2: the run fails as a failed check, exit 1" || sc no "control 2: expected exit 1, got $RC"
   grep -q "PROXY GONE" "$WS/control-broken.out" && sc no "control 2: it blamed the proxy, which was up the whole time" \
@@ -184,5 +225,38 @@ if [ "${SELFCHECK:-1}" != 0 ]; then
     || sc no "control 2: nothing named the thread turn's ending"
 
   echo
-  if [ "$SC_FAIL" = 0 ]; then echo "negative controls: both hold"; else echo "negative controls: $SC_FAIL FAILED"; exit 1; fi
+  echo "=== negative control 3: a real regression, and the proxy dies on top of it ==="
+  # Both at once — the case that used to report neither. With the leak live the
+  # proxy never refuses the turn, so the kill lands mid-stream and NOT ONE
+  # assertion in case 5 has run: the report has no checks to show at all. It
+  # must still tell the reader the leak happened, from the mark it left on
+  # disk, and must not hand them a re-run as the whole answer.
+  break_fork_guard
+  rm -f "$L/server/chat.log"
+  start_proxy "$HERE/fake-claude" "$((PORT + 4))"
+  kill_proxy_on_fork_missing
+  RC=0; run_check "$(cat "$L/server/.proxy-port")" --only 5 >"$WS/control-both.out" 2>&1 || RC=$?
+  reap_watcher
+  stop_proxy
+  restore_fork_guard
+  sed 's/^/    /' "$WS/control-both.out"
+  [ "$RC" = 3 ] && sc ok "control 3: the proxy is what stopped the run, exit 3" || sc no "control 3: expected exit 3, got $RC"
+  grep -q "0 check(s) ran" "$WS/control-both.out" \
+    && sc ok "control 3: and no assertion got to run — so anything it says comes from evidence, not from a check" \
+    || sc no "control 3: an assertion ran, so this is not the constructed case any more"
+  grep -q "A REGRESSION WAS IN PLAY" "$WS/control-both.out" \
+    && sc ok "control 3: the report says a regression was in play, with the proxy already gone" \
+    || sc no "control 3: the report said nothing about the regression that was live"
+  grep -q "the thread's reply is now in the main conversation's transcript" "$WS/control-both.out" \
+    && sc ok "control 3: and names the leak itself — the thread's reply reached the main conversation" \
+    || sc no "control 3: nothing named the reply that reached the main conversation"
+  grep -q "Do NOT just re-run" "$WS/control-both.out" \
+    && sc ok "control 3: and does not offer a re-run as the whole answer" \
+    || sc no "control 3: the report still offered a re-run as the whole answer"
+  grep -q "^FAIL " "$WS/control-both.out" \
+    && sc no "control 3: it printed a FAIL from an assertion that ran with the proxy gone" \
+    || sc ok "control 3: while still printing no FAIL — no assertion was run against a dead proxy"
+
+  echo
+  if [ "$SC_FAIL" = 0 ]; then echo "negative controls: all three hold"; else echo "negative controls: $SC_FAIL FAILED"; exit 1; fi
 fi
