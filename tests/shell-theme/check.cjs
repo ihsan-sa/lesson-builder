@@ -249,7 +249,7 @@ function walk(node, visit) {
 function readsPalette(node) {
   let found = false;
   walk(node, (n) => {
-    if (n.type === 'MemberExpression' && n.object.type === 'Identifier' && n.object.name === 'G') {
+    if (n.type === 'MemberExpression' && n.object.name === 'G') {
       found = true;
     }
   });
