@@ -137,23 +137,41 @@ whose math never rendered must not read as a lesson nothing lands on.
 ### Showing the sweep go red
 
 `sweep-negative.sh` is the sweep's negative control, because a run over a clean
-corpus only ever stays quiet. It copies **one** lesson out of a built site into a
-temp directory — the site is never written to — makes three copies, breaks two
-of them in the built HTML, and asserts what the sweep says about each:
+corpus only ever stays quiet. It copies lessons out of a built site into a temp
+directory — the site is never written to — breaks the copies in the built HTML,
+and asserts what the sweep says about each. Between them the copies produce
+every label the sweep can print about a lesson: `ok`, `OVERLAP`, `COLLAPSED` and
+`OVERLAP+COLLAPSED`.
 
 ```
 SITE=~/.cc/state/lessons/build-head-0f03499 \
   PHONE_WIDTH_BROWSER=/usr/bin/google-chrome tests/phone-width/sweep-negative.sh
 ```
 
-| copy | injected | the sweep must |
-| --- | --- | --- |
-| clean | nothing | pass, having measured at least one equation |
-| overlap | `.eq-side` pinned over the whole `.eq-block` | go red, name the lesson and `side rail covers`, with nothing collapsed |
-| squeezed | `.eq-body { max-width: 0 }` | go red, name `equation[0]`, and report the equation as having no math on screen |
+Copies 1-3 use `$LESSON` (default `chemhl/radioactive-decay`); copy 4 uses
+`$LESSON_BOTH` (default `rf/directional-couplers`) and gets its own clean run
+first, because it is a different lesson and stands on its own fixture.
+
+| copy | lesson | injected | the sweep must |
+| --- | --- | --- | --- |
+| clean | `$LESSON` | nothing | pass, having measured at least one equation |
+| overlap | `$LESSON` | `.eq-side` pinned over the whole `.eq-block` | go red, name the lesson and `side rail covers`, with nothing collapsed |
+| squeezed | `$LESSON` | `.eq-body { max-width: 0 }` | go red, name `equation[0]`, and report the equation as having no math on screen |
+| both-clean | `$LESSON_BOTH` | nothing | pass, having measured **more than one** equation |
+| both | `$LESSON_BOTH` | the overlap rule over every block, the squeeze rule over every block **but the first** (`.eq-block[data-latex] ~ .eq-block[data-latex]`) | go red labelled `OVERLAP+COLLAPSED`, naming `eq0 side rail covers` and `equation[1]`, and count the one lesson under both |
 
 The overlap copy having nothing collapsed is the point of the pair: the run went
 red on the overlap measurement, not on the collapse one that was already there.
+
+The `both` copy needs a lesson with more than one equation, which is why it does
+not reuse `$LESSON`: an equation squeezed to nothing has no ink left for a
+control to land on, so a single equation is either overlapped or collapsed and
+never both. It also needs one whose `.eq-body` is a block — in a classic lesson
+`.eq-body` is an inline span, and `max-width` does nothing to one of those — so
+the injected rule adds `display: block` to what the `squeezed` copy injects.
+Without this copy the `OVERLAP+COLLAPSED` label was the one branch of the sweep
+no case reached; replacing `flags.join("+")` in `sweep.cjs` with `flags[0]`
+turns this copy red and leaves the other four green.
 
 ## What it found (2026-09-06, before the fix)
 

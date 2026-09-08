@@ -10,7 +10,10 @@
 //
 //   SITE_URL=http://127.0.0.1:5xxx/ node tests/phone-width/sweep.cjs
 //
-// Env: SITE_URL       required; the root of a served build (bin/serve-dist.mjs)
+// Env: SITE_URL       required; the root of a served build. bin/serve-dist.mjs
+//                     serves one, but it is the LESSONS repo's script, not this
+//                     repo's; any static server does (sweep-negative.sh uses
+//                     python3's).
 //      LESSON_PATHS   optional; newline- or comma-separated paths to visit.
 //                     Default: every directory link on the site's index page.
 //      PHONE_WIDTH_BROWSER / SAFE_RENDER_BROWSER  system Chrome, so no
