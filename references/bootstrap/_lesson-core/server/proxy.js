@@ -48,6 +48,13 @@
 // code: the turn ends as cancelled even if the CLI shut down cleanly or
 // printed its result as the kill landed. Going down (SIGINT/SIGTERM/SIGHUP)
 // SIGTERMs every running turn's tree rather than orphaning it.
+// A turn whose response has already ended — cancelled, or stopped for a
+// missing fork — can still have CLI output in flight behind it, so every write
+// to a client goes through `sse`, which drops whatever arrives after the end.
+// This is not tidiness: res.write on an ended response does not throw, it
+// emits `error` on the response a tick later, and with no listener node ends
+// the PROCESS. One stopped turn used to take the whole proxy down and every
+// other chat with it (tests/thread-actors, "Why the proxy was dying").
 //
 // Resume candidacy. /sessions reports `resumable` per session: true unless
 // the session is open in a tab, has a turn in flight, or its latest turn was
@@ -827,14 +834,20 @@ app.post("/chat", async (req, res) => {
               return failForkMissing();
             }
           }
+          // Through `sse`, never a raw res.write. failForkMissing and
+          // cancelledExit end the response while the CLI is still talking, and
+          // its next stdout chunk arrives here afterwards — where a raw write
+          // ends the whole process, not just this turn. Why, in § "Turn
+          // ownership" above. The catch below does not help: the error comes a
+          // tick later, on the response.
           if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
             for (const block of parsed.message.content) {
               if (block.type === "tool_use") {
-                res.write(`event: status\ndata: ${JSON.stringify({ type: "tool", name: block.name, description: block.input?.description || block.input?.command || "" })}\n\n`);
+                sse("status", { type: "tool", name: block.name, description: block.input?.description || block.input?.command || "" });
               } else if (block.type === "text") {
-                res.write(`event: text\ndata: ${JSON.stringify({ text: block.text })}\n\n`);
+                sse("text", { text: block.text });
               } else if (block.type === "thinking") {
-                res.write(`event: status\ndata: ${JSON.stringify({ type: "thinking" })}\n\n`);
+                sse("status", { type: "thinking" });
               }
             }
           } else if (parsed.type === "result") {
@@ -845,8 +858,10 @@ app.post("/chat", async (req, res) => {
             // The result raced the kill: tokens are accounted (CHAT_OK), but
             // the student stopped this turn, so it ends as stopped.
             if (turn && turn.cancelled) return cancelledExit();
-            res.write(`event: done\ndata: ${JSON.stringify({ text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd })}\n\n`);
-            res.end();
+            // The tokens above are accounted whatever happened to the response
+            // — a killed turn still spent them. Only the writing is skipped.
+            sse("done", { text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd });
+            res.end();   // a second end() is a no-op; only write-after-end is fatal
             settle("completed");
           }
         } catch (_) {}

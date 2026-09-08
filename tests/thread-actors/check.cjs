@@ -56,10 +56,11 @@ async function proxyDeath(where) {
     await r.text().catch(() => {});
     return null;
   } catch (err) { probe = err.cause ? err.cause.message : err.message; }
-  // The proxy writes .proxy.json when it binds and removes it on a clean exit,
-  // so the file surviving with a dead pid in it says the proxy was killed
-  // rather than asked to stop. run.sh prints the other half: how the process it
-  // started actually ended, and the proxy's own last words.
+  // The proxy writes .proxy.json when it binds and removes it from a
+  // process.on("exit") handler, which a crash runs as well as a signal it
+  // handles — so the file SURVIVING with a dead pid means it never got there
+  // (SIGKILL, or the kernel). run.sh prints the half that tells a crash from a
+  // signal: the wait status of the process it started, and its last words.
   let identity = "server/.proxy.json is gone too — the proxy exited through its own handler";
   try {
     const rec = JSON.parse(fs.readFileSync(path.join(LESSON_DIR, "server", ".proxy.json"), "utf8"));
@@ -417,6 +418,21 @@ const newChat = async () => {
     ok(!nofork.events.some((e) => e.event === "done"), "5: and never completes");
     ok(/THREAD_FORK_MISSING/.test(chatLog().slice(logAt)), "5: the proxy logged THREAD_FORK_MISSING rather than recording the parent's id");
     ok(await waitForLog(/THREAD_FORK_KILLED/, logAt), "5: and killed the turn that was running in the main session");
+
+    // ...and survived doing it. The kill is not instant (killTree walks `ps`
+    // first), so the CLI's next stdout chunk reaches the streaming callback
+    // after failForkMissing has already ended the response. Writing it raw is
+    // what used to take the whole proxy down: res.write after end() does not
+    // throw, it emits `error` on the response a tick later — past the catch
+    // around that callback, with no listener — and node exits the process, so
+    // every other chat died with this one. Read as source because the crash is
+    // a race: 24 runs under load showed it twice, so a green case 5 is not
+    // evidence the writes are guarded. See README, "Why the proxy was dying".
+    const rawWrites = fs.readFileSync(path.join(CORE_DIR, "server", "proxy.js"), "utf8")
+      .split("\n").map((l, i) => [i + 1, l])
+      .filter(([, l]) => /res\.write\(/.test(l) && !/writableEnded/.test(l));
+    ok(rawWrites.length === 0, `5: and the proxy survives its own kill — every res.write in proxy.js is behind a writableEnded check${rawWrites.length ? ` (unguarded at line ${rawWrites.map(([n]) => n).join(", ")})` : ""}`);
+
     ok((await post("/thread/fold", { sessionId: handle })).status === 409, "5: with no forked session recorded, the thread has nothing to fold -> 409");
 
     // What the kill is worth, measured on the main session's own history. The
