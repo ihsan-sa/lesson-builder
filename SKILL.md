@@ -140,7 +140,8 @@ Phase 2 — Plan               Objectives + teaching_arc per topic; medium-decid
                               (new: ranked media; update: 5-way keep/refine/replace/
                               remove/add). Human approval gate, delivered per
                               session_mode. Deploy intent surfaced in the plan's
-                              DEPLOY: block.
+                              DEPLOY: block, and whether a companion PDF is
+                              wanted on the Companion PDF: line beside it.
 Phase 3 — Execution          Parallel specialists; main Claude authors prose against
                               the arcs. New: assemble from scratch.
                               Update: git branch + splice assembly.
@@ -152,12 +153,16 @@ Phase 4 — Review + Fix       Parallel code/content/test/visual-QA + pedagogy g
 Phase 5 — Deploy             Branches on deploy_action. Build verify runs under every
                               action (sanity check). Gitignore-override question
                               (default: no override — nothing private gets published).
+                              Companion PDF built via pdf-material-builder when the
+                              approved plan said yes, before the commit.
                               New: commit + push per deploy_action.
                               Update: commit to branch, merge --no-ff (unless commit-only),
                               push per deploy_action, worktree cleanup.
 ```
 
 **One mandatory human approval gate** at Phase 2, regardless of mode. Execution starts only after the user approves the Lesson Plan artifact (new mode: full plan; update mode: change-list summary). *How* the gate is delivered depends on `session_mode` — dialog, channel message, or a journal block plus `BLOCKED` (see § Session modes and gates). `consolidate` runs one course-level gate covering every affected lesson instead.
+
+**Printable material is the `pdf-material-builder` skill's job, not this one's.** Asked for a handout, printable, companion or cheat sheet for a lesson, reach for that skill rather than hand-rolling LaTeX — it is vendored at `<workspace_root>/.claude/skills/pdf-material-builder/` or installed at `~/.claude/skills/`. A lesson's 2-6pp companion is a first-class output of this pipeline, not an afterthought a session remembers to ask for: the Phase 2 plan records `Companion PDF: yes (2-6pp) | no` beside its deploy block and the user approves that answer at the one gate, then Phase 5 Step 1.75 builds the companion into the lesson directory before the commit. `references/teaching-communication.md` stays canonical for voice in both skills — that one reads this file, it does not carry a spec of its own.
 
 **One run record per run** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`), written and read only through `scripts/run-manifest.cjs`. It holds the run's state: scoping artifact, plan hash and approval, branch, base SHA and build worktree, media manifests with their intents, open findings. Phase 0 opens it (`run-manifest.cjs init`); every later phase writes its fields there and reads them back from there.
 

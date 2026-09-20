@@ -106,6 +106,7 @@ Before compiling the plan, verify every capability the decider's selections assu
 - Desmos selected → `VITE_DESMOS_KEY` present in the workspace-root `.env.local`.
 - Interactive demo selected → required primitives exported by `_lesson-core/ui/`.
 - Web image selected → Step 3 pre-flight below.
+- Companion PDF wanted → the `pdf-material-builder` skill reachable (vendored at `<workspace_root>/.claude/skills/pdf-material-builder/`, or installed at `~/.claude/skills/`) and a LaTeX toolchain (`pdflatex`) on PATH.
 
 For any failed check, either substitute the decider's alternative for that item (log the substitution) or carry the selection with an explicit ordered fallback in the plan row — the user approves a plan that already knows what happens if the capability is absent at build time.
 
@@ -127,6 +128,7 @@ Main Claude merges the decider's verdicts and briefs (plus web-image pre-flight 
 - **Persisting the teaching arcs** (Step 1.5) into the plan artifact in full — Phase 3 authors against them and Phase 4's `content-review-agent` receives them verbatim for the `arc` check (dependency structure, central question, exit model, exit evidence). A topic whose arc is missing, or failed the reorder test without a rebuild, goes back to Step 1.5; do not present the gate without it.
 - **Forwarding `PRACTICE_PROBLEMS_INDEX`** from the Phase 1 package into the plan's `Practice problems index:` section so the user sees per-topic problem totals and solution provenance at the approval gate without reading every problem body.
 - **Forwarding deploy intent from the scoping artifact** into a `DEPLOY:` section of the plan. Every Lesson Plan (both modes) includes `Action: <deploy_action>`, `Service: <deploy_service>` (or "GitHub → workspace-configured host auto-deploy" when `deploy_action == "push-to-github"`), and `Course materials in commit: asked at Phase 5` (or "N/A — no materials provided" when `provided_materials` is empty). The user sees deploy intent at the approval gate alongside the content plan so approval covers both.
+- **Recording whether a companion PDF is wanted** on a `Companion PDF:` line (new mode) / `COMPANION PDF:` line (update mode) beside the deploy block. A companion is a 2-6pp printable handout built by the `pdf-material-builder` skill from this plan and the lesson's prose; Phase 5 builds it when the approved plan says `yes`. The line is rendered in **every** plan, both modes, including when the answer is `no` — Phase 5 reads it as a recorded answer, and an absent line would leave it guessing. A companion needs no new plan fields: it consumes `objectives` with their `checks`, `teaching_arc` (for `exit_model` and `exit_evidence`), `equations`, key concepts, and `practice_problems` with their sources, all of which the artifact already carries.
 - **(Update mode only)** Forwarding the inventory's `orphans: [...]` list into the change-list as an `ORPHAN ASSETS` section with a default `keep | remove` pre-verdict per file. Orphans are files under `<lesson_root>/public/images/`, `<lesson_root>/public/videos/`, or `<lesson_root>/*.py` that the Phase 1 pre-scan found on disk but with no JSX reference. Default pre-verdict is `keep` unless the file is an obvious leftover (e.g., filename contains `old`, `backup`, `unused`, `__tmp`); main Claude's job is to surface them, not decide for the user.
 
 ### Step 5: Write the plan into the run record
@@ -211,6 +213,7 @@ Practice problems index:
   - ...
   Total: M problems across K topics. Solutions: <official: X, ai-worked: Y>.
 Overall structure: tab order, approximate lesson length, expected complexity
+Companion PDF: yes (2-6pp) | no
 Deploy:
   Action:  push-to-github | push-to-custom | commit-only | skip
   Service: <remote URL / CLI / service name, or "GitHub → workspace-configured host">
@@ -225,6 +228,13 @@ Rendering rules for the `Gitignore override:` line:
 - Otherwise → `asked at Phase 5 (default: no override — nothing private gets published)`.
 
 The `Private paths` line lists the gitignore categories that will exist after Phase 3 runs. When `provided_materials` contains paths under `<lesson_root>/` that aren't covered by the default category directories, list them explicitly in that line so the user sees exactly what's being protected.
+
+Rendering rules for the `Companion PDF:` line:
+
+- The user asked for a handout, printable, companion or "something to print" — in the Phase 0 scoping answers or the task text — or the course's `COURSE.md` conventions ask for one per lesson → `yes (2-6pp)`.
+- Otherwise → `no`. The pipeline does not volunteer a companion; the user turns it on at the gate through the request-changes loop, and that answer is the one Phase 5 obeys.
+- Step 2.5's capability pre-flight failed (no `pdf-material-builder` skill, or no `pdflatex`) but the user asked for one → keep `yes (2-6pp)` and append the blocker: `yes (2-6pp) — BLOCKED: <what is missing>; Phase 5 skips the companion unless it is installed first`. Do not quietly render `no` over an answer a person gave — the point of the line is that the gate shows what will actually happen.
+- The value is set by a person at the gate and read by Phase 5. No later phase rewrites it.
 
 The `Service:` line renders `GitHub → workspace-configured host auto-deploy` when `deploy_action == "push-to-github"` (the concrete host depends on `netlify.toml` / `vercel.json` / CI config in the workspace; the skill does not try to infer). For `push-to-custom`, render the verbatim `deploy_service` value, prefixed with `git-remote: ` or `cli: ` per `deploy_service_kind`. For `commit-only` and `skip`, render `null` (nothing is going out).
 
@@ -266,6 +276,8 @@ ROLLBACK:
   - Branch: lesson-update/<slug>-YYYYMMDD, in the run's build worktree
   - Worktree: <lesson_root>/.lesson-builder/worktrees/<run_id>/
   - Merge to the base branch only on success; either way your working tree is untouched
+
+COMPANION PDF: yes (2-6pp) | no
 
 DEPLOY:
   Action:  push-to-github | push-to-custom | commit-only | skip
@@ -380,6 +392,7 @@ Graph schema draft:
   firstGraph:  { param1: { type: "float", min: 0.1, max: 10 } }
   secondGraph: { param2: { type: "float", min: 1,   max: 1000 } }
 Overall structure: 3 tabs, medium lesson, expected complexity moderate.
+Companion PDF: yes (2-6pp)
 Deploy:
   Action:  push-to-github
   Service: GitHub → workspace-configured host auto-deploy
@@ -437,6 +450,8 @@ ROLLBACK:
   - Branch: lesson-update/<slug>-YYYYMMDD, in the run's build worktree
   - Worktree: <lesson_root>/.lesson-builder/worktrees/<run_id>/
   - Merge to the base branch only on success; either way your working tree is untouched
+
+COMPANION PDF: no
 
 DEPLOY:
   Action:  push-to-github

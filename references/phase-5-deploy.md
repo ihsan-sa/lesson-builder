@@ -1,6 +1,6 @@
 # Phase 5 — Deploy
 
-Contents: Ordering (branch on deploy_action) · Step 1 build verification · Step 1.5 gitignore-override question · Step 2a new-mode deploy · Step 2b update-mode deploy · Rollback on failure · Hosted deploy · Final report format · Log output.
+Contents: Ordering (branch on deploy_action) · Step 1 build verification · Step 1.5 gitignore-override question · Step 1.75 companion PDF · Step 2a new-mode deploy · Step 2b update-mode deploy · Rollback on failure · Hosted deploy · Final report format · Log output.
 
 ## Purpose
 
@@ -9,18 +9,19 @@ Phase 5 runs local build verification as a gate, commits, pushes to `main` (dire
 ## Ordering inside Phase 5
 
 0. **Read deploy intent from the approved plan** (`deploy_action`, `deploy_service`, `deploy_service_kind`). Branch on `deploy_action`:
-   - `skip`: run step 1 (build verification, as a sanity check so the user knows whether their lesson builds) and step 3 (worktree cleanup, which under `skip` means reporting the worktree rather than pruning it). Skip step 1.5 (no commit happening), step 2 (commit + push), step 4's deploy-metadata fields, and reduce step 5 to a short "skipped" report. New-mode files remain uncommitted under the lesson root; the update-mode branch and the build worktree remain as Phase 3 left them, the uncommitted build still in it.
-   - `commit-only`: run steps 1, 1.5, 2 (commit, no push), 3, 4, 5.
-   - `push-to-github`: run the full pipeline unchanged (steps 1, 1.5, 2, 3, 4, 5).
+   - `skip`: run step 1 (build verification, as a sanity check so the user knows whether their lesson builds), step 1.75 (the companion, if the plan asked for one — the user wanted the handout whether or not anything is pushed) and step 3 (worktree cleanup, which under `skip` means reporting the worktree rather than pruning it). Skip step 1.5 (no commit happening), step 2 (commit + push), step 4's deploy-metadata fields, and reduce step 5 to a short "skipped" report. New-mode files remain uncommitted under the lesson root; the update-mode branch and the build worktree remain as Phase 3 left them, the uncommitted build still in it.
+   - `commit-only`: run steps 1, 1.5, 1.75, 2 (commit, no push), 3, 4, 5.
+   - `push-to-github`: run the full pipeline unchanged (steps 1, 1.5, 1.75, 2, 3, 4, 5).
    - `push-to-custom`: same as `push-to-github` but step 2's push targets the remote/service recorded in `deploy_service` according to `deploy_service_kind` (see step 2).
 1. Local build verification (hard gate — halt the phase on failure; runs under every `deploy_action` including `skip` as a lesson-works sanity check)
 1.5 Materials-in-commit question (conditional — only when `provided_materials` is non-empty AND `deploy_action ∈ {"push-to-github", "push-to-custom", "commit-only"}`; captures `include_materials_in_commit: true | false | "custom:<list>"`)
+1.75 Companion PDF (conditional — only when the approved plan's `Companion PDF:` line says `yes`; runs under every `deploy_action`; not a gate — a failed companion build is reported, it does not stop the deploy)
 2. Mode-branched commit + push (new mode: direct to main; update mode: branch commit → merge → push; entirely skipped when `deploy_action == "skip"`)
 3. Worktree cleanup (update mode only — runs under every `deploy_action`, and prunes only a worktree whose work is committed and kept by a ref)
 4. Log append
 5. Final report to user
 
-Build verification failure halts steps 1.5 and 2 regardless of `deploy_action` — if the lesson doesn't build, committing or pushing is unsafe. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Step 3 always runs in update mode — even after a build failure — and after one it reports the worktree path rather than pruning it, because the build in there is the thing the user needs to look at.
+Build verification failure halts steps 1.5, 1.75 and 2 regardless of `deploy_action`: if the lesson doesn't build, committing or pushing is unsafe, and a companion condenses a lesson that is not finished being one. Under `skip`, a build failure still halts so the user knows the lesson is broken; the final report surfaces the error. Step 3 always runs in update mode — even after a build failure — and after one it reports the worktree path rather than pruning it, because the build in there is the thing the user needs to look at.
 
 ## Step 1 — Local build verification (gate)
 
@@ -128,6 +129,22 @@ Record the answer as `gitignore_override: "none" | "all" | "custom:<explicit fil
 
 Course-inbox files (`origin: "course-inbox"`, under `<course>/materials/`) are never candidates here: they live outside `<lesson_root>`, so they appear in the *out-of-scope materials* awareness list. Their tracked-or-ignored status is a workspace `.gitignore` question the user owns (`references/course-curation.md` §3).
 
+## Step 1.75 — Companion PDF (conditional)
+
+A companion is a 2-6pp printable handout for one lesson, built by the **`pdf-material-builder`** skill's `companion` recipe. The brief this step implements: *"When the plan said yes, invoke this skill's `companion` recipe after the lesson builds and before the deploy step, so the PDF is in the tree when `build-all.sh` runs."* Hence its position — after Step 1's build verification, before Step 2 commits.
+
+**Whether it runs** is read from the approved plan artifact (`<lesson_root>/.lesson-builder/runs/<run_id>-plan.md`), never from the rendered `lesson_build.log.md`: the log is a rendering and a rendering can drift from what was approved. `Companion PDF: no` (new mode) or `COMPANION PDF: no` (update mode) → skip this step and log `Companion PDF: not requested`. A plan carrying no such line predates this step; read it as `no` rather than inferring one, and say so in the log.
+
+It runs under **every** `deploy_action`, including `skip`. The companion is a file in the lesson directory, and the user asked for it; whether anything is pushed afterwards is a separate question.
+
+**Where the file goes.** `<lesson_root>/<course>_<slug>_companion.tex` and its `.pdf`, beside the lesson rather than in the course's PDF directory. The `pdf-material-builder` skill owns the exact filename; match `*_companion.{tex,pdf}` when staging rather than reconstructing it, and log the path the build actually wrote. **Update mode writes inside the run's build worktree** (`$WT`), like every other file this run produces — the user's checkout is not written to here either.
+
+**What it reads**: the run record and `lesson_build.log.md` (for the plan artifact) and the lesson's `.jsx` prose. It condenses what the lesson already says; it does not re-derive the content or re-research it. Voice is not this step's business to restate — `references/teaching-communication.md` is the canonical spec and `pdf-material-builder` reads it directly.
+
+**Failure is not a gate.** A missing skill, a missing `pdflatex`, or a LaTeX build that will not compile halts the companion and nothing else: log `Companion PDF: FAILED (<reason>)`, surface it in the final report, and carry on to Step 2. A lesson that is ready to deploy does not wait on a handout. Phase 2's Step 2.5 pre-flight is what makes this rare — a plan approved with `BLOCKED: <what is missing>` on its companion line already told the user this would happen.
+
+**What still does not publish it.** The lessons workspace has to un-ignore `*/claude_lessons/*/*_companion.{tex,pdf}` and walk one level deeper in `build-all.sh` before a companion reaches `dist/` — that is the lessons repo's work (`pdf-material-builder/docs/integration.md` §1), not this skill's. Until it lands, a companion is committed but not published, and Step 2's staging check below is what says so out loud. Note too that Step 1's `build-all.sh` ran before this step, so this run's local `dist/` never contains the companion regardless; the copy that publishes it is the host's rebuild after the push, or the user's next local build.
+
 ## Step 2a — New-mode deploy
 
 ### 1. Update build config (if required)
@@ -192,6 +209,15 @@ Always stage the lesson's `.gitignore` alongside the code so the privacy baselin
 ```bash
 git add <lesson_root>/.gitignore
 ```
+
+**Companion staging** (only when Step 1.75 built one):
+
+```bash
+git add <lesson_root>/*_companion.tex <lesson_root>/*_companion.pdf
+git diff --cached --name-only -- <lesson_root> | grep -q '_companion\.pdf$' || echo "companion not staged"
+```
+
+The check is there because the workspace `.gitignore` ignores `*.pdf` and `*.tex` globally and un-ignores documents one pattern at a time, so an add that reaches no negation **silently no-ops** and the companion never leaves the disk. If the check fires, report it — the workspace needs the negations from `pdf-material-builder/docs/integration.md` §1. Do **not** force-add (`-f`) past it: which files that workspace publishes is its owner's decision, not this run's.
 
 **Gitignore override staging** (conditional on Step 1.5's `gitignore_override`):
 
@@ -332,6 +358,8 @@ Always stage the lesson's `.gitignore` so any newly appended entries (e.g., for 
 ```bash
 git -C "$WT" add .gitignore
 ```
+
+**Companion staging** (only when Step 1.75 built one) — the same two commands and the same silent-no-op check as new mode Step 2a.3, run against the worktree with `-C "$WT"` and lesson-root-relative paths.
 
 **Gitignore override staging** (same semantics as new mode Step 2a.3):
 
@@ -538,6 +566,7 @@ The final report is surfaced to the user as the last action of Phase 5 (after al
 - Deploy dashboard: <host-specific URL or "see workspace deploy docs">
 - Live URL (after hosted build finishes): <host-specific URL>
 - Course map: updated (<slug> -> live, N chunks marked built) | N/A (no COURSE.md)
+- Companion PDF: <path> (staged | on disk, not staged — the workspace gitignore has no negation for it) | FAILED (<reason>) | not requested
 
 ## Unresolved items from Phase 4
 - <item 1 with reason>
@@ -582,6 +611,7 @@ Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
+Companion PDF: <path> (staged) | <path> (on disk, not staged) | FAILED (<reason>) | not requested
 Push result: ok (origin main) | ok (<custom-remote>) | skipped
 Base branch: moved | not moved (the user's checkout holds it) — ff with git merge --ff-only <sha>
 Build worktree: removed | kept at <path> (it holds work no commit does)
@@ -594,7 +624,7 @@ Live URL: <host-specific>
 
 The four commented fields render in that fixed order ahead of the notes; the notes render in the order they were appended, so append them as listed.
 
-When `deploy_action == "skip"`, record `scoping.deploy_action` as `skip` and a single `phases.5.notes` entry `Halted: no build or commit (user requested skip)` in place of the other fields; the final report still renders from the open findings.
+When `deploy_action == "skip"`, record `scoping.deploy_action` as `skip` and a single `phases.5.notes` entry `Halted: no build or commit (user requested skip)` in place of the other fields — plus the `Companion PDF:` note when step 1.75 ran, since it runs under `skip` too and the file it wrote is on disk; the final report still renders from the open findings.
 
 ### Update mode
 
@@ -611,6 +641,7 @@ Target: dist/<course>/<slug>/index.html
 Smoke check: KaTeX OK, topics OK, graphs OK, console clean
 Gitignore override: none | all | "custom:<list>" | N/A
 Materials in commit: false (gitignored) | true (forced via override) | "custom:<list>" | N/A
+Companion PDF: <path> (staged) | <path> (on disk, not staged) | FAILED (<reason>) | not requested
 Branch commit SHA: <sha>
 Merge commit SHA: <sha | skipped>
 Push result: ok (origin main) | ok (<custom-remote>) | skipped
