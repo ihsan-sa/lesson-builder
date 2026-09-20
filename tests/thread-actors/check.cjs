@@ -263,7 +263,9 @@ async function forkLeakEvidence(mainId, logAt, seen) {
       leaked
         ? (refused
             ? `the reply still reached the main conversation (${hist}) — the proxy was killed before it finished stopping a turn it had already refused, so that is the death's doing`
-            : `AND the thread's reply is now in the main conversation's transcript (${hist})`)
+            : missing
+            ? `AND the thread's reply is now in the main conversation's transcript (${hist})`
+            : `the reply reached the main conversation (${hist}) — but the proxy died before the CLI had said which session it was answering as, so it never had the chance to refuse; that is the death's doing`)
         : `no reply from that turn reached the main conversation (watched ${hist} for 5s, past the CLI's own 3s answer)`,
     ],
     // The leak, spelled out: the proxy saw the unforked id, nothing refused the
@@ -273,7 +275,12 @@ async function forkLeakEvidence(mainId, logAt, seen) {
     // SIGTERMs the CLI and a mid-case kill takes the proxy ~100ms later, so a
     // REFUSED turn whose CLI outlived the proxy long enough to write is the
     // death's doing, not the code's. Both orders happen; only this tells them
-    // apart.
+    // apart. `missing` carries the same weight from the other side — brief:
+    // "a proxy that dies with nothing wrong reads as environmental no matter
+    // when it dies — including before case 5's turn has logged anything". A
+    // proxy that died before the CLI named its session never had the chance
+    // to refuse, so a reply that lands after that is not the code's failure
+    // either; run.sh's control 4 is the run that measures this clause.
     regression: missing && !refused && leaked,
   };
 }

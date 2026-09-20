@@ -25,6 +25,18 @@
 //                reply is held back 3s: a real CLI takes seconds to answer,
 //                and the proxy kills this turn the moment the init line names
 //                the parent, so the reply must never reach the transcript
+//
+// Env switches:
+//   FAKE_INIT_HOLD_MS  hold the init line (the one that names the session)
+//                for this long. A real CLI takes a moment to say which
+//                session it is; run.sh's control 4 uses the gap to kill the
+//                proxy AFTER the CLI is running and BEFORE it has said.
+//
+// A dead caller is not a reason to stop: the proxy's death closes the pipe
+// this writes to, and a real CLI persists its turn whether or not anyone is
+// still reading it. Without this the EPIPE crashes the process before the
+// reply is appended, and control 4 would have no leak to read.
+process.stdout.on("error", () => {});
 const fs = require("fs");
 const path = require("path");
 const args = process.argv.slice(2);
@@ -39,7 +51,7 @@ let stdin = "";
 process.stdin.on("data", (d) => (stdin += d));
 process.stdin.on("end", main);
 
-function main() {
+async function main() {
   try { fs.appendFileSync(path.join(STATE, "argv.jsonl"), JSON.stringify({ argv: args, stdin, at: Date.now() }) + "\n"); } catch (_) {}
 
   const fmt = args[args.indexOf("--output-format") + 1];
@@ -71,6 +83,8 @@ function main() {
     return;
   }
 
+  const hold = Number(process.env.FAKE_INIT_HOLD_MS || 0);
+  if (hold > 0) await new Promise((r) => setTimeout(r, hold));
   emit({ type: "system", subtype: "init", session_id: sid });
   append(stdin);
 

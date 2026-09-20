@@ -4,7 +4,7 @@
 # starts the lesson's proxy with tests/thread-actors/fake-claude first on PATH
 # and drives check.cjs against it. See README.md.
 #
-# After the suite it runs three negative controls, which are what make its
+# After the suite it runs four negative controls, which are what make its
 # reporting believable rather than claimed. Control 1 kills the proxy in the
 # middle of case 5, at the instant the reported flake lost it, and requires the
 # run to name the proxy and NOT print a failure — or an accusation — about
@@ -12,13 +12,15 @@
 # and requires the opposite: red, naming the forking, and no mention of the
 # proxy. Control 3 does BOTH at once — the case that used to report neither —
 # and requires the report to name the leak from what is on disk, with no
-# assertion having run and the proxy already gone. `SELFCHECK=0` skips all three.
+# assertion having run and the proxy already gone. Control 4 kills the proxy
+# EARLIER than 1 — the CLI running, nothing logged about which session it is —
+# and requires that to read as environmental too. `SELFCHECK=0` skips all four.
 #
 #   REAL_CLAUDE=1   also run the isolation + fold probes against the real
 #                   `claude` (spends tokens: ~8 short haiku turns)
 #   PORT=<n>        proxy port (default 3911 — 3901 is the app's own).
-#                   The controls use PORT+2, PORT+3 and PORT+4.
-#   SELFCHECK=0     skip the three negative controls
+#                   The controls use PORT+2, PORT+3, PORT+4 and PORT+5.
+#   SELFCHECK=0     skip the four negative controls
 #   KEEP=1          keep the temp workspace for inspection
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); SKILL=$(cd "$HERE/../.." && pwd); B="$SKILL/references/bootstrap"
@@ -125,8 +127,8 @@ if [ -n "${REAL_CLAUDE:-}" ]; then
 fi
 
 # ----------------------------------------------------------- negative controls
-# All three drive case 5 alone (`--only 5`) against a proxy started for the
-# purpose, and all three are about the OUTPUT, not the exit code: what a person
+# All four drive case 5 alone (`--only 5`) against a proxy started for the
+# purpose, and all four are about the OUTPUT, not the exit code: what a person
 # reads when the run goes red has to be the reason it went red. Last, because
 # two of them edit the workspace's copy of the proxy.
 SC_FAIL=0
@@ -143,6 +145,21 @@ kill_proxy_on_fork_missing() {
   local target=$PROXY_PID
   ( for _ in $(seq 1 600); do
       if grep -q THREAD_FORK_MISSING "$L/server/chat.log" 2>/dev/null; then kill -9 "$target" 2>/dev/null; exit 0; fi
+      sleep 0.1
+    done ) & WATCHER=$!
+}
+# SIGKILL the running proxy the instant case 5's CLI is RUNNING — its argv
+# line is the first thing fake-claude writes — and before it has said which
+# session it is answering as, so nothing about the fork is in chat.log yet.
+# The window is real only because the proxy for this control starts its fake
+# with FAKE_INIT_HOLD_MS, which holds the init line back; without it the id
+# follows the argv line within milliseconds. Used by control 4. `$1` is the
+# argv.jsonl line count before the run, so an earlier control's NOFORK-PROBE
+# cannot trip it.
+kill_proxy_on_cli_spawned() { # $1 = argv.jsonl lines to skip
+  local target=$PROXY_PID skip=$1
+  ( for _ in $(seq 1 600); do
+      if tail -n +"$((skip + 1))" "$FAKE_STATE/argv.jsonl" 2>/dev/null | grep -q NOFORK-PROBE; then kill -9 "$target" 2>/dev/null; exit 0; fi
       sleep 0.1
     done ) & WATCHER=$!
 }
@@ -258,5 +275,54 @@ if [ "${SELFCHECK:-1}" != 0 ]; then
     || sc ok "control 3: while still printing no FAIL — no assertion was run against a dead proxy"
 
   echo
-  if [ "$SC_FAIL" = 0 ]; then echo "negative controls: all three hold"; else echo "negative controls: $SC_FAIL FAILED"; exit 1; fi
+  echo "=== negative control 4: the proxy dies EARLY in case 5, with nothing wrong ==="
+  # Earlier than control 1: the CLI has been spawned for case 5's thread turn
+  # and has not yet said which session it is answering as, so THREAD_FORK_MISSING
+  # is NOT in chat.log and the proxy never refused anything. The CLI outlives the
+  # proxy and, unsupervised, lands its NOFORK reply in the main conversation ~3s
+  # on — so two of the three marks the evidence reads (no refusal, a reply that
+  # landed) look exactly like control 3's regression. Only the absent
+  # THREAD_FORK_MISSING tells them apart, and this control is what makes that
+  # clause measured: a check that treats the mark as present would accuse the
+  # behaviour under test here, and this control goes red when it does.
+  rm -f "$L/server/chat.log"
+  ARGV_BEFORE=$( (wc -l < "$FAKE_STATE/argv.jsonl") 2>/dev/null || echo 0)
+  export FAKE_INIT_HOLD_MS=1000
+  start_proxy "$HERE/fake-claude" "$((PORT + 5))"
+  unset FAKE_INIT_HOLD_MS
+  kill_proxy_on_cli_spawned "$ARGV_BEFORE"
+  RC=0; run_check "$(cat "$L/server/.proxy-port")" --only 5 >"$WS/control-early.out" 2>&1 || RC=$?
+  reap_watcher
+  stop_proxy
+  sed 's/^/    /' "$WS/control-early.out"
+  [ "$RC" = 3 ] && sc ok "control 4: the run reports the proxy, exit 3" || sc no "control 4: expected exit 3, got $RC"
+  grep -q "PROXY GONE" "$WS/control-early.out" && sc ok "control 4: and says so in words" || sc no "control 4: no PROXY GONE line in the output"
+  # The constructed shape, established before anything is read into it: the
+  # proxy had NOT seen the id, and the reply DID land. Without both, a pass
+  # here would not be measuring the clause it exists for.
+  grep -q "the proxy had not logged THREAD_FORK_MISSING" "$WS/control-early.out" \
+    && sc ok "control 4: the death came before the proxy saw which session the CLI answered as" \
+    || sc no "control 4: the proxy had already logged THREAD_FORK_MISSING — this is control 1 again, not the early death"
+  grep -q "the reply reached the main conversation" "$WS/control-early.out" \
+    && sc ok "control 4: and the unsupervised CLI's reply did land in the main conversation — the mark a regression also leaves" \
+    || sc no "control 4: the CLI's reply never landed, so nothing here could be mistaken for a regression and the control measures nothing"
+  # The point: that landed reply is NOT read as a regression, because the proxy
+  # never got the chance to refuse the turn.
+  grep -q "A REGRESSION WAS IN PLAY" "$WS/control-early.out" \
+    && sc no "control 4: it accused the behaviour under test, which never got to act" \
+    || sc ok "control 4: and does not accuse the behaviour under test, which never got to act"
+  grep -q "never had the chance to refuse" "$WS/control-early.out" \
+    && sc ok "control 4: because the report says why — the proxy died before it could refuse" \
+    || sc no "control 4: the report never explained the landed reply as the death's doing"
+  if grep -q "^FAIL " "$WS/control-early.out"; then
+    sc no "control 4: it still printed a FAIL about the behaviour: $(grep -m1 '^FAIL ' "$WS/control-early.out")"
+  else
+    sc ok "control 4: and prints no FAIL — no assertion was run against a dead proxy"
+  fi
+  grep -q "Re-run the suite" "$WS/control-early.out" \
+    && sc ok "control 4: so a re-run IS the whole answer here, and it says so" \
+    || sc no "control 4: an environmental death should still send the reader back for a re-run"
+
+  echo
+  if [ "$SC_FAIL" = 0 ]; then echo "negative controls: all four hold"; else echo "negative controls: $SC_FAIL FAILED"; exit 1; fi
 fi
