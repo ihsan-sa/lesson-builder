@@ -3,8 +3,9 @@
 # network. One command, so a change that breaks the run record, staging, worktrees, the
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
 # branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch,
-# the built bundle's tutor gate, the shell staying out of a classic lesson's bundle, or the tutor's
-# attempt-first policy and its prompt ceiling cannot land.
+# the built bundle's tutor gate, the shell staying out of a classic lesson's bundle, the tutor's
+# attempt-first policy and its prompt ceiling, or a tutor chat staying on the lesson it was born
+# on cannot land.
 # `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
 # person runs it the same way.
 #
@@ -55,6 +56,7 @@ FIXTURES=(
   "sse-byte-split|node tests/sse-byte-split/check.cjs"
   "css-vars-defined|node tests/css-vars-defined/check.cjs"
   "tutor-policy|node tests/tutor-policy/check.cjs"
+  "lesson-session-scope|node tests/lesson-session-scope/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
   "shell-reach|tests/shell-reach/run.sh"

@@ -3,8 +3,8 @@
 // can drive them against the proxy's real /sessions payloads.
 
 // A session this tab already owned before the page reloaded (its id is in
-// sessionStorage's kcSessions): reclaimable even with a turn in flight. A
-// reload is deliberately not a cancel — the proxy keeps the CLI running and
+// sessionStorage, keyed by lesson -- lessonSessions.js): reclaimable even with
+// a turn in flight. A reload is deliberately not a cancel — the proxy keeps the CLI running and
 // keeps its result in the session for the next message (proxy.js, "A
 // disconnect is not a cancel") — so "a turn is in flight" must not hide the
 // session here, or the reload the invariant protects opens an empty chat
