@@ -9,7 +9,7 @@ cd tests/thread-actors
 ./run.sh                 # deterministic, no tokens: fake `claude` on PATH
 REAL_CLAUDE=1 ./run.sh   # also the probes against the real CLI (~8 short haiku turns)
 PORT=3921 ./run.sh       # 3901 is the app's own port; the default here is 3911
-SELFCHECK=0 ./run.sh     # skip the three negative controls below
+SELFCHECK=0 ./run.sh     # skip the four negative controls below
 ```
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md` (core copy + `npm
@@ -124,10 +124,12 @@ A regression is reported only when the proxy saw the unforked id, **nothing refu
 the reply landed. The middle clause is load-bearing: `failForkMissing` `SIGTERM`s the CLI and the
 watcher `SIGKILL`s the proxy ~100ms later, and which lands first is a real race — a refused turn
 whose CLI outlived the proxy long enough to write is the death's doing, not the code's, and the
-report says so. When there is a regression the report drops the re-run advice and says **`Do NOT
-just re-run`** instead.
+report says so. The first clause carries the same weight from the other side: a proxy that died
+before the CLI had said which session it was answering as never had the chance to refuse, so a
+reply that lands after that is the death's doing too — the report says that in as many words. When
+there is a regression the report drops the re-run advice and says **`Do NOT just re-run`** instead.
 
-### The three negative controls
+### The four negative controls
 
 Run at the end of `run.sh` (`SELFCHECK=0` skips them), all driving case 5 alone. They exist
 because "the report is right" is not something a suite can assert about itself:
@@ -145,6 +147,16 @@ because "the report is right" is not something a suite can assert about itself:
 3. **Both at once.** The same edit as 2 with the same kill as 1. Requires exit 3, `0 check(s) ran`
    and still no `FAIL` line — and then, from the evidence alone, `A REGRESSION WAS IN PLAY`, the
    reply named as having reached the main conversation, and `Do NOT just re-run`.
+4. **The proxy dies earlier, and nothing is wrong.** The kill lands once case 5's CLI is running
+   (its argv line is the first thing `fake-claude` writes) and before it has named its session —
+   `FAKE_INIT_HOLD_MS` holds that line back so the window is real. `THREAD_FORK_MISSING` is not in
+   the log and nothing was refused, yet the orphaned CLI still lands its reply in the main
+   conversation: two of the three marks look exactly like control 3. Requires exit 3, the report
+   to establish both (`had not logged THREAD_FORK_MISSING`, `the reply reached the main
+   conversation`), no `A REGRESSION WAS IN PLAY`, the reason (`never had the chance to refuse`),
+   no `FAIL` line and the re-run advice. This is the control that makes the first clause measured:
+   with `missing` forced true, controls 1–3 still pass and this one goes red (checked by hand,
+   2026-09-20 — that mutation was the #40 retro's, and nothing caught it then).
 
 Only the workspace copy under `$WS` is ever edited, and it is restored after each control; the
 shipped `references/bootstrap` proxy is untouched.
