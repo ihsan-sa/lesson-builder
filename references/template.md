@@ -48,11 +48,15 @@ learning goals. Cover:
   - Which lectures / sections / units this lesson covers
   - What the student should walk away able to DO (the topic objectives)
 
-Do NOT paste a pedagogy policy here. The canonical PEDAGOGY POLICY (retrieval-
-first, least-help-first hint ladder, step-level interaction, task-level
-feedback, misconception refutation, transfer checks) is injected automatically
-by @core/chat/buildSystemPrompt.js — the shared core is its single source of
-truth, so every lesson runs the same current policy. Legacy lessons that
+Do NOT paste a pedagogy policy here. The canonical PEDAGOGY POLICY (attempt-
+first with answers labelled independent / with help, least-help-first hint
+ladder, step-level interaction, task-level feedback, misconception refutation,
+transfer checks) is injected automatically by @core/chat/buildSystemPrompt.js,
+as is the STUDY RECORD rule: name the course's study record here (e.g.
+"ECE207/STUDY.md - what he has studied and is weak on") and the tutor reads it
+once per session; say how files are opened ("Open with Read ...") or the core
+adds one generic line. The shared core is the single source of truth, so
+every lesson runs the same current policy. Legacy lessons that
 embedded the old policy text are detected by marker and not double-injected.
 
 What DOES belong here as tutor steering: course-specific conventions (notation,
