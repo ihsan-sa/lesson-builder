@@ -3,7 +3,8 @@
 # network. One command, so a change that breaks the run record, staging, worktrees, the
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
 # branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch,
-# the built bundle's tutor gate, or the shell staying out of a classic lesson's bundle cannot land.
+# the built bundle's tutor gate, the shell staying out of a classic lesson's bundle, or the tutor's
+# attempt-first policy and its prompt ceiling cannot land.
 # `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
 # person runs it the same way.
 #
@@ -53,6 +54,7 @@ FIXTURES=(
   "branch-collision|node tests/branch-collision/check.cjs"
   "sse-byte-split|node tests/sse-byte-split/check.cjs"
   "css-vars-defined|node tests/css-vars-defined/check.cjs"
+  "tutor-policy|node tests/tutor-policy/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
   "shell-reach|tests/shell-reach/run.sh"
@@ -68,6 +70,7 @@ EXCLUDED=(
   "phone-width|needs a Chromium, three vite builds and the KaTeX CDN|cd tests/phone-width && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && PHONE_WIDTH_BROWSER=/usr/bin/google-chrome ./run.sh"
   "phone-width --sweep|the fixture measures its own scaffolded lessons; this measures overlap and collapse over every lesson of a real built site|serve a build (bin/serve-dist.mjs, which is the LESSONS repo's script, not this repo's: --port 5301 --dist <site> --quiet), then PHONE_WIDTH_BROWSER=/usr/bin/google-chrome SITE_URL=http://127.0.0.1:5301/ node tests/phone-width/sweep.cjs"
   "phone-width --sweep-negative|the sweep's negative control: it needs a built site to copy lessons out of, and a Chromium|SITE=<a built site> PHONE_WIDTH_BROWSER=/usr/bin/google-chrome tests/phone-width/sweep-negative.sh"
+  "tutor-policy --sweep|the gate holds the ceiling over a context as long as the sweep's largest; this re-measures every lesson of a real lessons checkout|LESSONS_DIR=~/dev/lessons node tests/tutor-policy/sweep.mjs"
   "shell-theme --browser|the gate checks the sheet and the component as text; this one presses the switch in a built lesson|cd tests/shell-theme && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && SHELL_THEME_BROWSER=/usr/bin/google-chrome ./run.sh"
   "cancellation --real|the fake CLI covers it here; this one spends tokens on the real CLI|cd tests/cancellation && REAL_CLAUDE=1 ./run.sh"
   "thread-actors --real|the fake CLI covers it here; this one spends tokens on the real CLI|cd tests/thread-actors && REAL_CLAUDE=1 ./run.sh"
