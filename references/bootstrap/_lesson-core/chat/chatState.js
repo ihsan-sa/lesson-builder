@@ -26,8 +26,8 @@ export const _cs = window.__chatState;
 export function makeTab(title) {
   return {
     id: ++_cs.tabIdCounter,
-    // Tab-strip label. Named after the topic that was open when the tab was
-    // created; falls back to the server-assigned chat number.
+    // The topic that was open when the tab was created. The tab strip shows
+    // it through tabLabel, which adds the chat number when two tabs share it.
     title: title || "",
     sessionId: null,
     chatNum: null,
@@ -42,6 +42,16 @@ export function makeTab(title) {
     statusText: "",
     reinforced: [],
   };
+}
+
+// Tab-strip label: the tab's topic, or its server-assigned chat number when it
+// has none. Two chats opened on one topic are two sessions with their own
+// transcripts (owner ask a27), so when another tab carries the same topic the
+// label adds the chat number -- the same "#N" the resume picker lists.
+export function tabLabel(tab, tabs) {
+  if (!tab.title) return tab.chatNum ? `Chat ${tab.chatNum}` : "New chat";
+  const shared = (tabs || []).some(o => o.id !== tab.id && o.title === tab.title);
+  return shared && tab.chatNum ? `${tab.title} #${tab.chatNum}` : tab.title;
 }
 
 // Safe sessionStorage alias (the 'session' + 'Storage' concat dodges the
