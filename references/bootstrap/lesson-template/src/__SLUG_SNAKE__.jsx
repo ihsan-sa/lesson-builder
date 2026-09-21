@@ -1,7 +1,7 @@
 // Placeholder lesson body. Phase 3 of new mode overwrites this with the
 // full skeleton authored from references/template.md plus specialist
 // outputs. This file only needs to satisfy T1 (Babel parse) and T4
-// (export default) of test_lesson.cjs. Tests T5-T17 intentionally fail
+// (export default) of test_lesson.cjs. Tests T5-T18 intentionally fail
 // against this placeholder — they pass once TOPICS, TOPIC_CONTEXT,
 // LESSON_CONTEXT, GRAPH_SCHEMA, and the real LessonApp are in place.
 //

@@ -4,7 +4,7 @@ Items from `codex-ultra-deep-review.md` (and the two audit rounds) that are agre
 
 ## P0 — runtime fixes that need the live sandbox first
 
-Verify each against the running app (sandbox recipe: bootstrap fresh workspace → 17/17 → Playwright) before and after changing `Chatbot.jsx`:
+Verify each against the running app (sandbox recipe: bootstrap fresh workspace → 18/18 → Playwright) before and after changing `Chatbot.jsx`:
 
 1. ~~**Safe rendering for model output**~~ — landed 2026-09-05 (PR #5): DOMParser → allowlist → DOM nodes in `chat/safeRender.js`, no `innerHTML` on model output, CSP meta in the lesson template, 41-vector corpus under `tests/safe-render/`. (Chosen shape was markdown→string→allowlist-DOM rather than →React; same guarantees.)
 2. ~~**Real cancellation**~~ — landed 2026-09-05 (PR #7): `POST /chat/cancel` owns the turn's process group, cancel wins over a clean exit, promotion only on completion, `tests/cancellation/`.

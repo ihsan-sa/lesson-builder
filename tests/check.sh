@@ -4,8 +4,9 @@
 # syntax-tree tools, attestation, cancellation, thread isolation, the Phase 3 return boundary,
 # branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch,
 # the built bundle's tutor gate, the shell staying out of a classic lesson's bundle, the tutor's
-# attempt-first policy and its prompt ceiling, a tutor chat staying on the lesson it was born
-# on, or a tutor reply surviving a lost stream cannot land.
+# attempt-first policy and its prompt ceiling, a lesson's own gate passing over that ceiling, a
+# tutor chat staying on the lesson it was born on, or a tutor reply surviving a lost stream cannot
+# land.
 # `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
 # person runs it the same way.
 #
@@ -16,13 +17,13 @@
 # seconds one fixture may take before it is killed and counted failed (default 600).
 #
 # Environment: node and git, from a clean checkout. Nothing here calls a model or opens a browser.
-# Seven fixtures do need packages: `ast-inventory`, `attestation` and `shell-theme` install
-# `@babel/parser` (the last reads lesson bodies as syntax trees, not as text),
+# Eight fixtures do need packages: `ast-inventory`, `attestation`, `lesson-prompt-ceiling` and
+# `shell-theme` install `@babel/parser` (the last reads lesson bodies as syntax trees, not as text),
 # `cancellation` and `thread-actors` copy `_lesson-core` and install its express/cors, and
 # `hosted-build` and `shell-reach` each scaffold a lesson and install the template's own devDeps
 # (vite, react, the babel pair; Playwright's browser download is skipped) because they assert on
 # real `vite build` output.
-# All seven use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
+# All eight use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
 # registry — that is the one dependency this gate has beyond node and git, and on a cold cache those
 # seven fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
 # Every fixture builds its own temp state and cleans it up; the checkout is not written to.
@@ -56,6 +57,7 @@ FIXTURES=(
   "sse-byte-split|node tests/sse-byte-split/check.cjs"
   "css-vars-defined|node tests/css-vars-defined/check.cjs"
   "tutor-policy|node tests/tutor-policy/check.cjs"
+  "lesson-prompt-ceiling|node tests/lesson-prompt-ceiling/check.cjs"
   "lesson-session-scope|node tests/lesson-session-scope/check.cjs"
   "chat-reattach|node tests/chat-reattach/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"

@@ -40,5 +40,5 @@ Runtime callers gate auto-commit on `ok` — a known major (broken KaTeX, missin
 ## Constraints
 
 - Read-only plus the Babel parse via Bash. Do not edit files.
-- Do not run the full 17-test suite as separate checks — `test_lesson.cjs` already covers them; your added value is the greps above with precise line numbers.
+- Do not run the full 18-test suite as separate checks — `test_lesson.cjs` already covers them; your added value is the greps above with precise line numbers.
 - If the lesson root cannot be located, return a blocker (`reason: "cannot locate lesson root"`) rather than skipping the parse check.

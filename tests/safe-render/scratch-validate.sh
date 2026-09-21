@@ -2,7 +2,7 @@
 # Scratch-workspace validation of the safe renderer: bootstrap a throwaway workspace per
 # references/bootstrap.md, scaffold the template lesson, run its test_lesson.cjs, then boot
 # Vite and drive scratch/harness_check.cjs headless. See README.md.
-#   LESSON_SRC=<real lesson src .jsx>   optional; makes test_lesson.cjs meaningful (17/17)
+#   LESSON_SRC=<real lesson src .jsx>   optional; makes test_lesson.cjs meaningful (18/18)
 #   SAFE_RENDER_BROWSER=<chromium bin>  optional; else Playwright's own Chromium
 #   KEEP=1                              keep the temp workspace for inspection
 set -euo pipefail
@@ -20,6 +20,6 @@ sed -i 's/__SLUG_SNAKE__/demo/g; s/__SLUG__/demo/g; s/__COURSE_CODE__/DEMO101/g;
 [ -n "${LESSON_SRC:-}" ] && cp "$LESSON_SRC" "$L/src/demo.jsx"
 cp "$HERE/scratch/harness.html" "$L/harness.html"; cp "$HERE/scratch/harness.jsx" "$L/src/harness.jsx"; cp "$HERE/scratch/harness_check.cjs" "$L/harness_check.cjs"
 cd "$L"; npm install --silent
-if [ -n "${LESSON_SRC:-}" ]; then node test_lesson.cjs src/demo.jsx | tail -1 | tee /dev/stderr | grep -q "17/17 passed"
-else node test_lesson.cjs src/demo.jsx | tail -1 || true; echo "(placeholder src: content tests fail by design; set LESSON_SRC for 17/17)"; fi
+if [ -n "${LESSON_SRC:-}" ]; then node test_lesson.cjs src/demo.jsx | tail -1 | tee /dev/stderr | grep -q "18/18 passed"
+else node test_lesson.cjs src/demo.jsx | tail -1 || true; echo "(placeholder src: content tests fail by design; set LESSON_SRC for 18/18)"; fi
 node harness_check.cjs

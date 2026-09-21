@@ -37,7 +37,8 @@
 // (0.3-2.2k across the 48 lessons built so far, so ~27.7k assembled in the worst
 // case, RF/directional-couplers, in isolation mode). Headroom is ~0.2k on the
 // largest lesson: measure EVERY lesson before adding (tests/tutor-policy/sweep.mjs
-// does; tests/tutor-policy/check.cjs holds the ceiling in the gate), and pay for
+// does; tests/tutor-policy/check.cjs holds the ceiling in the gate; every lesson's
+// test_lesson.cjs T18 fails its own gate over it; the number is constants/promptBudget.js), and pay for
 // new text by rewriting a section, not by appending to one. The 2026-09-05 Stage 1
 // fix was paid for that way -- it added ~1.4k and the duplicated statements of the
 // dollar-math rule, the figure-is-a-format rule and the <<DESMOS>> cost rule were

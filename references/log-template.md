@@ -200,7 +200,7 @@ Skill: lesson-builder v0.1.0
 ## Phase 4 — Review
 - Code review findings: 2 unused imports, 1 missing @core alias usage (fixed)
 - Content review findings: topic 3 derivation missing explicit limit step (fixed)
-- Test results: 17/17 PASS on iteration 2
+- Test results: 18/18 PASS on iteration 2
 - Visual QA findings per medium:
   - SVG graphs: tangent-slope plot x-axis label clipped (fixed)
   - Manim animation: PASS on first check
