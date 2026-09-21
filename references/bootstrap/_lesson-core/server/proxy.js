@@ -9,6 +9,10 @@
 // /session/close, /upload, /chat, /chat/cancel, /sessions, /thread/open,
 // /thread/fold, /commit.
 //
+// Confinement. Every CLI spawn runs --restricted with a lesson-only write
+// scope and no CLAUDE.md, hooks or user MCP; a CLI too old for that is never
+// run, and the tutor routes answer 503 (§ "Tutor confinement" below).
+//
 // Thread sessions. A side thread does NOT share the main conversation's CLI
 // session: POST /thread/open returns a handle, and that handle's first /chat
 // turn runs `--resume <main session> --fork-session`, which forks a new CLI
@@ -63,6 +67,7 @@
 import express from "express";
 import cors from "cors";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
@@ -207,8 +212,11 @@ const findThreadHandle = (parentId, threadId) =>
 let nextChatNum = 1;
 let totalTokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cost: 0 };
 
+// No bare Edit or Write: a blanket grant let the tutor write anywhere the CLI
+// could reach. Writes are allowed only by the lesson-scoped rule in
+// writeTutorSettings(), and Bash only inside the sandbox it sets up.
 const ALLOWED_TOOLS = [
-  "Read", "Edit", "Write", "Grep", "Glob", "Bash", "WebSearch", "WebFetch", "Agent",
+  "Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch", "Agent",
   // Exa MCP via claude.ai account sync (used by research-agent)
   "mcp__claude_ai_Exa__web_search_exa",
   "mcp__claude_ai_Exa__web_fetch_exa",
@@ -378,6 +386,98 @@ function closeThreadsOf(parentId, reason) {
 const PROJECT_DIR = process.cwd();
 const ISOLATED_CWD = path.join(PROJECT_DIR, "server", ".isolated");
 
+// Tutor confinement. The tutor is student-facing: a student reads and steers
+// what it is told, so it must not carry any operator's instructions or reach.
+// Before this, every turn loaded each CLAUDE.md walking up from its cwd — the
+// lesson's, the workspace repo's, and the host box's operating manual — plus
+// the user's hooks and MCP servers, with Edit/Write/Bash granted everywhere.
+// Tutors acted on those manuals: one appended a handoff entry to a track
+// journal outside the lesson (tests/tutor-confinement/README.md).
+// Every spawn therefore runs:
+//   --restricted         no user/project/local settings, so no CLAUDE.md, no
+//                        hooks, no user MCP servers; file tools confined to
+//                        cwd + --add-dir (reads of course files still work);
+//                        Bash and WebFetch only because --tools names them.
+//   --settings           Edit/Write allowed only under the lesson dir; Bash
+//                        only inside the sandbox, which may write only there,
+//                        and never unsandboxed. failIfUnavailable: where the
+//                        sandbox cannot start, Bash is refused, not run bare.
+//   --permission-prompts none   anything not allowed above is denied.
+//   --plugin-dir         the workspace's .claude/agents (the tutor team), which
+//                        --restricted no longer discovers. Their names show up
+//                        namespaced as tutor-team:<agent>.
+// A CLI without these options is not run at all: TUTOR_UNCONFINED is logged
+// at startup and every route that would spawn it answers 503.
+const TUTOR_TOOLS = "Read,Edit,Write,Grep,Glob,Bash,WebSearch,WebFetch,Agent";
+const CONFINEMENT_FLAGS = ["--restricted", "--tools", "--settings", "--permission-prompts", "--plugin-dir", "--add-dir"];
+const CONFINEMENT_MISSING = (() => {
+  let text = "";
+  try {
+    const r = spawnSync(CLAUDE_CMD, ["--help"], { encoding: "utf8", shell: !SHELL_FREE, timeout: 20000 });
+    text = `${r.stdout || ""}\n${r.stderr || ""}`;
+  } catch (_) {}
+  // Whole-flag match: "--settings" must not be found inside "--setting-sources".
+  const missing = CONFINEMENT_FLAGS.filter((f) => !new RegExp(`(^|[\\s,])${f}(?=[\\s,=<]|$)`, "m").test(text));
+  if (missing.length) log("TUTOR_UNCONFINED", { claude: CLAUDE_CMD, missing, action: "every tutor route answers 503" });
+  return missing;
+})();
+const LESSON_WRITE_DIRS = [...new Set([LESSON_DIR, path.resolve(PROJECT_DIR)])];
+// Per-proxy files the CLI reads, outside the lesson dir so the tutor cannot
+// rewrite its own confinement or team. Settings go by path, not as a JSON
+// argument, because a shim install spawns through a shell that splits it.
+const TUTOR_DIR = fs.mkdtempSync(path.join(realpathOf(os.tmpdir()), "lesson-tutor-"));
+const TUTOR_SETTINGS = path.join(TUTOR_DIR, "settings.json");
+const TEAM_PLUGIN_DIR = path.join(TUTOR_DIR, "team");
+// Allow rules take the "//abs/path" form for an absolute path, and an Edit
+// rule covers Write too.
+function writeTutorSettings() {
+  fs.mkdirSync(TUTOR_DIR, { recursive: true });
+  fs.writeFileSync(TUTOR_SETTINGS, JSON.stringify({
+    permissions: { allow: LESSON_WRITE_DIRS.map((d) => `Edit(/${d}/**)`) },
+    sandbox: {
+      enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: true,
+      filesystem: { allowWrite: LESSON_WRITE_DIRS },
+    },
+  }, null, 2) + "\n");
+}
+// A plugin wrapping <workspace>/.claude/agents. Null when the workspace has no
+// registry, which is also how it was before: no team to delegate to.
+function teamPluginDir() {
+  const agents = path.join(REPO_DIR, ".claude", "agents");
+  if (!fs.existsSync(agents)) return null;
+  try {
+    fs.mkdirSync(path.join(TEAM_PLUGIN_DIR, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(path.join(TEAM_PLUGIN_DIR, ".claude-plugin", "plugin.json"), '{"name":"tutor-team","version":"1.0.0"}\n');
+    if (!fs.existsSync(path.join(TEAM_PLUGIN_DIR, "agents"))) fs.symlinkSync(agents, path.join(TEAM_PLUGIN_DIR, "agents"));
+    return TEAM_PLUGIN_DIR;
+  } catch (err) {
+    log("TUTOR_TEAM_UNAVAILABLE", { error: err.message });
+    return null;
+  }
+}
+process.on("exit", () => { try { fs.rmSync(TUTOR_DIR, { recursive: true, force: true }); } catch (_) {} });
+
+// Appends the confinement to a spawn's args and returns its env. Throws when
+// the CLI lacks an option, so no spawn path can run an unconfined tutor.
+function confine(args) {
+  if (CONFINEMENT_MISSING.length) throw new Error(`claude CLI lacks ${CONFINEMENT_MISSING.join(", ")}; the tutor is not run unconfined`);
+  writeTutorSettings();
+  args.push("--restricted", "--tools", TUTOR_TOOLS, "--settings", TUTOR_SETTINGS, "--permission-prompts", "none");
+  const team = teamPluginDir();
+  if (team) args.push("--plugin-dir", team);
+  const env = { ...process.env, MPLBACKEND: "agg" };
+  // Would load CLAUDE.md from every --add-dir, REPO_DIR's included.
+  delete env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD;
+  return env;
+}
+
+// Fail closed at the door as well: refuse before a session or a turn is set up.
+app.use(["/session/init", "/session/transfer", "/thread/fold", "/chat"], (req, res, next) => {
+  if (!CONFINEMENT_MISSING.length || req.path === "/cancel") return next();
+  log("TUTOR_REFUSED", { url: req.originalUrl, missing: CONFINEMENT_MISSING });
+  res.status(503).json({ error: { message: `The tutor is off: this claude CLI lacks ${CONFINEMENT_MISSING.join(", ")}, which keep it confined to the lesson. Update Claude Code and restart the proxy.` } });
+});
+
 function runClaude(args, stdinContent, isolated = false) {
   return new Promise((resolve, reject) => {
     const cwd = isolated ? ISOLATED_CWD : PROJECT_DIR;
@@ -386,7 +486,8 @@ function runClaude(args, stdinContent, isolated = false) {
       args.push("--add-dir", PROJECT_DIR);
     }
     args.push("--add-dir", REPO_DIR);
-    const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, env: { ...process.env, MPLBACKEND: "agg" } });
+    const env = confine(args);
+    const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, env });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (d) => (stdout += d.toString()));
@@ -432,9 +533,10 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
     args.push("--add-dir", PROJECT_DIR);
   }
   args.push("--add-dir", REPO_DIR);
+  const env = confine(args);
   // detached: the CLI leads its own process group so /chat/cancel can take
   // the whole tree down with one signal (see killTree).
-  const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, detached: !IS_WIN, env: { ...process.env, MPLBACKEND: "agg" } });
+  const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, detached: !IS_WIN, env });
   // Chunk boundaries fall wherever the pipe puts them — mid-object and mid-character both.
   // createNdjsonReader carries each across; server/ndjson.js has the why.
   const reader = createNdjsonReader(onEvent);

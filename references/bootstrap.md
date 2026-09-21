@@ -116,7 +116,7 @@ Create these at `<workspace_root>/` if missing. Do **not** overwrite existing fi
 | `$SKILL/references/bootstrap/workspace-root/env.local.example` | `<workspace_root>/.env.local` | Workspace-root only — each lesson's `vite.config.js` sets `envDir` to the workspace root, so this single file serves every lesson; do NOT copy one per lesson. Fill `VITE_DESMOS_KEY` (obtain from https://www.desmos.com/api). Never commit. |
 | `$SKILL/references/bootstrap/workspace-root/build-all.sh` | `<workspace_root>/build-all.sh` | `chmod +x build-all.sh`. Edit inventory once lessons exist. |
 | `$SKILL/references/bootstrap/workspace-root/netlify.toml` | `<workspace_root>/netlify.toml` | Only copy if deploying via Netlify. |
-| `$SKILL/references/bootstrap/workspace-root/.claude/agents/*.md` + `$SKILL/agents/*.md` | `<workspace_root>/.claude/agents/` | `mkdir -p` first. This registry is what the embedded chatbot's "YOUR TEAM" delegation uses at runtime (the spawned `claude` CLI discovers it by walking up from the lesson dir). Without it the tutor cannot delegate to graphics/QA/research agents. |
+| `$SKILL/references/bootstrap/workspace-root/.claude/agents/*.md` + `$SKILL/agents/*.md` | `<workspace_root>/.claude/agents/` | `mkdir -p` first. This registry is what the embedded chatbot's "YOUR TEAM" delegation uses at runtime (the lesson proxy hands it to the tutor's `claude` CLI as a plugin, since the CLI runs `--restricted` and discovers nothing itself). Without it the tutor cannot delegate to graphics/QA/research agents. |
 
 ### Step 4 — confirm and proceed
 
