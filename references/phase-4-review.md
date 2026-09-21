@@ -89,11 +89,11 @@ node test_lesson.cjs
 
 In update mode that `npm install` is a no-op — § Prerequisites warmed the worktree's `node_modules/` once for the whole phase.
 
-`test_lesson.cjs` executes the 17-test suite defined below. Capture the full pass/fail breakdown and feed it into the compile-findings step as another reviewer.
+`test_lesson.cjs` executes the 18-test suite defined below. Capture the full pass/fail breakdown and feed it into the compile-findings step as another reviewer.
 
-#### The 17-test suite
+#### The 18-test suite
 
-The canonical executable ships at `references/bootstrap/lesson-template/test_lesson.cjs` and is copied into each lesson root at scaffold time. The test-by-test summary (T1 Babel parse … T17 no direct API) lives in `references/checklists.md` § "17-test suite summary" — the code is the source of truth; do not re-derive test semantics from prose.
+The canonical executable ships at `references/bootstrap/lesson-template/test_lesson.cjs` and is copied into each lesson root at scaffold time. The test-by-test summary (T1 Babel parse … T18 prompt fits the ceiling) lives in `references/checklists.md` § "18-test suite summary" — the code is the source of truth; do not re-derive test semantics from prose.
 
 ### 4. Visual-QA per artifact
 
@@ -279,7 +279,7 @@ Main Claude assembles the issue list across all reviewers into a single structur
 |---|---|
 | `code-review-agent` | each entry in `blockers`/`majors`/`minors` → one record at that severity; confidence 1.0 for grep/parse-backed items, else 0.8 |
 | `content-review-agent` | issues carry severity + confidence already; location = its `location`; prefix `description` with the `kind` (e.g. `[missing_inference] …`) so discourse findings stay distinguishable in the trace; discourse issues also carry `learner_cost` + `contract` — keep them in the record; `topic_gates`, `rubric`, and `diagnostics` are logged verbatim under the pedagogy-gate line, and only the rubric gates above become issues |
-| 17-test suite / build / Babel | one record per failing test, severity blocker, confidence 1.0, location = test id + file |
+| 18-test suite / build / Babel | one record per failing test, severity blocker, confidence 1.0, location = test id + file |
 | `visual-qa-agent` | each `findings[]` entry → severity `fail`→major, `issue`→minor; location = artifact + its `location` field |
 | `scientific-accuracy-agent` | verdict `fail` → one major (confidence 0.9), `issue` → one minor (0.7); location = artifact; details = description |
 | `interaction-agent` | verdict `fail` → one major per broken control named in details (confidence 0.9); `issue` → minor; `unavailable` → no record, log coverage gap |
@@ -300,12 +300,12 @@ The loop combines hard metric signals and LLM self-assessment. The guiding princ
 - Code and content issues → **main Claude applies the fix directly** (it assembled the file and holds full context), guided by the reviewer's issue list and `suggested_fix` directions.
 - After a fix iteration, the affected reviewers re-run fresh on the changed artifacts — "affected" includes any medium that shares a helper, component, or style with the changed code, not just the artifact named in the finding.
 
-**Fix ordering**: deterministic failures first — Babel parse, the 17-test suite, build errors — because they are unambiguous and other findings may be their symptoms. LLM-reviewer findings follow, by severity. Findings with confidence < ~0.4 and severity `minor` are logged as known-issues rather than fixed: reviewer noise below that bar churns the loop for no quality gain.
+**Fix ordering**: deterministic failures first — Babel parse, the 18-test suite, build errors — because they are unambiguous and other findings may be their symptoms. LLM-reviewer findings follow, by severity. Findings with confidence < ~0.4 and severity `minor` are logged as known-issues rather than fixed: reviewer noise below that bar churns the loop for no quality gain.
 
 ### Metrics (hard signals per issue)
 
 - **Issue count must decrease per iteration.** If the total number of open issues does not strictly decrease from iteration N to N+1 for a given issue thread, that is a stall.
-- **Test pass rate must increase per iteration.** If the 17-test pass count does not increase (or the same tests fail twice), that is a stall on test-category issues.
+- **Test pass rate must increase per iteration.** If the 18-test pass count does not increase (or the same tests fail twice), that is a stall on test-category issues.
 - **Diff size per fix.** The diff applied by the fix iteration should shrink as the loop converges (each fix gets more surgical). A re-growing diff is a signal of churning — the fix agent is rewriting, not refining.
 - **Iteration count.** Soft cap at 3 iterations — an input signal, not a hard max: if metrics say "iteration 4 would converge", allow it; if iteration 2 is already regressing, halt before 3. Absolute cap at 6 iterations regardless of metrics; a loop that needs more is telling you the plan or the brief is wrong.
 
@@ -328,8 +328,8 @@ Each iteration is logged with: issues-before count, issues-after count, test pas
 
 A lesson enters Phase 4 with 6 issues: 2 blockers (T2 KaTeX bare `<` on two lines, T14 TOPIC_CONTEXT key mismatch), 3 majors (visual-qa-agent reports an off-axis label on graph 2, content-review-agent reports a missing variable definition, Playwright reports a console error on dock switch), 1 minor (checklist: missing `finally` block in `sendMessage`).
 
-- **Iteration 1**. Fix agent addresses all 6 in one pass. Diff is 42 lines. Post-iteration re-review: 2 blockers resolved, graph-2 label moved but visual-qa now flags the moved label as overlapping the curve, content variable definition added, Playwright console error still present (dock switch unhandled), `finally` block added. New issue count: 3 (1 fresh major from the label move, 2 carried over). Test pass rate: 15/17 → 17/17. Self-assessment: "improving". Continue.
-- **Iteration 2**. Fix agent targets the 3 remaining: repositions the label with a fixed offset, traces the dock-switch console error to a stale ref read after the panel moved slots. Diff is 18 lines (shrinking — good sign). Post-iteration: 0 issues. Test pass rate: 17/17. Self-assessment: "improving". Loop closes cleanly.
+- **Iteration 1**. Fix agent addresses all 6 in one pass. Diff is 42 lines. Post-iteration re-review: 2 blockers resolved, graph-2 label moved but visual-qa now flags the moved label as overlapping the curve, content variable definition added, Playwright console error still present (dock switch unhandled), `finally` block added. New issue count: 3 (1 fresh major from the label move, 2 carried over). Test pass rate: 16/18 → 18/18. Self-assessment: "improving". Continue.
+- **Iteration 2**. Fix agent targets the 3 remaining: repositions the label with a fixed offset, traces the dock-switch console error to a stale ref read after the panel moved slots. Diff is 18 lines (shrinking — good sign). Post-iteration: 0 issues. Test pass rate: 18/18. Self-assessment: "improving". Loop closes cleanly.
 - **Logged**: 2 iterations, both improving, no stop rules fired, 6 → 0 issues.
 
 A counter-example that halts: same starting state, but iteration 1 fixes only 1 issue and introduces 2 new ones. Diff is 80 lines (larger than needed). Iteration 2 fixes 1 more but introduces 1 new. Diff is 95 lines (growing). Metrics: issue count 6 → 7 → 7 (no strict decrease), diff growing. Self-assessment: "stalled" then "no meaningful progress". Stop rule fires at end of iteration 2, 4 issues logged as unresolved, loop terminates.
@@ -388,7 +388,7 @@ Sub-sections under the Phase 4 header:
 - Code review findings: [count by severity, representative examples]
 - Content review findings: [count by severity, representative examples]
 - Discourse findings: [count by kind (sequence / missing_inference / explanation / paragraph_unity / cohesion / representation_mismatch / redundancy / example_function / analogy / seductive_detail / register / …), majors vs minors, arc check per topic, gate answers, rubric per topic with gates tripped, lint summary]
-- Test results: [17/17 PASS | X/17 with failing test ids]
+- Test results: [18/18 PASS | X/18 with failing test ids]
 - Visual QA findings per medium:
   - SVG: [visual-qa + scientific-accuracy verdicts, findings]
   - Matplotlib: [visual-qa + scientific-accuracy verdicts, findings]

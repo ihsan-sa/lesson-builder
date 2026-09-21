@@ -1,6 +1,6 @@
 # Lesson Builder Checklists
 
-Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Exposition (discourse) · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 17-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
+Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Exposition (discourse) · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 18-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
 
 ## Purpose
 
@@ -269,7 +269,7 @@ The `<Chatbot>` signature expanded with the graph-schema feature.
 
 ## Automated checks (T1-T3 raw commands)
 
-Three lightweight checks Phase 4's `code-review-agent` runs first, before the full 17-test suite. Catches most Phase 3 splice errors cheaply.
+Three lightweight checks Phase 4's `code-review-agent` runs first, before the full 18-test suite. Catches most Phase 3 splice errors cheaply.
 
 **T1 — Babel JSX parse** (run once per lesson file):
 
@@ -303,9 +303,9 @@ grep -n '<h[234]>.*[<>].*</h[234]>' FILEPATH | grep -v '{"' \
 
 ---
 
-## 17-test suite summary
+## 18-test suite summary
 
-Phase 4 runs the suite via `node test_lesson.cjs`; each lesson ships its own `test_lesson.cjs` running these 17 tests against `src/<slug>.jsx`.
+Phase 4 runs the suite via `node test_lesson.cjs`; each lesson ships its own `test_lesson.cjs` running these 18 tests against `src/<slug>.jsx`.
 
 - **T1** — JSX Babel parse. Catches syntax errors and the most common KaTeX escape mistakes.
 - **T2** — KaTeX safety: no bare `<` in `{"..."}` string expressions (whitelist: `\\lt`, `\\leq`, `\\left`, `\\ll`, `\\lambda`, `\\langle`, `\\ldots`).
@@ -324,6 +324,7 @@ Phase 4 runs the suite via `node test_lesson.cjs`; each lesson ships its own `te
 - **T15** — Imports `useKatex` from `@core`.
 - **T16** — `LessonApp` renders `<Chatbot>` with a `courseCode` prop.
 - **T17** — Imports `Chatbot` from `@core` (not a local copy) AND does NOT reference `api.anthropic.com` (all chat routed through local proxy).
+- **T18** — The assembled tutor prompt (`buildSystemPrompt` from `@core` over this lesson's `LESSON_CONTEXT`, larger of isolation / shared-memory mode) is within the proxy's argv ceiling, `SYSTEM_ARGV_CEILING` in `@core/constants/promptBudget.js`. Fails naming the size, the ceiling and the overflow; passes printing the headroom left. Above the ceiling the prompt is demoted into stdin and loses priority, and nothing else fails.
 
 ---
 

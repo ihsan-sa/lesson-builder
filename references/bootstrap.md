@@ -60,7 +60,7 @@ references/bootstrap/
     index.html               Placeholders: __COURSE_CODE__, __LESSON_TITLE__
     src/main.jsx             Placeholder: __SLUG_SNAKE__
     server/proxy.js          1-line shim
-    test_lesson.cjs          17-test QA suite (content-agnostic; identical
+    test_lesson.cjs          18-test QA suite (content-agnostic; identical
                              across every lesson in the reference workspace)
     CLAUDE.md                Per-lesson project doc. Placeholders: __SLUG__,
                              __SLUG_SNAKE__, __COURSE_CODE__, __LESSON_TITLE__
@@ -142,13 +142,13 @@ When Phase 3 of new mode creates the first lesson, copy the skeleton from `refer
    - `__SLUG_SNAKE__` → snake form in `package.json` `test` script, `src/main.jsx`, and `CLAUDE.md`.
    - `__COURSE_CODE__` + `__LESSON_TITLE__` → display-friendly strings in `index.html` and `CLAUDE.md`.
 3. From the lesson root: `npm install`.
-4. Run `node test_lesson.cjs src/<slug_snake>.jsx` to confirm the skeleton parses. Only T1 (Babel parse) + T4 (`export default`) pass against the shipped placeholder; content-dependent tests (T5-T17) fail until Phase 3 assembly writes the real `LessonApp`, `TOPICS`, `TOPIC_CONTEXT`, `LESSON_CONTEXT`, and `GRAPH_SCHEMA`.
+4. Run `node test_lesson.cjs src/<slug_snake>.jsx` to confirm the skeleton parses. Only T1 (Babel parse) + T4 (`export default`) pass against the shipped placeholder; content-dependent tests (T5-T18) fail until Phase 3 assembly writes the real `LessonApp`, `TOPICS`, `TOPIC_CONTEXT`, `LESSON_CONTEXT`, and `GRAPH_SCHEMA`.
 
 For update mode, none of this scaffolding runs — the lesson already exists.
 
 ## Acceptance criteria
 
-Bootstrap alone gets the workspace to "lesson template ships and dev server boots". Reaching `17/17 passed` requires bootstrap **plus** a full new-mode pipeline run (Phases 0-4) that fills in `LessonApp`, `TOPICS`, `TOPIC_CONTEXT`, `LESSON_CONTEXT`, and `GRAPH_SCHEMA`. The checklist below therefore measures the combined outcome.
+Bootstrap alone gets the workspace to "lesson template ships and dev server boots". Reaching `18/18 passed` requires bootstrap **plus** a full new-mode pipeline run (Phases 0-4) that fills in `LessonApp`, `TOPICS`, `TOPIC_CONTEXT`, `LESSON_CONTEXT`, and `GRAPH_SCHEMA`. The checklist below therefore measures the combined outcome.
 
 After bootstrap + new-mode Phases 0-4 on the supplied skeleton the fresh workspace must reach:
 
@@ -156,7 +156,7 @@ After bootstrap + new-mode Phases 0-4 on the supplied skeleton the fresh workspa
 - `claude` CLI is on `PATH` (the proxy spawns it per chat session; without it the proxy boots but `/chat` errors on first use). The skill does not install it — confirm with `claude --version` before declaring bootstrap done.
 - `node server/proxy.js` starts, writes `server/.proxy.json` (identity: port, lessonDir, pid, startedAt — what the Vite plugin resolves through) and `server/.proxy-port` (bare port number, kept for older tooling), and the proxy serves `/chat` without error.
 - `npx vite` starts, the page renders with KaTeX-rendered math, the chatbot bubble appears (dev builds only), and the Ctrl+Click context gate works.
-- `node test_lesson.cjs src/<slug_snake>.jsx` → `Results: 17/17 passed, 0 failed`.
+- `node test_lesson.cjs src/<slug_snake>.jsx` → `Results: 18/18 passed, 0 failed`.
 - If the lesson embeds `<DesmosGraph/>` and `VITE_DESMOS_KEY` is populated, the graph renders; if the key is blank the red fallback appears (loud, expected).
 
 If any of these fail on a fresh workspace, the canonical payload in `references/bootstrap/` is the first place to look for drift from the working reference.

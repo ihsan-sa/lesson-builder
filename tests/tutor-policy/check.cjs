@@ -9,7 +9,7 @@
  * "independent" or "with help" (the lessons repo's distill-chats reads the transcript for those
  * two words); and a study record named by a lesson's LESSON_CONTEXT is read once at the start
  * of the session, not every turn. Both ride in the system prompt, which the proxy passes on
- * argv only while it is <= 28000 chars (`server/proxy.js` withSystemPrompt, chat.py MAX_SYSTEM
+ * argv only while it is <= SYSTEM_ARGV_CEILING chars (`server/proxy.js` withSystemPrompt, chat.py MAX_SYSTEM
  * on the hosted tutor) — so the third case assembles the prompt over a LESSON_CONTEXT as long
  * as the longest in the lessons sweep and holds the ceiling. Each case fails without the change
  * it is about: case 1 without the policy text, case 2 without the once rule, case 3 without the
@@ -26,8 +26,8 @@ const { pathToFileURL } = require('url');
 const SKILL = path.resolve(__dirname, '..', '..');
 const PROMPT_JS = path.join(SKILL, 'references', 'bootstrap', '_lesson-core', 'chat', 'buildSystemPrompt.js');
 
-// The argv ceiling, verbatim from server/proxy.js and lessons/chat.py.
-const CEILING = 28000;
+// The argv ceiling (server/proxy.js, lessons/chat.py): read from its one source, below.
+const PROMPT_BUDGET_JS = path.join(SKILL, 'references', 'bootstrap', '_lesson-core', 'constants', 'promptBudget.js');
 // The longest LESSON_CONTEXT in the lessons sweep: RF/directional-couplers, 2240 chars on
 // 2026-09-20 over 48 lessons (`node tests/tutor-policy/sweep.mjs` prints the current one).
 // Bump it when the sweep grows, and the case says whether the prompt still fits.
@@ -53,6 +53,7 @@ function syntheticContext(n) {
 (async () => {
   const { buildSystemPrompt, PEDAGOGY_POLICY, STUDY_RECORD_RULE, FILE_ACCESS_LINE } =
     await import(pathToFileURL(PROMPT_JS).href);
+  const { SYSTEM_ARGV_CEILING: CEILING } = await import(pathToFileURL(PROMPT_BUDGET_JS).href);
   // Longer than any real lesson's, so the ceiling case measures a prompt at least as
   // long as the one a lesson assembles.
   const props = {

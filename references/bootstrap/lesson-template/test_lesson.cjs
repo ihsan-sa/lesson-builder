@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
+// T1-T18, run against one lesson source. T18 measures the tutor prompt the lesson assembles
+// against the proxy's argv ceiling (see the test).
 const file = process.argv[2];
 if (!file) { console.log('Usage: node test_lesson.cjs <file.jsx>'); process.exit(1); }
 
@@ -15,6 +17,11 @@ function test(name, fn) {
     else { failed++; console.log(`  FAIL: ${name}`); }
   } catch(e) { failed++; console.log(`  FAIL: ${name} — ${e.message}`); }
 }
+
+// Tests that need an async step (the tutor prompt lives in an ES module). Run after the
+// sync ones, in order, before the summary.
+const asyncTests = [];
+function testAsync(name, fn) { asyncTests.push({ name, fn }); }
 
 console.log(`\nTesting: ${path.basename(file)}\n${'='.repeat(50)}`);
 
@@ -198,6 +205,94 @@ test('T17 — Uses @core Chatbot (no direct api.anthropic.com)', () => {
   return importsChatbot && !usesDirectApi;
 });
 
-console.log(`\n${'='.repeat(50)}`);
-console.log(`Results: ${passed}/${total} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+// T18: the assembled tutor prompt fits under the proxy's argv ceiling
+//
+// The proxy passes the system prompt on argv only while it is <= SYSTEM_ARGV_CEILING chars;
+// above that it is demoted into stdin and loses priority, and nothing else fails: the
+// build passes and the lesson serves. buildSystemPrompt (from @core) plus this lesson's
+// LESSON_CONTEXT is what the chat sends, so measure exactly that, in both memory modes,
+// and fail on the larger. Course code/name, institution and lessonFile come from the
+// <Chatbot> mount when they are string literals, else from long stand-ins (so an
+// unreadable prop errs toward failing, never toward passing).
+testAsync('T18 — Assembled tutor prompt fits under the argv ceiling', async () => {
+  const { pathToFileURL } = require('url');
+  const parser = require('@babel/parser');
+  const ast = parser.parse(code, { sourceType: 'module', plugins: ['jsx'] });
+
+  // The core sits at <workspace>/_lesson-core, three levels above the lesson root
+  // (vite.config.js's @core alias); this file lives in the lesson root.
+  const coreDir = path.resolve(__dirname, '..', '..', '..', '_lesson-core');
+  const promptJs = path.join(coreDir, 'chat', 'buildSystemPrompt.js');
+  const budgetJs = path.join(coreDir, 'constants', 'promptBudget.js');
+  for (const f of [promptJs, budgetJs]) {
+    if (!fs.existsSync(f)) {
+      console.log(`    ${f} not found: sync the skill's _lesson-core into the workspace`);
+      return false;
+    }
+  }
+  const { buildSystemPrompt } = await import(pathToFileURL(promptJs).href);
+  const { SYSTEM_ARGV_CEILING } = await import(pathToFileURL(budgetJs).href);
+
+  const strOf = (n) => {
+    if (!n) return null;
+    if (n.type === 'StringLiteral') return n.value;
+    if (n.type === 'JSXExpressionContainer') return strOf(n.expression);
+    if (n.type === 'TemplateLiteral' && n.expressions.length === 0) return n.quasis[0].value.cooked;
+    return null;
+  };
+
+  let ctxNode = null;
+  const chatbotAttrs = {};
+  (function walk(n) {
+    if (!n || typeof n.type !== 'string') return;
+    if (n.type === 'VariableDeclarator' && n.id && n.id.name === 'LESSON_CONTEXT' && n.init) ctxNode = n.init;
+    if (n.type === 'JSXOpeningElement' && n.name && n.name.name === 'Chatbot') {
+      for (const a of n.attributes) if (a.type === 'JSXAttribute') chatbotAttrs[a.name.name] = strOf(a.value);
+    }
+    for (const k of Object.keys(n)) {
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') walk(v);
+    }
+  })(ast.program);
+
+  if (!ctxNode) { console.log('    Could not locate the LESSON_CONTEXT declaration'); return false; }
+  let lessonContext = strOf(ctxNode);
+  if (lessonContext === null && ctxNode.type === 'TemplateLiteral') {
+    // ${...} inside: the expression's own source stands in for its value (approximate).
+    lessonContext = ctxNode.quasis.map((q, i) =>
+      q.value.cooked + (ctxNode.expressions[i] ? code.slice(ctxNode.expressions[i].start, ctxNode.expressions[i].end) : '')).join('');
+  }
+  if (lessonContext === null) { console.log('    LESSON_CONTEXT is not a string or template literal; cannot measure it'); return false; }
+
+  const props = {
+    courseCode: chatbotAttrs.courseCode || 'ECE 999',
+    courseName: chatbotAttrs.courseName || 'Some Long Course Name For Measuring',
+    institution: chatbotAttrs.institution || 'University of Waterloo',
+    lessonFile: chatbotAttrs.lessonFile || 'src/some_lesson.jsx',
+    lessonContext,
+  };
+  const modes = [['isolation', true], ['shared-memory', false]].map(([mode, isolatedFlag]) =>
+    ({ mode, size: buildSystemPrompt({ ...props, isolatedFlag }).length }));
+  const worst = modes.reduce((a, b) => (b.size > a.size ? b : a));
+  const over = worst.size - SYSTEM_ARGV_CEILING;
+  if (over > 0) {
+    console.log(`    tutor prompt ${worst.size} chars (${worst.mode} mode, LESSON_CONTEXT ${lessonContext.length}) > ceiling ${SYSTEM_ARGV_CEILING}: over by ${over}`);
+    console.log(`    above the ceiling the proxy demotes the prompt into stdin; shorten LESSON_CONTEXT by at least ${over} chars`);
+    return false;
+  }
+  console.log(`    tutor prompt ${worst.size} chars (${worst.mode} mode, LESSON_CONTEXT ${lessonContext.length}), ceiling ${SYSTEM_ARGV_CEILING}, headroom ${-over}`);
+  return true;
+});
+
+(async () => {
+  for (const { name, fn } of asyncTests) {
+    total++;
+    try {
+      if (await fn()) { passed++; console.log(`  PASS: ${name}`); }
+      else { failed++; console.log(`  FAIL: ${name}`); }
+    } catch (e) { failed++; console.log(`  FAIL: ${name} — ${e.message}`); }
+  }
+  console.log(`\n${'='.repeat(50)}`);
+  console.log(`Results: ${passed}/${total} passed, ${failed} failed`);
+  process.exit(failed > 0 ? 1 : 0);
+})();
