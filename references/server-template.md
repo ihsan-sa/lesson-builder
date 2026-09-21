@@ -183,9 +183,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(<LessonApp />);
 
 The lesson content file must default-export a component called `LessonApp`; this is enforced by T4 (export default) in the test suite.
 
-## `test_lesson.cjs` (17-test validation suite)
+## `test_lesson.cjs` (18-test validation suite)
 
-Run as `node test_lesson.cjs src/<slug_underscored>.jsx` (or `npm test`). The script reads the lesson JSX file and runs 17 structural / content checks against it. Tests:
+Run as `node test_lesson.cjs src/<slug_underscored>.jsx` (or `npm test`). The script reads the lesson JSX file and runs 18 structural / content checks against it. Tests:
 
 | # | Name | Check |
 |---|------|-------|
@@ -206,8 +206,9 @@ Run as `node test_lesson.cjs src/<slug_underscored>.jsx` (or `npm test`). The sc
 | T15 | `useKatex` hook | Imports `useKatex` from `@core`. |
 | T16 | `<Chatbot>` render | File renders `<Chatbot>` with a `courseCode=` prop. |
 | T17 | No direct API | Imports `Chatbot` from `@core` (not a local copy) and does NOT contain `api.anthropic.com` (all chat routed through the local proxy). |
+| T18 | Tutor prompt fits | `buildSystemPrompt` from `@core` over the lesson's `LESSON_CONTEXT`, in the larger of the two memory modes, is <= `SYSTEM_ARGV_CEILING` (`@core/constants/promptBudget.js`). Fails naming size, ceiling and overflow; passes printing the headroom. |
 
-The canonical executable is `references/bootstrap/lesson-template/test_lesson.cjs` — copy it verbatim; it is content-agnostic and works on every lesson. The suite is also summarized in `references/checklists.md` ("17-test suite summary").
+The canonical executable is `references/bootstrap/lesson-template/test_lesson.cjs` — copy it verbatim; it is content-agnostic and works on every lesson. The suite is also summarized in `references/checklists.md` ("18-test suite summary").
 
 ## `.gitignore` (per-lesson runtime carve-outs)
 

@@ -21,7 +21,7 @@
 - `src/main.jsx` -- React entry point
 - `server/proxy.js` -- 1-line shim importing the shared proxy from `_lesson-core`
 - `vite.config.js` -- `@core` alias, `envDir`, and the `lessonChatProxy` plugin (never a `server.proxy` block for the chat routes)
-- `test_lesson.cjs` -- 17-test automated QA suite
+- `test_lesson.cjs` -- 18-test automated QA suite
 - `index.html` -- HTML shell
 
 ## Testing

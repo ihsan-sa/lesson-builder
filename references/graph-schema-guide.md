@@ -111,7 +111,7 @@ chatbot surfaces a rejection instead of a silently-clamped value.
 Every `DEFAULT_GRAPH_PARAMS[graphKey][paramKey]` **must** have a matching
 `GRAPH_SCHEMA[graphKey][paramKey]`, and nothing else. The Phase 3
 post-splice sanity pass (`references/phase-3-execution.md` section 4.6)
-enforces this by diffing the top-level key sets. The 17-test suite does
+enforces this by diffing the top-level key sets. The 18-test suite does
 NOT currently enforce schema-key alignment; main Claude must rely on the
 sanity pass. Adding a dedicated test is tracked as a follow-up.
 
@@ -237,7 +237,7 @@ ignores `description`.
 
 After writing `GRAPH_SCHEMA`, main Claude runs the following checks.
 All are part of the Phase 3 post-splice sanity pass
-(`references/phase-3-execution.md` section 4.6). The 17-test suite does
+(`references/phase-3-execution.md` section 4.6). The 18-test suite does
 NOT currently enforce schema-key alignment; the sanity pass is the
 backstop.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # KaTeX CDN fallback evidence. Bootstraps a throwaway workspace per
 # references/bootstrap.md, scaffolds the template lesson with this directory's
-# demo body, runs test_lesson.cjs (must be 17/17), boots Vite and drives
+# demo body, runs test_lesson.cjs (must be 18/18), boots Vite and drives
 # check.cjs against it. See README.md.
 #
 # Teardown: on success, on failure and on Ctrl-C, SIGTERM or SIGHUP the trap
@@ -71,12 +71,12 @@ L="$WS/course/claude_lessons/katex-demo"; mkdir -p "$L"; cp -r "$B/lesson-templa
 mv "$L/src/__SLUG_SNAKE__.jsx" "$L/src/katex_demo.jsx"
 sed -i 's/__SLUG_SNAKE__/katex_demo/g; s/__SLUG__/katex-demo/g; s/__COURSE_CODE__/DEMO 101/g; s/__LESSON_TITLE__/KaTeX Fallback Demo/g' \
   "$L/package.json" "$L/src/main.jsx" "$L/CLAUDE.md" "$L/index.html"
-# The committed demo body: a real lesson (17/17) whose only job is to carry
+# The committed demo body: a real lesson (18/18) whose only job is to carry
 # display and inline math through the shell's loading gate.
 cp "$HERE/lesson/katex_demo.jsx" "$L/src/katex_demo.jsx"
 
 cd "$L"; npm install --silent
-node test_lesson.cjs src/katex_demo.jsx | tail -1 | tee /dev/stderr | grep -q "17/17 passed"
+node test_lesson.cjs src/katex_demo.jsx | tail -1 | tee /dev/stderr | grep -q "18/18 passed"
 
 npx vite --port "$PORT" --strictPort >"$WS/vite.log" 2>&1 &
 VITE_PID=$!

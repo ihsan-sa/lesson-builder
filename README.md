@@ -87,7 +87,7 @@ The skill's gates assume a user at a terminal, which is one of three session mod
 - **Shared core at `_lesson-core/`**: lessons import chat, UI primitives, proxy via `@core`. Never inline chat code.
 - **Per-run record** at `<lesson_root>/.lesson-builder/runs/<run_id>.json` (schema `lesson-run/1`): scoping artifact, plan hash and approval, branch, base SHA and build worktree, media manifests, open findings. `scripts/run-manifest.cjs` is the only reader and writer, and the headless approval gate decides on it. The per-lesson log at `<lesson_root>/lesson_build.log.md` is rendered from those records; a log written before records existed is kept as it is.
 - **A worktree per update run** at `<lesson_root>/.lesson-builder/worktrees/<run_id>/`, checked out from the recorded base SHA. The build, the commit and the merge all happen there, so the user's working tree is byte-identical from Phase 0 to the end of Phase 5 apart from the run's own gitignored `.lesson-builder/` and the rendered `lesson_build.log.md` — nothing is stashed, no branch is switched, nothing else is written into their checkout.
-- **17-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, TOPIC_CONTEXT invariants, template compliance, no inlined chat, no emojis, no direct API calls).
+- **18-test QA suite** runs in Phase 4 (Babel parse, KaTeX safety, TOPIC_CONTEXT invariants, template compliance, no inlined chat, no emojis, no direct API calls).
 - **`GRAPH_SCHEMA` is mandatory**: pairs with `DEFAULT_GRAPH_PARAMS` to type-check chatbot `<<EDIT_GRAPH>>` edits. Missing schemas are backfilled in Phase 3.
 
 ## Directory layout
