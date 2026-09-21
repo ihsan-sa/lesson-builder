@@ -23,7 +23,8 @@ and dropped the reply (owner, 2026-09-11: "they shouldn't be dropped").
 4. **A replay that dies too** is asked again, at most `tries` times.
 5. **The reader** drops `: keepalive` comment lines and keeps an event split across chunks.
 6. **A reloaded tab attaches only when it is missing the end of a turn**: a turn in flight, or a
-   finished, uncancelled one whose saved tail is the question or a `partial` bubble.
+   finished, uncancelled one whose saved tail is the question or a `partial` bubble, and whose
+   `lastTurn.msg` reaches that question (an earlier turn is never replayed under a new question).
 7. **Two chats on one topic have different tab labels** (`Derivatives #3`, `Derivatives #4`); a
    topic one tab has keeps its plain label. The premise was probed first: two chats on one topic
    are two sessions with their own transcripts.

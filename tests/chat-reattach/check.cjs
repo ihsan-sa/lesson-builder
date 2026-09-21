@@ -206,6 +206,12 @@ function bubble(T, messages) {
       T.needsAttach(s(null, finished), [user, { role: 'assistant', content: 'ha', partial: true },
         { role: 'assistant', content: 'Connection error: x', partial: true }]) === true);
     check('finished and answered: no attach', T.needsAttach(s(null, finished), [user, done]) === false);
+    check('lastTurn is an earlier turn and the tail is a question it never ran: no attach',
+      T.needsAttach(s(null, { ...finished, msg: 1 }), [user, done, user]) === false);
+    check('…nor when that question\'s POST threw and left a partial error line',
+      T.needsAttach(s(null, { ...finished, msg: 1 }), [user, done, user,
+        { role: 'assistant', content: 'Connection error: x', partial: true }]) === false);
+    check('lastTurn with no msg count is not trusted', T.needsAttach(s(null, { outcome: 'done', at: 1 }), [user]) === false);
     check('a fold card after the answer is not a question',
       T.needsAttach(s(null, finished), [user, done, { role: 'fold', content: 'f' }]) === false);
     check('cancelled (the student stopped it): no attach',

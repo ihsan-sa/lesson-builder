@@ -131,13 +131,20 @@ export function tailUnanswered(messages) {
   return false;
 }
 
-// Bootstrap rule: attach a restored chat when its turn is still running, or
-// when its last turn finished (not cancelled -- the student stopped that one)
-// after the tab last saw it. `s` is the chat's /sessions entry.
+// Bootstrap rule: "when /sessions lists a session with turn set (in flight) or
+// a lastTurn newer than what the tab has". `s` is the chat's /sessions entry.
+// lastTurn.msg is the server's message count when that turn started, so it is
+// the turn the tab lost only when it is at least the number of questions the
+// transcript asked. A question whose POST never reached the server (the page
+// went first, or the request threw) leaves lastTurn on the turn before it:
+// attaching then would replay the previous reply under the new question and
+// fire its side effects twice. Cancelled is the student's own stop: no attach.
 export function needsAttach(s, messages) {
   if (!s) return false;
   if (s.turn) return true;
-  return !!(s.lastTurn && s.lastTurn.outcome !== "cancelled" && tailUnanswered(messages));
+  if (!s.lastTurn || s.lastTurn.outcome === "cancelled" || !tailUnanswered(messages)) return false;
+  const asked = (messages || []).filter(m => m.role === "user").length;
+  return typeof s.lastTurn.msg === "number" && s.lastTurn.msg >= asked;
 }
 
 // Drop the half-built reply at the end of a transcript -- the streaming
