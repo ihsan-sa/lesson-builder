@@ -1,0 +1,28 @@
+#!/usr/bin/env node
+// Fake `claude` for tests/tutor-confinement. Records every spawn's argv, cwd and
+// the one env var the proxy must strip into $FAKE_RECORD (one JSON line each),
+// then answers like the CLI's -p protocol. FAKE_HELP_OMIT names an option to
+// leave out of --help, which is how a CLI too old to confine the tutor looks.
+const fs = require("fs");
+const args = process.argv.slice(2);
+if (process.env.FAKE_RECORD) fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, cwd: process.cwd(), addDirsClaudeMd: process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD ?? null }) + "\n");
+if (args.includes("--version")) { console.log("fake-claude 0.0.0"); process.exit(0); }
+if (args.includes("--help")) {
+  const flags = ["--add-dir <directories...>", "--restricted", "--tools <tools...>", "--settings <file-or-json>", "--setting-sources <sources>", "--permission-prompts <target>", "--plugin-dir <path>"];
+  const omit = process.env.FAKE_HELP_OMIT;
+  console.log(flags.filter((f) => f.split(" ")[0] !== omit).map((f) => `  ${f}`).join("\n"));
+  process.exit(0);
+}
+let stdin = "";
+process.stdin.on("data", (d) => (stdin += d));
+process.stdin.on("end", () => {
+  const fmt = args[args.indexOf("--output-format") + 1];
+  const r = args.indexOf("--resume");
+  const sid = r >= 0 ? args[r + 1] : require("crypto").randomUUID();
+  const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+  const result = { type: "result", session_id: sid, result: "ok", usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0 };
+  if (fmt === "json") return emit(result);
+  emit({ type: "system", subtype: "init", session_id: sid });
+  emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+  emit(result);
+});

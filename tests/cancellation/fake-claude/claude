@@ -12,6 +12,8 @@
 // 0 with no result — a graceful shutdown the proxy must still count as cancelled.
 const args = process.argv.slice(2);
 if (args.includes("--version")) { console.log("fake-claude 0.0.0"); process.exit(0); }
+// The proxy refuses a CLI whose --help lacks the options that confine the tutor.
+if (args.includes("--help")) { console.log("  --add-dir <directories...>\n  --restricted\n  --tools <tools...>\n  --settings <file-or-json>\n  --permission-prompts <target>\n  --plugin-dir <path>"); process.exit(0); }
 let stdin = "";
 process.stdin.on("data", (d) => (stdin += d));
 process.stdin.on("end", main);
