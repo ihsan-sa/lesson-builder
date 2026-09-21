@@ -180,7 +180,7 @@ The chatbot emits `<<REINFORCE>>text<<END_REINFORCE>>` to capture durable heuris
 2. **STATED PREFERENCES** — tone, register, analogy use, explanation depth, format, or specific medium (`"just draw it"`, `"keep it technical"`, `"less analogies"`, `"more equations"`, `"skip the intuition, give me the math"`).
 3. **CORRECTIONS** — the student flags that a previous approach missed. The heuristic records the CORRECTED behavior, not the failure.
 
-The client merges all three into a per-tab list persisted to `sessionStorage` as `chatReinf_<sid>` and injected back via `[REINFORCED BEHAVIORS]` in every subsequent ACTIVE CONTEXT. The system prompt treats this block as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response — not only media selection.
+The client merges all three into a per-tab list persisted to `sessionStorage` under a key scoped to the lesson and session (`chatReinf@<base><sid>`, `_lesson-core/chat/lessonSessions.js`) and injected back via `[REINFORCED BEHAVIORS]` in every subsequent ACTIVE CONTEXT. The system prompt treats this block as the highest-priority heuristic governing tone, register, analogy use, and explanation depth on EVERY response — not only media selection.
 
 Lesson-planning implication: topics with a diverse media mix give the MEDIA arm something to learn from, but the PREFERENCES and CORRECTIONS arms work regardless of how the lesson was authored. Avoid authoring every topic with the same medium "just to be consistent" — variety is the teaching asset, and the reinforcement loop will converge on what actually works for each student.
 

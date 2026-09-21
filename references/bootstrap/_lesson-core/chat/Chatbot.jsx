@@ -10,8 +10,16 @@ import { processResponse as parseChatResponse, stripUnclosedTags } from "./proce
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
 import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
+import { msgsKey, reinfKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/icons.jsx";
+
+// This bundle's own lesson, "/ece206/ece206-course-overview/" in a hosted
+// build and "/" under vite dev. Every sessionStorage key the chat writes is
+// scoped by it (lessonSessions.js): sessionStorage is per origin and survives
+// same-tab navigation, so an unscoped key let the next lesson opened in the
+// tab restore this one's chat.
+const LESSON_BASE = import.meta.env.BASE_URL;
 
 // Student-facing answer style. "hints" leaves the PEDAGOGY POLICY exactly as
 // written; "direct" relaxes only the withhold-first ordering (see
@@ -245,20 +253,9 @@ export function Chatbot({
   useEffect(() => {
     if (!activeTab) return;
     if (activeTab.keepContext && activeTab.sessionId) {
-      try {
-        let kcList = [];
-        try { kcList = JSON.parse(_ss.getItem("kcSessions") || "[]"); } catch (_) {}
-        kcList = kcList.filter(s => s.sessionId !== activeTab.sessionId);
-        kcList.push({ sessionId: activeTab.sessionId, chatNum: activeTab.chatNum });
-        _ss.setItem("kcSessions", JSON.stringify(kcList));
-      } catch (_) {}
+      keepSession(_ss, LESSON_BASE, activeTab.sessionId, activeTab.chatNum);
     } else if (activeTab.sessionId) {
-      try {
-        let kcList = [];
-        try { kcList = JSON.parse(_ss.getItem("kcSessions") || "[]"); } catch (_) {}
-        kcList = kcList.filter(s => s.sessionId !== activeTab.sessionId);
-        _ss.setItem("kcSessions", JSON.stringify(kcList));
-      } catch (_) {}
+      dropSession(_ss, LESSON_BASE, activeTab.sessionId);
     }
   }, [activeTab?.keepContext, activeTab?.sessionId, activeTab?.chatNum]);
 
@@ -304,7 +301,7 @@ export function Chatbot({
           ...(m.foldPending ? { foldPending: true } : {}),
           ...(m.threads ? { threads: m.threads.map(t => ({ ...t, loading: false, folding: false, messages: (t.messages || []).map(stripStreaming) })) } : {}),
         }));
-        _ss.setItem("chatMsgs_" + tab.sessionId, JSON.stringify(saveable));
+        _ss.setItem(msgsKey(LESSON_BASE, tab.sessionId), JSON.stringify(saveable));
       } catch (_) {}
     }
   }, [tabs]);
@@ -313,7 +310,7 @@ export function Chatbot({
     for (const tab of tabs) {
       if (!tab.keepContext || !tab.sessionId) continue;
       try {
-        _ss.setItem("chatReinf_" + tab.sessionId, JSON.stringify(tab.reinforced || []));
+        _ss.setItem(reinfKey(LESSON_BASE, tab.sessionId), JSON.stringify(tab.reinforced || []));
       } catch (_) {}
     }
   }, [tabs]);
@@ -440,10 +437,16 @@ export function Chatbot({
     }
   }, [activeTab, model, effort, makeSystemPrompt, updateTab]);
 
-  const resumeSessionIntoTab = useCallback(async (tabId, sid, num) => {
+  // Resolves "ok" (open in the tab), "refused" (the server said no) or
+  // "error" (no answer). `silent` is the auto-restore path: the server
+  // refuses to open a session born on another lesson, and that refusal is not
+  // the student's doing, so it leaves no message and no picker -- the caller
+  // starts a fresh session (lessonSessions.js, restoreKept). An "error" shows
+  // the tab's error state either way and forgets nothing.
+  const resumeSessionIntoTab = useCallback(async (tabId, sid, num, silent) => {
     if (tabsRef.current.some(t => t.id !== tabId && t.sessionId === sid)) {
-      updateTab(tabId, { messages: [{ role: "assistant", content: "This session is already open in another tab." }], sessionStatus: "picking" });
-      return;
+      if (!silent) updateTab(tabId, { messages: [{ role: "assistant", content: "This session is already open in another tab." }], sessionStatus: "picking" });
+      return "refused";
     }
     try {
       const res = await fetch(API.sessionOpen, {
@@ -455,7 +458,7 @@ export function Chatbot({
         const data = await res.json();
         let savedMsgs = [];
         try {
-          const raw = _ss.getItem("chatMsgs_" + sid);
+          const raw = _ss.getItem(msgsKey(LESSON_BASE, sid));
           if (raw) savedMsgs = JSON.parse(raw).map(m => m.threads ? { ...m, threads: m.threads.map(t => ({ ...t, collapsed: true })) } : m);
           // A fold the student read but no main turn has carried yet: the
           // queue died with the page, the transcript did not, so put it back.
@@ -463,7 +466,7 @@ export function Chatbot({
         } catch (_) {}
         let savedReinf = [];
         try {
-          const rawReinf = _ss.getItem("chatReinf_" + sid);
+          const rawReinf = _ss.getItem(reinfKey(LESSON_BASE, sid));
           if (rawReinf) savedReinf = JSON.parse(rawReinf);
         } catch (_) {}
         updateTab(tabId, { sessionId: sid, chatNum: data.chatNum || num, sessionStatus: "ready", isolated: !!data.isolated, ...(savedMsgs.length > 0 ? { messages: savedMsgs } : {}), ...(Array.isArray(savedReinf) && savedReinf.length > 0 ? { reinforced: savedReinf } : {}) });
@@ -474,12 +477,20 @@ export function Chatbot({
         // and the current selection is a safer fallback than an unknown value.
         if (data.model && MODELS.some(m => m.model === data.model)) setModel(data.model);
         if (data.effort && EFFORT_LEVELS.includes(data.effort)) setEffort(data.effort);
-      } else {
-        const err = await res.json();
-        updateTab(tabId, { messages: [{ role: "assistant", content: err.error?.message || "Cannot open session" }], sessionStatus: "picking" });
+        return "ok";
       }
+      // A 5xx is the proxy or the tutor behind it not answering (a restart,
+      // a bad gateway), not a "no": it forgets nothing, like a network drop.
+      if (res.status >= 500) {
+        updateTab(tabId, { sessionStatus: "error" });
+        return "error";
+      }
+      const err = await res.json().catch(() => ({}));
+      if (!silent) updateTab(tabId, { messages: [{ role: "assistant", content: err.error?.message || "Cannot open session" }], sessionStatus: "picking" });
+      return "refused";
     } catch (e) {
       updateTab(tabId, { sessionStatus: "error" });
+      return "error";
     }
   }, [updateTab]);
 
@@ -487,6 +498,9 @@ export function Chatbot({
     try {
       const res = await fetch(API.sessions);
       const data = await res.json();
+      // The hosted tutor lists only this lesson's sessions and sends no
+      // lesson on them; anything that does name another lesson is dropped
+      // where it would be offered or restored (foreignSession).
       return data.sessions || [];
     } catch (_) { return []; }
   }, []);
@@ -509,34 +523,33 @@ export function Chatbot({
     setActiveTabIdx(0);
 
     (async () => {
-      let kcList = [];
-      if (firstTab.keepContext) {
-        try { kcList = JSON.parse(_ss.getItem("kcSessions") || "[]"); } catch (_) {}
-      }
+      // One /sessions call serves both the restore below and the picker.
+      const list = await fetchSessions();
+      setServerSessions(list);
 
-      if (kcList.length > 0) {
-        const list = await fetchSessions();
-        setServerSessions(list);
-        let restoredFirst = false;
-        for (const kc of kcList) {
-          const found = list.find(s => s.id === kc.sessionId && isRestorable(s));
-          if (!found) continue;
-          if (!restoredFirst) {
-            await resumeSessionIntoTab(firstTab.id, kc.sessionId, kc.chatNum || found.chatNum);
-            restoredFirst = true;
-          } else {
+      if (firstTab.keepContext) {
+        const { taken, refused } = await restoreKept({
+          ss: _ss,
+          base: LESSON_BASE,
+          list,
+          isRestorable,
+          firstTabId: firstTab.id,
+          openTab: () => {
             const extraTab = makeTab(topicTitleRef.current);
             extraTab.keepContext = true;
             setTabs(prev => [...prev, extraTab]);
-            await resumeSessionIntoTab(extraTab.id, kc.sessionId, kc.chatNum || found.chatNum);
-          }
-        }
-        if (restoredFirst) return;
+            return extraTab.id;
+          },
+          closeTab: (tabId) => setTabs(prev => prev.filter(t => t.id !== tabId)),
+          resume: (tabId, sid, num) => resumeSessionIntoTab(tabId, sid, num, true),
+        });
+        if (taken) return;
+        // "a restore that fails because the server refused a cross-lesson open
+        // starts a fresh session silently" -- no picker, no message.
+        if (refused) { await createSessionForTab(firstTab.id); return; }
       }
 
-      const list = await fetchSessions();
-      const available = list.filter(isPickable);
-      setServerSessions(list);
+      const available = list.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE));
       if (available.length > 0) {
         updateTab(firstTab.id, { sessionStatus: "picking" });
       } else {
@@ -1819,9 +1832,9 @@ export function Chatbot({
               <div className="chat-empty">
                 <div style={{ marginBottom: 8 }}>Available sessions. Pick one or create new:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                  {serverSessions.filter(s => isPickable(s) && !tabs.some(t => t.sessionId === s.id)).map(s => (
+                  {serverSessions.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE) && !tabs.some(t => t.sessionId === s.id)).map(s => (
                     <button key={s.id} onClick={() => { if (activeTab) resumeSessionIntoTab(activeTab.id, s.id, s.chatNum); }} style={{ background: "var(--bg-eq)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", color: "var(--accent)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
-                      {"Chat #"}{s.chatNum} ({s.messageCount} msgs) {s.isolated ? "ISO" : "MEM"}
+                      {sessionLabel(s, LESSON_BASE)}
                     </button>
                   ))}
                   <button onClick={() => { if (activeTab) createSessionForTab(activeTab.id); }} style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: "6px 10px", color: "var(--bg-main)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600 }}>
