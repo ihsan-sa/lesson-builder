@@ -9,6 +9,10 @@
 // /session/close, /upload, /chat, /chat/cancel, /sessions, /thread/open,
 // /thread/fold, /commit.
 //
+// Log. One line per event in server/chat.log, rotated by chatLog.js. Every
+// per-turn line carries msg, and threadId when the turn is a thread's: key a
+// turn on (chatNum, threadId, msg), since a thread reuses its parent's chatNum.
+//
 // Confinement. Every CLI spawn runs --restricted with a lesson-only write
 // scope and no CLAUDE.md, hooks or user MCP; a CLI too old for that is never
 // run, and the tutor routes answer 503 (§ "Tutor confinement" below).
@@ -73,6 +77,7 @@ import { spawn, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 import { createNdjsonReader } from "./ndjson.js";
+import { createChatLog } from "./chatLog.js";
 
 // Can we spawn the CLI WITHOUT a shell?
 //
@@ -123,6 +128,8 @@ const SHELL_FREE = (() => {
 const CLAUDE_CMD = CLAUDE_BIN || "claude";
 
 const LOG_FILE = path.join(process.cwd(), "server", "chat.log");
+// Rotates at 1 MB or 30 days; old generations go only once a reader marks them .done (chatLog.js).
+const appendLog = createChatLog(LOG_FILE);
 
 // Derive the workspace root so the CLI can Read _lesson-core/prompts/*.md
 // and discover agents at <workspace_root>/.claude/agents/*.md when running
@@ -208,6 +215,11 @@ const _sessionQueues = Object.create(null); // sessionId -> Promise chain
 const isThreadSession = (s) => !!s && s.kind === "thread";
 const findThreadHandle = (parentId, threadId) =>
   Object.keys(sessions).find((k) => isThreadSession(sessions[k]) && sessions[k].parentId === parentId && sessions[k].threadId === threadId) || null;
+// A thread shares its parent's chatNum and counts its own msg numbers from 1,
+// so (chatNum, msg) names two turns once a thread is open. Every per-turn log
+// line spreads this in after msg, and a reader keys a turn on
+// (chatNum, threadId, msg): a thread's line never closes its parent's entry.
+const threadTag = (s) => (isThreadSession(s) ? { threadId: s.threadId } : {});
 
 let nextChatNum = 1;
 let totalTokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cost: 0 };
@@ -242,7 +254,7 @@ function log(event, data) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${event}] ${Object.entries(data).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ")}\n`;
   console.log(`[proxy] ${event}: ${Object.entries(data).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ")}`);
-  try { fs.appendFileSync(LOG_FILE, line); } catch (_) {}
+  appendLog(line);
 }
 
 function modelAlias(model) {
@@ -376,7 +388,7 @@ function closeThreadsOf(parentId, reason) {
     if (s.turn && !s.turn.cancelled) {
       const turn = s.turn;
       turn.cancelled = true;
-      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum: s.chatNum, msg: turn.msgNum, survivors: left }); return left; });
+      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum: s.chatNum, msg: turn.msgNum, ...threadTag(s), survivors: left }); return left; });
     }
     delete sessions[id];
     log("THREAD_DELETE", { chatNum: s.chatNum, threadId: s.threadId, reason });
@@ -703,8 +715,8 @@ app.post("/session/close", (req, res) => {
     if (session.turn && !session.turn.cancelled) {
       const turn = session.turn;
       turn.cancelled = true;
-      log("SESSION_DELETE_KILL", { chatNum, msg: turn.msgNum, pid: turn.pid });
-      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum, msg: turn.msgNum, survivors: left }); return left; });
+      log("SESSION_DELETE_KILL", { chatNum, msg: turn.msgNum, ...threadTag(session), pid: turn.pid });
+      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum, msg: turn.msgNum, ...threadTag(session), survivors: left }); return left; });
     }
     delete sessions[sessionId];
     closeThreadsOf(sessionId, "session-delete");
@@ -840,7 +852,7 @@ app.post("/chat", async (req, res) => {
   const cliEffort = safeEffort(effort, session.effort);
   const msgNum = session.messageCount;
 
-  log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, model: cliModel, effort: cliEffort, ...(isThreadSession(session) ? { threadId: session.threadId } : {}), message: message || "" });
+  log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), model: cliModel, effort: cliEffort, message: message || "" });
 
   enqueueForSession(safeId, () => new Promise((resolve) => {
     // A thread's FIRST turn forks: it resumes the MAIN session and asks the
@@ -856,7 +868,7 @@ app.post("/chat", async (req, res) => {
       // The conversation this thread hangs off is gone (killed or
       // transferred): there is nothing to fork, and answering from a blank
       // session would be a different tutor pretending to be this one.
-      log("CHAT_409_THREAD", { chatNum: session.chatNum, threadId: session.threadId });
+      log("CHAT_409_THREAD", { chatNum: session.chatNum, msg: msgNum, threadId: session.threadId });
       session.lastTurn = { msg: msgNum, outcome: "error", at: Date.now() };
       res.status(409).json({ error: { message: "The conversation this thread hangs off is gone. Open the thread again." } });
       return resolve();
@@ -893,7 +905,7 @@ app.post("/chat", async (req, res) => {
     // exited on its own as the kill landed. Whatever its exit code, the log
     // says cancelled, not error, and the stream ends with `cancelled`.
     const cancelledExit = () => {
-      log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, streamed: streamedChars });
+      log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), streamed: streamedChars });
       sse("cancelled", { msg: msgNum });
       res.end();
       settle("cancelled");
@@ -955,7 +967,7 @@ app.post("/chat", async (req, res) => {
           } else if (parsed.type === "result") {
             const tok = extractTokens(parsed);
             accumulateTokens(tok);
-            log("CHAT_OK", { chatNum: session.chatNum, msg: msgNum, ...tok, totalCost: totalTokens.cost.toFixed(4), response: parsed.result || "" });
+            log("CHAT_OK", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), ...tok, totalCost: totalTokens.cost.toFixed(4), response: parsed.result || "" });
             resultSent = true;
             // The result raced the kill: tokens are accounted (CHAT_OK), but
             // the student stopped this turn, so it ends as stopped.
@@ -977,7 +989,7 @@ app.post("/chat", async (req, res) => {
       (err) => {
         if (forkFailed) return;
         if (turn && turn.cancelled) return cancelledExit();
-        log("CHAT_ERROR", { chatNum: session.chatNum, error: err.message });
+        log("CHAT_ERROR", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), error: err.message });
         sse("error", { message: err.message });
         res.end();
         settle("error");
@@ -988,7 +1000,7 @@ app.post("/chat", async (req, res) => {
     if (!settled) session.turn = turn;   // a turn that already settled (fork-missing) is not in flight
 
     res.on("close", () => {
-      log("CHAT_DISCONNECT", { chatNum: session.chatNum, msg: msgNum, resultSent });
+      log("CHAT_DISCONNECT", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), resultSent });
       // A disconnect is not a cancel: let the CLI finish (an HMR reload must
       // not lose a turn — the session keeps the result for the next message).
       // Stopping is explicit: the client's Stop calls POST /chat/cancel.
@@ -1012,14 +1024,14 @@ app.post("/chat/cancel", async (req, res) => {
     if (session.lastTurn && session.lastTurn.outcome === "cancelled") {
       return res.json({ ok: true, cancelled: true, repeat: true, msg: session.lastTurn.msg, survivors: [] });
     }
-    log("CANCEL_409", { chatNum: session.chatNum, lastTurn: session.lastTurn ? session.lastTurn.outcome : "none" });
+    log("CANCEL_409", { chatNum: session.chatNum, ...threadTag(session), lastTurn: session.lastTurn ? session.lastTurn.outcome : "none" });
     return res.status(409).json({ error: { message: "No turn in flight for this session" } });
   }
   session.lastSeen = Date.now();
   if (!turn.cancelled) {
     turn.cancelled = true;
-    log("CANCEL_START", { chatNum: session.chatNum, msg: turn.msgNum, pid: turn.pid, tree: listTree(turn.pid).length });
-    turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum: session.chatNum, msg: turn.msgNum, survivors: left }); return left; });
+    log("CANCEL_START", { chatNum: session.chatNum, msg: turn.msgNum, ...threadTag(session), pid: turn.pid, tree: listTree(turn.pid).length });
+    turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum: session.chatNum, msg: turn.msgNum, ...threadTag(session), survivors: left }); return left; });
     const survivors = await turn.killed;
     return res.json({ ok: true, cancelled: true, msg: turn.msgNum, survivors });
   }
