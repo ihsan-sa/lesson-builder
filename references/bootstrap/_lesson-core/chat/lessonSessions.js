@@ -13,18 +13,13 @@
 //
 // The server side (lessons/chat.py on the hosted tutor) records the base a
 // session was born on, lists only the requesting lesson's sessions on
-// /sessions and refuses session/open for another lesson's; a session with no
-// base recorded it treats as another lesson's. A listed session carries that
-// base as `base`, and this file reads it the same way the server does, so the
-// client is right on a server that has not landed that half yet:
-//
-//   picker  -- offers a session only when it SAYS it is this lesson's
-//              (ownsSession). A session with no base could be any lesson's,
-//              and an unlabelled chat from another lesson is the whole bug.
-//   restore -- takes a session whose id this lesson itself kept, unless the
-//              server says it was born elsewhere (foreignSession). The kept
-//              key is already scoped, so the id is this lesson's by
-//              construction, and a reload keeps its chat on either server.
+// /sessions and refuses session/open for another lesson's with a 404. Its
+// /sessions entries do NOT carry that base (ep_sessions: id, chatNum, model,
+// effort, isolated, created, messageCount, open, turn, lastTurn, resumable),
+// so a listed session with no `base` is this lesson's -- the server already
+// filtered it. Only a session whose `base` is set and differs is another
+// lesson's (foreignSession): never offered in the picker, never restored.
+// That guard costs nothing today and holds if a server ever lists more.
 //
 // Pure: storage is passed in, nothing here touches window, so
 // tests/lesson-session-scope drives it with a Map.
@@ -65,18 +60,9 @@ export function lessonName(base) {
   return String(base || "").replace(/^\/+|\/+$/g, "");
 }
 
-// Offerable to the student. A hosted lesson shares its origin with every
-// other lesson, so there a session must SAY it is this one's: one with no
-// lesson recorded could be any lesson's, and an unlabelled chat from another
-// lesson is the whole bug. A dev build's base names no lesson and its own
-// proxy (server/proxy.js) serves exactly one, so everything it lists is this
-// lesson's and the picker works there as it always did.
-export function ownsSession(s, base) {
-  return lessonName(base) === "" || s.base === base;
-}
-
-// Known to be another lesson's. A session with no base is not offered
-// (ownsSession) but is still restorable from this lesson's own kept list.
+// Known to be another lesson's: its `base` is set and is not this one. A
+// session with no `base` is this lesson's (the server filtered /sessions).
+// The picker offers only `!foreignSession`, and restoreKept skips the rest.
 export function foreignSession(s, base) {
   return !!s.base && s.base !== base;
 }
@@ -91,33 +77,37 @@ export function sessionLabel(s, base) {
 }
 
 // Reattach this lesson's kept sessions on load. `resume(tabId, sid, chatNum)`
-// resolves true when the server opened the session; false when it refused
-// (a session born on another lesson, or one it no longer has). The first
-// success takes `firstTabId`; later ones each get a tab from `openTab()`,
-// which `closeTab(tabId)` takes away again when that open is refused -- a
-// tab left sitting on a refusal is not "silently".
+// resolves "ok" when the server opened the session, "refused" when it
+// answered no (a 404: a session born on another lesson, or one it no longer
+// has), and "error" when there was no answer (the network dropped). The first
+// outcome that takes a tab takes `firstTabId`; later ones each get a tab from
+// `openTab()`, which `closeTab(tabId)` takes away again when that open is
+// refused -- a tab left sitting on a refusal is not "silently".
 //
-// A refused session is dropped from the kept list so the next load does not
-// ask again.
+// Only a refusal forgets the session (dropped from the kept list, so the next
+// load does not ask again) and counts toward a fresh start. An "error" keeps
+// it kept and leaves the tab in its error state: a brief network drop during
+// a reload must not throw away the student's chat.
 //
-// Returns { restored, refused }: `restored` when the first tab has a session;
-// `refused` when at least one open was turned down -- the caller then starts
-// a fresh session silently rather than showing the picker, which is the
-// brief's line: "a restore that fails because the server refused a
-// cross-lesson open starts a fresh session silently".
+// Returns { taken, refused }: `taken` when the first tab has an outcome of its
+// own (open, or showing the error); `refused` when at least one open was
+// turned down -- with `taken` false the caller then starts a fresh session
+// silently rather than showing the picker, which is the brief's line: "a
+// restore that fails because the server refused a cross-lesson open starts a
+// fresh session silently".
 export async function restoreKept({ ss, base, list, isRestorable, firstTabId, openTab, closeTab, resume }) {
-  let restored = false;
+  let taken = false;
   let refused = false;
   for (const kc of readKept(ss, base)) {
     const found = list.find(s => s.id === kc.sessionId && isRestorable(s) && !foreignSession(s, base));
     if (!found) continue;
-    const extra = restored;
+    const extra = taken;
     const tabId = extra ? openTab() : firstTabId;
-    const ok = await resume(tabId, kc.sessionId, kc.chatNum || found.chatNum);
-    if (ok) { restored = true; continue; }
+    const outcome = await resume(tabId, kc.sessionId, kc.chatNum || found.chatNum);
+    if (outcome !== "refused") { taken = true; continue; }   // "ok", or "error" left on show
     refused = true;
     dropSession(ss, base, kc.sessionId);
     if (extra) closeTab(tabId);
   }
-  return { restored, refused };
+  return { taken, refused };
 }

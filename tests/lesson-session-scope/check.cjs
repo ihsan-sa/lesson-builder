@@ -49,6 +49,15 @@ function storage(entries) {
 }
 const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
 
+// One entry as the hosted tutor's /sessions sends it (iiks1 lessons/chat.py ep_sessions): no
+// `base` field -- the server filters the list by lesson and does not repeat it per entry.
+function hostedEntry(id, chatNum) {
+  return {
+    id, chatNum, model: 'claude-sonnet-5', effort: 'medium', isolated: true, created: 1789940000,
+    messageCount: 12, open: false, turn: null, lastTurn: null, resumable: true,
+  };
+}
+
 (async () => {
   const S = await import(pathToFileURL(SESSIONS_JS).href);
 
@@ -95,9 +104,9 @@ const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
     const r = await S.restoreKept({
       ss, base: A, list, isRestorable: () => true, firstTabId: 1,
       openTab: () => { throw new Error('a second tab for one kept session'); },
-      closeTab: () => {}, resume: (tabId, sid) => { asked.push([tabId, sid]); return true; },
+      closeTab: () => {}, resume: (tabId, sid) => { asked.push([tabId, sid]); return 'ok'; },
     });
-    check('the lesson\'s own chat is resumed into the first tab', r.restored === true && !r.refused
+    check('the lesson\'s own chat is resumed into the first tab', r.taken === true && !r.refused
       && JSON.stringify(asked) === JSON.stringify([[1, 'sid-a']]), `asked ${JSON.stringify(asked)}, ${JSON.stringify(r)}`);
     check('…and stays kept for the next load', JSON.stringify(kept(ss, A, S)) === '["sid-a"]');
 
@@ -107,23 +116,23 @@ const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
     const r2 = await S.restoreKept({
       ss: ss2, base: A, list: [{ id: 'sid-b', chatNum: 9, base: B }], isRestorable: () => true,
       firstTabId: 1, openTab: () => 2, closeTab: () => {},
-      resume: (tabId, sid) => { asked2.push(sid); return true; },
+      resume: (tabId, sid) => { asked2.push(sid); return 'ok'; },
     });
     check('a session the server says was born on another lesson is never opened',
-      asked2.length === 0 && r2.restored === false, `asked ${JSON.stringify(asked2)}`);
+      asked2.length === 0 && r2.taken === false, `asked ${JSON.stringify(asked2)}`);
 
-    // A server that has not landed its half yet records no lesson on a session. The kept key
-    // is already scoped, so that id IS this lesson's -- a reload must still keep its chat.
+    // The hosted tutor's real /sessions entry (chat.py ep_sessions) carries no `base`: the
+    // server filtered the list by lesson already. A reload must keep its chat.
     const ss3 = storage();
     S.keepSession(ss3, A, 'sid-nobase', 5);
     const asked3 = [];
     const r3 = await S.restoreKept({
-      ss: ss3, base: A, list: [{ id: 'sid-nobase', chatNum: 5 }], isRestorable: () => true,
+      ss: ss3, base: A, list: [hostedEntry('sid-nobase', 5)], isRestorable: () => true,
       firstTabId: 1, openTab: () => 2, closeTab: () => {},
-      resume: (tabId, sid) => { asked3.push(sid); return true; },
+      resume: (tabId, sid) => { asked3.push(sid); return 'ok'; },
     });
-    check('a session with no lesson recorded still restores from this lesson\'s own kept list',
-      r3.restored === true && JSON.stringify(asked3) === JSON.stringify(['sid-nobase']),
+    check('a hosted /sessions entry (no base field) restores from this lesson\'s kept list',
+      r3.taken === true && JSON.stringify(asked3) === JSON.stringify(['sid-nobase']),
       `asked ${JSON.stringify(asked3)}`);
   }
 
@@ -134,10 +143,10 @@ const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
     const r = await S.restoreKept({
       ss, base: A, list: [{ id: 'sid-gone', chatNum: 4 }], isRestorable: () => true, firstTabId: 1,
       openTab: () => { throw new Error('a second tab for one kept session'); },
-      closeTab: () => {}, resume: () => false,          // the server refused
+      closeTab: () => {}, resume: () => 'refused',      // the server said 404
     });
     check('the caller is told to start fresh, not to show the picker',
-      r.restored === false && r.refused === true, JSON.stringify(r));
+      r.taken === false && r.refused === true, JSON.stringify(r));
     check('the refused session is dropped, so the next load does not ask again', kept(ss, A, S).length === 0,
       `still kept: ${JSON.stringify(kept(ss, A, S))}`);
 
@@ -150,14 +159,28 @@ const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
     const r2 = await S.restoreKept({
       ss: ss2, base: A, list: [{ id: 'sid-1', chatNum: 1 }, { id: 'sid-2', chatNum: 2 }],
       isRestorable: () => true, firstTabId: 1, openTab: () => ++next, closeTab: (t) => closed.push(t),
-      resume: (tabId, sid) => sid === 'sid-1',
+      resume: (tabId, sid) => (sid === 'sid-1' ? 'ok' : 'refused'),
     });
     check('the first chat is restored even though the second was refused',
-      r2.restored === true && r2.refused === true, JSON.stringify(r2));
+      r2.taken === true && r2.refused === true, JSON.stringify(r2));
     check('the extra tab opened for the refused chat is taken away', JSON.stringify(closed) === '[10]',
       `closed ${JSON.stringify(closed)}`);
     check('only the refused one is forgotten', JSON.stringify(kept(ss2, A, S)) === '["sid-1"]',
       `kept ${JSON.stringify(kept(ss2, A, S))}`);
+
+    // No answer at all (the network dropped, or a 5xx) is not a refusal: the chat stays kept,
+    // the tab keeps its error state, and no fresh session replaces it.
+    const ss3 = storage();
+    S.keepSession(ss3, A, 'sid-net', 6);
+    const r3 = await S.restoreKept({
+      ss: ss3, base: A, list: [hostedEntry('sid-net', 6)], isRestorable: () => true, firstTabId: 1,
+      openTab: () => { throw new Error('a second tab for one kept session'); },
+      closeTab: () => {}, resume: () => 'error',
+    });
+    check('a network error neither starts fresh nor counts as a refusal',
+      r3.taken === true && r3.refused === false, JSON.stringify(r3));
+    check('…and the chat is still kept for the next load', JSON.stringify(kept(ss3, A, S)) === '["sid-net"]',
+      `kept ${JSON.stringify(kept(ss3, A, S))}`);
   }
 
   heading('5', 'the picker names each chat\'s lesson');
@@ -170,15 +193,16 @@ const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
     // what tests/resume-metadata clicks (`^Chat #<n> `).
     const dev = S.sessionLabel({ chatNum: 2, messageCount: 4, isolated: false }, '/');
     check('under vite dev the label is unprefixed', dev === 'Chat #2 (4 msgs) MEM', dev);
-    check('a chat born on another lesson is never offered', S.ownsSession({ base: B }, A) === false);
-    check('…and one that says it is this lesson\'s is', S.ownsSession({ base: A }, A) === true);
-    // The server treats a session with no lesson recorded as another lesson's; so does the
-    // picker, which has nothing to label it with. Only the kept list may still restore it.
-    check('a chat with no lesson recorded is not offered either', S.ownsSession({ chatNum: 1 }, A) === false);
-    check('…except under vite dev, whose own proxy serves one lesson',
-      S.ownsSession({ chatNum: 1 }, '/') === true);
-    check('…but it is not KNOWN to be another lesson\'s, so restore may have it',
-      S.foreignSession({ chatNum: 1 }, A) === false && S.foreignSession({ base: B }, A) === true);
+    // What the picker offers is `!foreignSession`. The hosted tutor's entries have no base.
+    const offered = (sess, base) => !S.foreignSession(sess, base);
+    check('a hosted /sessions entry (no base field) is offered on a hosted lesson',
+      offered(hostedEntry('sid-a', 3), A) === true);
+    check('…and its label names this lesson', S.sessionLabel(hostedEntry('sid-a', 3), A)
+      .startsWith('ece206/ece206-course-overview \u00b7 Chat #3 '), S.sessionLabel(hostedEntry('sid-a', 3), A));
+    check('a session that says it is another lesson\'s is never offered',
+      offered({ ...hostedEntry('sid-b', 1), base: B }, A) === false);
+    check('…and one that says it is this lesson\'s is', offered({ ...hostedEntry('sid-a', 1), base: A }, A) === true);
+    check('under vite dev everything the proxy lists is offered', offered(hostedEntry('sid-d', 1), '/') === true);
   }
 
   heading('6', 'Chatbot.jsx reads no un-namespaced key, and wires the silent restore');
@@ -194,10 +218,13 @@ const kept = (ss, base, mod) => mod.readKept(ss, base).map(s => s.sessionId);
     check('a refusal starts a fresh session instead of the picker',
       /if \(refused\) \{ await createSessionForTab\(firstTab\.id\); return; \}/.test(src));
     check('the picker labels entries with their lesson', src.includes('sessionLabel(s, LESSON_BASE)'));
-    check('the picker offers only sessions that say they are this lesson\'s',
-      /serverSessions\.filter\(s => isPickable\(s\) && ownsSession\(s, LESSON_BASE\)/.test(src));
+    check('the picker drops only sessions that say they are another lesson\'s',
+      /serverSessions\.filter\(s => isPickable\(s\) && !foreignSession\(s, LESSON_BASE\)/.test(src));
     check('…and the picker only opens at all for those',
-      src.includes('list.filter(s => isPickable(s) && ownsSession(s, LESSON_BASE))'));
+      src.includes('list.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE))'));
+    check('a network error or a 5xx is "error", not "refused"',
+      /catch \(e\) \{\s*updateTab\(tabId, \{ sessionStatus: "error" \}\);\s*return "error";/.test(src)
+      && /res\.status >= 500\) \{\s*updateTab\(tabId, \{ sessionStatus: "error" \}\);\s*return "error";/.test(src));
   }
 
   console.log('');

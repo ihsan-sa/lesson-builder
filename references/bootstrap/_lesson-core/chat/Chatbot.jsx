@@ -10,7 +10,7 @@ import { processResponse as parseChatResponse, stripUnclosedTags } from "./proce
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
 import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
-import { msgsKey, reinfKey, keepSession, dropSession, ownsSession, sessionLabel, restoreKept } from "./lessonSessions.js";
+import { msgsKey, reinfKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/icons.jsx";
 
@@ -437,15 +437,16 @@ export function Chatbot({
     }
   }, [activeTab, model, effort, makeSystemPrompt, updateTab]);
 
-  // Resolves true when the session is open in the tab, false when it is not.
-  // `silent` is the auto-restore path: the server refuses to open a session
-  // born on another lesson, and that refusal is not the student's doing, so
-  // it leaves no message and no picker -- the caller starts a fresh session
-  // (lessonSessions.js, restoreKept).
+  // Resolves "ok" (open in the tab), "refused" (the server said no) or
+  // "error" (no answer). `silent` is the auto-restore path: the server
+  // refuses to open a session born on another lesson, and that refusal is not
+  // the student's doing, so it leaves no message and no picker -- the caller
+  // starts a fresh session (lessonSessions.js, restoreKept). An "error" shows
+  // the tab's error state either way and forgets nothing.
   const resumeSessionIntoTab = useCallback(async (tabId, sid, num, silent) => {
     if (tabsRef.current.some(t => t.id !== tabId && t.sessionId === sid)) {
       if (!silent) updateTab(tabId, { messages: [{ role: "assistant", content: "This session is already open in another tab." }], sessionStatus: "picking" });
-      return false;
+      return "refused";
     }
     try {
       const res = await fetch(API.sessionOpen, {
@@ -476,14 +477,20 @@ export function Chatbot({
         // and the current selection is a safer fallback than an unknown value.
         if (data.model && MODELS.some(m => m.model === data.model)) setModel(data.model);
         if (data.effort && EFFORT_LEVELS.includes(data.effort)) setEffort(data.effort);
-        return true;
+        return "ok";
+      }
+      // A 5xx is the proxy or the tutor behind it not answering (a restart,
+      // a bad gateway), not a "no": it forgets nothing, like a network drop.
+      if (res.status >= 500) {
+        updateTab(tabId, { sessionStatus: "error" });
+        return "error";
       }
       const err = await res.json().catch(() => ({}));
       if (!silent) updateTab(tabId, { messages: [{ role: "assistant", content: err.error?.message || "Cannot open session" }], sessionStatus: "picking" });
-      return false;
+      return "refused";
     } catch (e) {
-      if (!silent) updateTab(tabId, { sessionStatus: "error" });
-      return false;
+      updateTab(tabId, { sessionStatus: "error" });
+      return "error";
     }
   }, [updateTab]);
 
@@ -491,9 +498,9 @@ export function Chatbot({
     try {
       const res = await fetch(API.sessions);
       const data = await res.json();
-      // Unfiltered: the restore below needs a session this lesson kept even
-      // when the server records no lesson on it. Everything the student is
-      // OFFERED goes through ownsSession first (lessonSessions.js).
+      // The hosted tutor lists only this lesson's sessions and sends no
+      // lesson on them; anything that does name another lesson is dropped
+      // where it would be offered or restored (foreignSession).
       return data.sessions || [];
     } catch (_) { return []; }
   }, []);
@@ -516,14 +523,12 @@ export function Chatbot({
     setActiveTabIdx(0);
 
     (async () => {
-      // One /sessions call serves both the restore below and the picker. It
-      // is every session the student has; ownsSession decides what may be
-      // OFFERED, restoreKept what this lesson may reattach to.
+      // One /sessions call serves both the restore below and the picker.
       const list = await fetchSessions();
       setServerSessions(list);
 
       if (firstTab.keepContext) {
-        const { restored, refused } = await restoreKept({
+        const { taken, refused } = await restoreKept({
           ss: _ss,
           base: LESSON_BASE,
           list,
@@ -538,13 +543,13 @@ export function Chatbot({
           closeTab: (tabId) => setTabs(prev => prev.filter(t => t.id !== tabId)),
           resume: (tabId, sid, num) => resumeSessionIntoTab(tabId, sid, num, true),
         });
-        if (restored) return;
+        if (taken) return;
         // "a restore that fails because the server refused a cross-lesson open
         // starts a fresh session silently" -- no picker, no message.
         if (refused) { await createSessionForTab(firstTab.id); return; }
       }
 
-      const available = list.filter(s => isPickable(s) && ownsSession(s, LESSON_BASE));
+      const available = list.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE));
       if (available.length > 0) {
         updateTab(firstTab.id, { sessionStatus: "picking" });
       } else {
@@ -1827,7 +1832,7 @@ export function Chatbot({
               <div className="chat-empty">
                 <div style={{ marginBottom: 8 }}>Available sessions. Pick one or create new:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                  {serverSessions.filter(s => isPickable(s) && ownsSession(s, LESSON_BASE) && !tabs.some(t => t.sessionId === s.id)).map(s => (
+                  {serverSessions.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE) && !tabs.some(t => t.sessionId === s.id)).map(s => (
                     <button key={s.id} onClick={() => { if (activeTab) resumeSessionIntoTab(activeTab.id, s.id, s.chatNum); }} style={{ background: "var(--bg-eq)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", color: "var(--accent)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
                       {sessionLabel(s, LESSON_BASE)}
                     </button>
