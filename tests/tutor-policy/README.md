@@ -23,7 +23,9 @@ Node only. No `npm install`, no network, no browser.
    context does not already name the Read/Glob/Grep tools, and the rule appears once.
 3. **Ceiling.** Over a LESSON_CONTEXT as long as the longest in the sweep (`LARGEST_CONTEXT_CHARS`,
    with no file-access word so the generic line is included), in both memory modes, the prompt
-   is <= 28000 chars — the argv threshold in `server/proxy.js` and the hosted tutor's `chat.py`.
+   is <= `SYSTEM_ARGV_CEILING` (28000 chars; `_lesson-core/constants/promptBudget.js`) — the argv threshold in
+   `server/proxy.js` and the hosted tutor's `chat.py`. A lesson's own `test_lesson.cjs` T18 holds the same
+   ceiling over its own LESSON_CONTEXT (`tests/lesson-prompt-ceiling`).
    The stand-in course name and institution are longer than any real lesson's.
 
 Each case fails without the change it is about: run against the pre-milestone file, 1 and 2 fail

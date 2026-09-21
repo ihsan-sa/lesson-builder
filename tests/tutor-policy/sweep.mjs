@@ -14,7 +14,7 @@ import { pathToFileURL } from "node:url";
 
 const SKILL = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const { buildSystemPrompt } = await import(pathToFileURL(path.join(SKILL, "references/bootstrap/_lesson-core/chat/buildSystemPrompt.js")).href);
-const CEILING = 28000;
+const { SYSTEM_ARGV_CEILING: CEILING } = await import(pathToFileURL(path.join(SKILL, "references/bootstrap/_lesson-core/constants/promptBudget.js")).href);
 const root = path.join(process.env.LESSONS_DIR || path.join(process.env.HOME, "dev", "lessons"), "lessons");
 if (!fs.existsSync(root)) { console.error(`no lessons at ${root}: set LESSONS_DIR`); process.exit(2); }
 
