@@ -139,11 +139,17 @@ export function tailUnanswered(messages) {
 // went first, or the request threw) leaves lastTurn on the turn before it:
 // attaching then would replay the previous reply under the new question and
 // fire its side effects twice. Cancelled is the student's own stop: no attach.
+// A question that DID reach the fetch call but was then refused (!res.ok) or
+// threw before a response arrived is marked `unsent` (Chatbot's sendMessage)
+// and left out of `asked` here: the server never numbered it, so counting it
+// would push `asked` one ahead of the server's count forever, and the attach
+// for a later turn that finished while the page was gone would never fire
+// again in that chat.
 export function needsAttach(s, messages) {
   if (!s) return false;
   if (s.turn) return true;
   if (!s.lastTurn || s.lastTurn.outcome === "cancelled" || !tailUnanswered(messages)) return false;
-  const asked = (messages || []).filter(m => m.role === "user").length;
+  const asked = (messages || []).filter(m => m.role === "user" && !m.unsent).length;
   return typeof s.lastTurn.msg === "number" && s.lastTurn.msg >= asked;
 }
 

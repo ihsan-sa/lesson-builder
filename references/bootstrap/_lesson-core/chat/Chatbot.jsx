@@ -301,6 +301,10 @@ export function Chatbot({
           ...(m.commitSuggest ? { commitSuggest: m.commitSuggest } : {}),
           ...(m.commitResult ? { commitResult: m.commitResult } : {}),
           ...(m.stopped ? { stopped: true } : {}),
+          // A user message the server never took (refused, or the POST threw
+          // before it arrived): not one of the questions the server counted.
+          // needsAttach must leave it out of `asked` (turnStream.js).
+          ...(m.unsent ? { unsent: true } : {}),
           // A reply this tab does not have the end of: a bubble still
           // streaming when the page went, or one a lost connection cut short.
           // A reload reads it to decide whether to attach (needsAttach).
@@ -924,6 +928,12 @@ export function Chatbot({
     _cs.tabCancelled[tabId] = false;
     // Hoisted so the failure paths below can put the drained observations back.
     let observations = "";
+    // True once the POST got a response (ok or not): the server saw this
+    // message. False means the request never arrived there -- a throw from
+    // fetch itself -- which is distinct from a stream that broke mid-turn
+    // after the server had already taken the turn (that case is exactly what
+    // attach is for, and must not be treated the same way).
+    let reachedServer = false;
     const markStopped = () => markTabStopped(tabId);
     try {
       let attachmentNote = "";
@@ -969,6 +979,7 @@ export function Chatbot({
         signal: controller.signal,
         body: JSON.stringify(reqBody),
       });
+      reachedServer = true;
       if (!res.ok) {
         let errMsg = `API error (${res.status})`;
         try {
@@ -976,7 +987,13 @@ export function Chatbot({
           if (errData.error?.message) errMsg = errData.error.message;
         } catch (_) {}
         obsQueue.requeue(tab.sessionId, observations);
-        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, messages: [...t.messages, { role: "assistant", content: errMsg }] } : t));
+        // Refused before the server counted it (proxy.js increments
+        // messageCount only on a taken turn): not one of the questions the
+        // server numbered. Leaving it counted would push needsAttach's
+        // `asked` one ahead of the server's count forever (turnStream.js).
+        setTabs(prev => prev.map(t => t.id === tabId
+          ? { ...t, messages: [...t.messages.map(m => m === displayMsg ? { ...m, unsent: true } : m), { role: "assistant", content: errMsg }] }
+          : t));
         return;
       }
       // A stream that dies mid-turn (the phone slept, the edge cut) is not the
@@ -1009,6 +1026,15 @@ export function Chatbot({
       if (e.name === "AbortError") {
         markStopped();
       } else {
+        // Thrown before any response arrived: the server never took this
+        // message, same bookkeeping as the !res.ok path above. Once
+        // reachedServer is true (readTurnWithReattach ran out of retries),
+        // the server did take it -- attach is what brings that turn back.
+        if (!reachedServer) {
+          setTabs(prev => prev.map(t => t.id === tabId
+            ? { ...t, messages: t.messages.map(m => m === displayMsg ? { ...m, unsent: true } : m) }
+            : t));
+        }
         showTurnLost(tabId, e);
       }
     } finally {

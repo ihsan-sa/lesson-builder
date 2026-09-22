@@ -212,6 +212,9 @@ function bubble(T, messages) {
       T.needsAttach(s(null, { ...finished, msg: 1 }), [user, done, user,
         { role: 'assistant', content: 'Connection error: x', partial: true }]) === false);
     check('lastTurn with no msg count is not trusted', T.needsAttach(s(null, { outcome: 'done', at: 1 }), [user]) === false);
+    check('a refused send earlier in the transcript (marked unsent) still attaches for the last turn',
+      T.needsAttach(s(null, finished), [user, done, { role: 'user', content: 'q2', unsent: true },
+        { role: 'assistant', content: 'API error (404)' }, user, { role: 'assistant', content: 'ha', partial: true }]) === true);
     check('a fold card after the answer is not a question',
       T.needsAttach(s(null, finished), [user, done, { role: 'fold', content: 'f' }]) === false);
     check('cancelled (the student stopped it): no attach',
