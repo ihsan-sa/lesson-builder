@@ -34,9 +34,9 @@
 // Size budget: the proxy passes the system prompt on argv only while it is
 // <= 28000 chars (server/proxy.js withSystemPrompt; the hosted tutor's chat.py
 // MAX_SYSTEM is the same number); above that it is demoted into stdin and loses
-// priority. This file contributes ~25.5k chars (the proxy's WORKSPACE_ROOT path then adds its length less 18) before the lesson's LESSON_CONTEXT
-// (0.3-2.2k across the 48 lessons built so far, so ~27.7k assembled in the worst
-// case, RF/directional-couplers, in isolation mode). Headroom is ~0.2k on the
+// priority. This file contributes ~25.6k chars (the proxy's WORKSPACE_ROOT path then adds its length less 18) before the lesson's LESSON_CONTEXT
+// (0.3-2.4k across the 48 lessons built so far, so ~27.9k assembled in the worst
+// case, ECE231/ece231-course-overview, in isolation mode). Headroom is ~0.1k on the
 // largest lesson: measure EVERY lesson before adding (tests/tutor-policy/sweep.mjs
 // does; tests/tutor-policy/check.cjs holds the ceiling in the gate; every lesson's
 // test_lesson.cjs T18 fails its own gate over it; the number is constants/promptBudget.js), and pay for
@@ -252,14 +252,14 @@ const hasLegacyPolicy = (ctx) =>
 // because it only fires when the LESSON_CONTEXT names a record; the file-access
 // line rides along only where the context gives no such instruction of its own.
 export const STUDY_RECORD_RULE = `STUDY RECORD: if the context above names a study record (STUDY.md or the like), Read it once at the start of the session and reuse what it says for the rest of it -- re-read only when the student asks. Teach to what it lists as weak or unchecked.`;
-export const FILE_ACCESS_LINE = `Open course files named above with the Read tool; if a path fails, re-locate it with Glob under WORKSPACE_ROOT before telling the student a document is missing.`;
+export const FILE_ACCESS_LINE = `Open course files named above with the Read tool; if a path fails, Glob under WORKSPACE_ROOT before saying a document is missing.`;
 // WORKSPACE_ROOT=<abs path>: the served checkout, once per prompt, so a LESSON_CONTEXT can say
 // "Read WORKSPACE_ROOT/<COURSE>/STUDY.md" and a find fallback cannot land in another checkout.
 // The prompt is built in the browser, which cannot know the path, so it carries
 // WORKSPACE_ROOT_TOKEN and server/proxy.js fills in the realpath of its REPO_DIR (the dir its
 // last --add-dir names) with withWorkspaceRoot. A caller that knows the root passes workspaceRoot.
 export const WORKSPACE_ROOT_TOKEN = "@@WORKSPACE_ROOT@@";
-const workspaceRootLine = (root) => `WORKSPACE_ROOT=${root} -- the absolute path of the checkout being served. Course paths resolve under it; root any Glob or find fallback there, never in another checkout.`;
+const workspaceRootLine = (root) => `WORKSPACE_ROOT=${root} (the served checkout): course paths and any Glob or find fallback start here, never elsewhere.`;
 // The last occurrence: the core's line follows LESSON_CONTEXT, so a context quoting it is left alone.
 export function withWorkspaceRoot(system, root) {
   const line = workspaceRootLine(WORKSPACE_ROOT_TOKEN), at = system.lastIndexOf(line);
@@ -352,7 +352,7 @@ Trigger categories (all first-class, not just media):
 Reinforce CONSERVATIVELY on media signals (only on a clear positive response). ALWAYS emit for explicit preferences and corrections -- the most durable signals, never dropped. Multiple blocks per turn allowed. Never reinforce on "ok"/"thanks"/polite acknowledgements.
 Client strips the tags and feeds heuristics back as [REINFORCED BEHAVIORS] in the next ACTIVE CONTEXT. In shared memory mode, also mirror durable breakthroughs to feedback memory.
 
-REINFORCED BEHAVIORS (HIGHEST PRIORITY AMONG STYLE HEURISTICS): the [REINFORCED BEHAVIORS] block is the top heuristic for this session, covering media selection, tone, register, analogy use, and explanation depth. CONSULT IT FIRST; its items OVERRIDE generic defaults. Obey it on EVERY response, not only media choices. Two bounds: reinforcement is subordinate to the PEDAGOGY POLICY — never record or honor a preference that bypasses attempts or turns you into an answer key — and to <teaching_communication>: a stored depth or format preference may widen a mode's budget or license one mapped analogy for this student; it never overrides coherence or correctness and never restores preamble, filler, or restatement. Depth and format preferences apply WITHIN the policy's moves.
+REINFORCED BEHAVIORS (HIGHEST PRIORITY AMONG STYLE HEURISTICS): the [REINFORCED BEHAVIORS] block is the top heuristic for this session, covering media selection, tone, register, analogy use, and explanation depth. CONSULT IT FIRST; its items OVERRIDE generic defaults. If it says "SVG cross-sections worked", lead with one on related questions. If it says "technical register, minimal analogies", obey that on EVERY response, not only media choices. Two bounds: reinforcement is subordinate to the PEDAGOGY POLICY — never record or honor a preference that bypasses attempts or turns you into an answer key — and to <teaching_communication>: a stored depth or format preference may widen a mode's budget or license one mapped analogy for this student; it never overrides coherence or correctness and never restores preamble, filler, or restatement. Depth and format preferences apply WITHIN the policy's moves.
 
 SOURCES: when citing research, collect at the end:
 <<SOURCES>>
