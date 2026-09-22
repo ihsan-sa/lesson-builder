@@ -65,7 +65,7 @@ references/bootstrap/
     CLAUDE.md                Per-lesson project doc. Placeholders: __SLUG__,
                              __SLUG_SNAKE__, __COURSE_CODE__, __LESSON_TITLE__
     .gitignore               Runtime carve-outs (server/.isolated/, .uploads/,
-                             .proxy.json, .proxy-port, chat.log, node_modules/, dist/)
+                             .proxy.json, .proxy-port, chat.log*, node_modules/, dist/)
   workspace-root/            Workspace-level templates
     gitignore.template       Copy to <workspace_root>/.gitignore, adapt carve-outs
     env.local.example        Copy to <workspace_root>/.env.local, fill

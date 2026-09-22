@@ -25,6 +25,8 @@
 //                reply is held back 3s: a real CLI takes seconds to answer,
 //                and the proxy kills this turn the moment the init line names
 //                the parent, so the reply must never reach the transcript
+//   DELAY<ms>    hold the result for <ms>, so another session's turn can
+//                start and finish inside this one (case 12)
 //
 // Env switches:
 //   FAKE_INIT_HOLD_MS  hold the init line (the one that names the session)
@@ -120,6 +122,8 @@ async function main() {
     }, NOFORK_ANSWER_MS);
     return;
   }
+  const delay = /DELAY(\d+)/.exec(stdin);
+  if (delay) await new Promise((r) => setTimeout(r, Number(delay[1])));
   if (!recall) append(text);
   emit({ type: "result", session_id: sid, result: text, usage, total_cost_usd: 0 });
 }

@@ -21,7 +21,7 @@ If the workspace is fresh (no `<workspace_root>/_lesson-core/`), run the bootstr
     .proxy-port             (auto-written at runtime: the bare port number, kept for launcher scripts)
     .isolated/              (auto-created at runtime: isolated-mode CWD)
     .uploads/               (auto-created at runtime: uploaded files)
-    chat.log                (auto-written at runtime: request log)
+    chat.log                (auto-written at runtime: request log; rotated to chat.log.<epoch>, see chatLog.js)
   public/                   (optional: lesson images, videos, static assets)
   index.html
   package.json
@@ -219,7 +219,7 @@ server/.isolated/
 server/.uploads/
 server/.proxy-port
 server/.proxy.json
-server/chat.log
+server/chat.log*
 node_modules/
 dist/
 ```

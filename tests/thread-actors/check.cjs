@@ -720,6 +720,46 @@ async function forkLeakEvidence(mainId, logAt, seen) {
     dev.close();
   }
 
+  // ---------------------------------------------------------------- case 12
+  // The log names a thread's turn apart from its parent's. A thread shares the
+  // parent's chatNum and numbers its turns from 1, so a parent turn and a
+  // thread turn can both be msg=1 and be in flight at once. A reader that keys
+  // open turns on (chatNum, msg) — lessons' distill-chats did — then has the
+  // thread's CHAT_START evict the parent's entry and its CHAT_OK close
+  // whichever is there. Brief: "every per-turn log line carries threadId where
+  // the turn is a thread's, CHAT_OK first; fixture: a parent turn and a thread
+  // turn interleaved with the same msg number close their own entries."
+  // Fake CLI only: DELAY is what holds the parent open around the thread turn.
+  if (!REAL && runs(12)) {
+    const main = await newChat();
+    const handle = (await post("/thread/open", { sessionId: main, threadId: "t12" })).body.threadSessionId;
+    const logAt = chatLog().length;
+    const parent = await startTurn(main, "DELAY2500 PARENT-12", (ev) => ev === "text");
+    await turn(handle, threadMsg("t12", "THREAD-12"));
+    await parent.ended;
+    const lines = chatLog().slice(logAt).split("\n")
+      .map((l) => /^\[[^\]]+\] \[(CHAT_START|CHAT_OK)\] chatNum=(\d+) msg=(\d+)(?: threadId=(\S+))?/.exec(l))
+      .filter(Boolean).map(([, ev, chatNum, msg, threadId]) => ({ ev, chatNum, msg, threadId: threadId || "" }));
+    const seq = lines.map((l) => `${l.ev}:${l.msg}:${l.threadId || "main"}`).join(" ");
+    ok(seq === "CHAT_START:1:main CHAT_START:1:t12 CHAT_OK:1:t12 CHAT_OK:1:main" && new Set(lines.map((l) => l.chatNum)).size === 1,
+      `12: the thread turn ran inside the parent's, both msg=1 of one chatNum (${seq})`);
+    // An open_turns reader keyed on (chatNum, threadId, msg): every CHAT_OK
+    // must close the entry its own CHAT_START opened, and none may be left.
+    const open = new Map(); let evicted = 0, strays = 0;
+    for (const l of lines) {
+      const key = `${l.chatNum}/${l.threadId}/${l.msg}`;
+      if (l.ev === "CHAT_START") { if (open.has(key)) evicted++; open.set(key, l); }
+      else if (open.has(key)) open.delete(key); else strays++;
+    }
+    ok(evicted === 0 && strays === 0 && open.size === 0,
+      `12: keyed on (chatNum, threadId, msg) each turn closes its own entry (evicted=${evicted} strays=${strays} left open=${open.size})`);
+    // Kept and suppressed: the thread's CHAT_OK names the thread; the parent's names none.
+    const oks = lines.filter((l) => l.ev === "CHAT_OK");
+    ok(oks.some((l) => l.threadId === "t12") && oks.some((l) => l.threadId === ""),
+      `12: the thread's CHAT_OK carries threadId=t12 and the parent's carries no threadId (${oks.map((l) => l.threadId || "-").join(",")})`);
+    await post("/session/close", { sessionId: main, keepContext: false });
+  }
+
   console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 })().catch(report);
