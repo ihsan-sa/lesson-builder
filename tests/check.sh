@@ -5,9 +5,9 @@
 # branch collisions, the proxy's reader, the lessons' stylesheets, the shell's dark/light switch,
 # the built bundle's tutor gate, the shell staying out of a classic lesson's bundle, the tutor's
 # attempt-first policy and its prompt ceiling, a lesson's own gate passing over that ceiling, a
-# tutor chat staying on the lesson it was born on, the tutor staying confined to its lesson, or
-# chat.log rotating without deleting a generation nobody marked done
-# cannot land.
+# tutor chat staying on the lesson it was born on, the tutor staying confined to its lesson, a
+# tutor reply surviving a lost stream, or chat.log rotating without deleting a generation nobody
+# marked done cannot land.
 # `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
 # person runs it the same way.
 #
@@ -61,6 +61,7 @@ FIXTURES=(
   "tutor-policy|node tests/tutor-policy/check.cjs"
   "lesson-prompt-ceiling|node tests/lesson-prompt-ceiling/check.cjs"
   "lesson-session-scope|node tests/lesson-session-scope/check.cjs"
+  "chat-reattach|node tests/chat-reattach/check.cjs"
   "chat-log-rotation|node tests/chat-log-rotation/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
