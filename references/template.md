@@ -55,7 +55,10 @@ transfer checks) is injected automatically by @core/chat/buildSystemPrompt.js,
 as is the STUDY RECORD rule: name the course's study record here (e.g.
 "ECE207/STUDY.md - what he has studied and is weak on") and the tutor reads it
 once per session; say how files are opened ("Open with Read ...") or the core
-adds one generic line. The shared core is the single source of truth, so
+adds one generic line. A lesson served by its own proxy also gets one line
+naming the served checkout's absolute path, `WORKSPACE_ROOT=<path>`, inserted
+by the server that knows it; write course paths relative to the workspace so
+they read the same either way. The shared core is the single source of truth, so
 every lesson runs the same current policy. Legacy lessons that
 embedded the old policy text are detected by marker and not double-injected.
 
