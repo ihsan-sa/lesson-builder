@@ -1,0 +1,16 @@
+#!/usr/bin/env node
+// Fake `claude` for tests/workspace-root: tutor-confinement's fake, plus stdin in the record, so
+// a system prompt demoted into stdin is checked as well as one passed on argv.
+const fs = require("fs");
+const args = process.argv.slice(2);
+if (args.includes("--version")) { console.log("fake-claude 0.0.0"); process.exit(0); }
+if (args.includes("--help")) {
+  console.log(["--add-dir <directories...>", "--restricted", "--tools <tools...>", "--settings <file-or-json>", "--setting-sources <sources>", "--permission-prompts <target>", "--plugin-dir <path>"].map((f) => `  ${f}`).join("\n"));
+  process.exit(0);
+}
+let stdin = "";
+process.stdin.on("data", (d) => (stdin += d));
+process.stdin.on("end", () => {
+  fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, stdin }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "result", session_id: require("crypto").randomUUID(), result: "ok", usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0 }) + "\n");
+});

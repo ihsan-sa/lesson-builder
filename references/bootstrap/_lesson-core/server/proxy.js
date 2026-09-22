@@ -78,6 +78,7 @@ import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 import { createNdjsonReader } from "./ndjson.js";
 import { createChatLog } from "./chatLog.js";
+import { withWorkspaceRoot } from "../chat/buildSystemPrompt.js";
 
 // Can we spawn the CLI WITHOUT a shell?
 //
@@ -146,6 +147,9 @@ const REPO_DIR = path.dirname(path.dirname(__dirname));
 // unequal — they are different directories with different files.
 const realpathOf = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
 const LESSON_DIR = realpathOf(process.cwd());
+// The served workspace root the tutor's prompt names as WORKSPACE_ROOT (chat/buildSystemPrompt.js):
+// REPO_DIR, the dir the last --add-dir names, resolved, so a find rooted there stays in this checkout.
+const WORKSPACE_ROOT = realpathOf(REPO_DIR);
 const STARTED_AT = new Date().toISOString();
 let BOUND_PORT = null;
 
@@ -573,6 +577,7 @@ function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onErr
 // shell shredded into single words. Returns the stdin content to send.
 function withSystemPrompt(args, system, basePrompt) {
   if (!system) return basePrompt;
+  system = withWorkspaceRoot(system, WORKSPACE_ROOT);
   if (SHELL_FREE && system.length <= 28000) {
     args.push("--system-prompt", system);
     return basePrompt;
