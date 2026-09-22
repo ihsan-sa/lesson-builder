@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "../constants/models.js";
 import { TUTOR_ENABLED, API } from "../constants/build.js";
-import { _cs, _ss, makeTab } from "./chatState.js";
+import { _cs, _ss, makeTab, tabLabel } from "./chatState.js";
 import { ChatBubble } from "./ChatBubble.jsx";
 import { ThreadPanel } from "./ThreadPanel.jsx";
 import { buildSystemPrompt } from "./buildSystemPrompt.js";
@@ -10,6 +10,7 @@ import { processResponse as parseChatResponse, stripUnclosedTags } from "./proce
 import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
 import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
+import { readTurnWithReattach, attachTurn, needsAttach, dropPartialTail } from "./turnStream.js";
 import { msgsKey, reinfKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/icons.jsx";
@@ -20,6 +21,14 @@ import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRigh
 // same-tab navigation, so an unscoped key let the next lesson opened in the
 // tab restore this one's chat.
 const LESSON_BASE = import.meta.env.BASE_URL;
+// Attach (turnStream.js) is the hosted tutor's (lessons/chat.py). The local
+// dev proxy has no attach: it reads {sessionId, attach: true} as a message
+// with no text and runs a turn on it, so a dev build never asks.
+const ATTACH_ENABLED = !import.meta.env.DEV;
+// The transcript this lesson kept for a session, as the save effect wrote it.
+function readSavedMsgs(sid) {
+  try { return JSON.parse(_ss.getItem(msgsKey(LESSON_BASE, sid)) || "[]"); } catch (_) { return []; }
+}
 
 // Student-facing answer style. "hints" leaves the PEDAGOGY POLICY exactly as
 // written; "direct" relaxes only the withhold-first ordering (see
@@ -292,6 +301,14 @@ export function Chatbot({
           ...(m.commitSuggest ? { commitSuggest: m.commitSuggest } : {}),
           ...(m.commitResult ? { commitResult: m.commitResult } : {}),
           ...(m.stopped ? { stopped: true } : {}),
+          // A user message the server never took (refused, or the POST threw
+          // before it arrived): not one of the questions the server counted.
+          // needsAttach must leave it out of `asked` (turnStream.js).
+          ...(m.unsent ? { unsent: true } : {}),
+          // A reply this tab does not have the end of: a bubble still
+          // streaming when the page went, or one a lost connection cut short.
+          // A reload reads it to decide whether to attach (needsAttach).
+          ...(m.partial || m._streaming ? { partial: true } : {}),
           // A fold's handover text and whether a main turn has carried it yet.
           // The observation queue is in memory: without these two, a reload
           // between the fold and the next main message leaves a transcript
@@ -541,7 +558,17 @@ export function Chatbot({
             return extraTab.id;
           },
           closeTab: (tabId) => setTabs(prev => prev.filter(t => t.id !== tabId)),
-          resume: (tabId, sid, num) => resumeSessionIntoTab(tabId, sid, num, true),
+          // "On bootstrap, when /sessions lists a session with turn set (in
+          // flight) or a lastTurn newer than what the tab has, do the same
+          // attach so a reloaded tab picks the reply up." Not awaited: the
+          // reply streams in while the rest of the restore carries on.
+          resume: async (tabId, sid, num) => {
+            const outcome = await resumeSessionIntoTab(tabId, sid, num, true);
+            if (outcome === "ok" && ATTACH_ENABLED && needsAttach(list.find(s => s.id === sid), readSavedMsgs(sid))) {
+              attachIntoTabRef.current(tabId, sid);
+            }
+            return outcome;
+          },
         });
         if (taken) return;
         // "a restore that fails because the server refused a cross-lesson open
@@ -732,6 +759,130 @@ export function Chatbot({
     });
   }, [activeTab, cancelRequest, updateTab]);
 
+  // A turn's reply is final: parse its tags once (suggestion, commit offer,
+  // reinforced behaviours) and replace the streaming bubble with it. Shared by
+  // a sent message and a turn picked up again by attach.
+  const applyReply = (tabId, finalText) => {
+    const reply = processResponse(finalText);
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tabId) return t;
+      const msgs = t.messages;
+      // Merge any new reinforced-behavior entries (dedup, cap at 20 most recent).
+      const existingReinf = t.reinforced || [];
+      const mergedReinf = [...existingReinf];
+      for (const r of reply.reinforced || []) {
+        if (!mergedReinf.includes(r)) mergedReinf.push(r);
+      }
+      const cappedReinf = mergedReinf.length > 20 ? mergedReinf.slice(mergedReinf.length - 20) : mergedReinf;
+      if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1]._streaming) {
+        return { ...t, reinforced: cappedReinf, messages: [...msgs.slice(0, -1), { role: "assistant", content: reply.display, suggestion: reply.suggestion || null, commitSuggest: reply.commitSuggest || null }] };
+      }
+      return { ...t, reinforced: cappedReinf };
+    }));
+  };
+
+  // Stopped -- by our own abort (Stop) or by the proxy's `cancelled` event
+  // (the turn was stopped from outside this reader). Either way the bubble
+  // keeps what streamed and is marked stopped; there is never a completion
+  // pass, so no tag in the partial text is applied and nothing is enqueued.
+  const markTabStopped = (tabId) => {
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tabId) return t;
+      const msgs = t.messages;
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === "assistant" && last._streaming) {
+        return { ...t, messages: [...msgs.slice(0, -1), { role: "assistant", content: last.content, stopped: true }] };
+      }
+      return { ...t, messages: [...msgs, { role: "assistant", content: "", stopped: true }] };
+    }));
+  };
+
+  // The stream died and attach could not bring the turn back. The half-built
+  // bubble and this line are both marked `partial`, so they are saved as an
+  // unfinished tail and a reload attaches again (turnStream.js, needsAttach).
+  // A refusal from attach is the server's own words, shown as they came.
+  const showTurnLost = (tabId, e) => {
+    const errContent = e?.name === "AttachRefused"
+      ? e.message
+      : `Connection error: ${e?.message || "unknown"}. Is the proxy server running?`;
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tabId) return t;
+      const msgs = t.messages.map(m => m._streaming ? { role: m.role, content: m.content, partial: true } : m);
+      return { ...t, messages: [...msgs, { role: "assistant", content: errContent, partial: true }] };
+    }));
+  };
+
+  // What the reader does with a turn's events in this tab. `restart` runs
+  // when attach begins the turn again from its first event: the bubble built
+  // so far goes, and the replay rebuilds it.
+  const turnHandlers = (tabId) => {
+    const updateAssistantMsg = (content) => {
+      setTabs(prev => prev.map(t => {
+        if (t.id !== tabId) return t;
+        const msgs = t.messages;
+        if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1]._streaming) {
+          return { ...t, messages: [...msgs.slice(0, -1), { role: "assistant", content, _streaming: true }] };
+        }
+        return { ...t, messages: [...msgs, { role: "assistant", content, _streaming: true }] };
+      }));
+    };
+    return {
+      status: (data) => {
+        if (data.type === "tool") {
+          updateTab(tabId, { statusText: `Using ${data.name}${data.description ? ": " + data.description : ""}...` });
+        } else if (data.type === "thinking") {
+          updateTab(tabId, { statusText: "Thinking..." });
+        }
+      },
+      // Streaming render is display-only: parse WITHOUT callbacks so a
+      // completed <<EDIT_GRAPH>> inside the accumulating text is not
+      // re-applied on every subsequent chunk. Side effects dispatch
+      // exactly once, from the completion pass (applyReply).
+      text: (finalText) => {
+        updateTab(tabId, { statusText: "" });
+        updateAssistantMsg(parseChatResponse(stripUnclosedTags(finalText)).display);
+      },
+      settled: () => updateTab(tabId, { statusText: "" }),
+      restart: () => setTabs(prev => prev.map(t => {
+        if (t.id !== tabId) return t;
+        const messages = dropPartialTail(t.messages);
+        return messages === t.messages ? t : { ...t, messages };
+      })),
+    };
+  };
+
+  // Pick a turn up that this tab lost: a reload mid-reply, or a reply that
+  // finished while the page was gone (the bootstrap's needsAttach). The same
+  // reader, bubble and completion pass as a sent message; Stop works on it
+  // as on any turn. A 409 is a chat never asked anything: nothing to show.
+  const attachIntoTab = async (tabId, sessionId) => {
+    const controller = new AbortController();
+    _cs.tabAborts[tabId] = controller;
+    _cs.tabCancelled[tabId] = false;
+    updateTab(tabId, { loading: true });
+    const on = turnHandlers(tabId);
+    try {
+      const res = await attachTurn({ fetchImpl: fetch, url: API.chat, sessionId, signal: controller.signal });
+      on.restart();
+      const { finalText, stopped } = await readTurnWithReattach({
+        res, fetchImpl: fetch, url: API.chat, sessionId, signal: controller.signal, on,
+      });
+      if (stopped) markTabStopped(tabId);
+      else if (finalText) applyReply(tabId, finalText);
+    } catch (e) {
+      if (e.name === "AbortError") markTabStopped(tabId);
+      else if (!(e.name === "AttachRefused" && e.status === 409)) showTurnLost(tabId, e);
+    } finally {
+      delete _cs.tabAborts[tabId];
+      delete _cs.tabCancelled[tabId];
+      updateTab(tabId, { loading: false, statusText: "" });
+    }
+  };
+  // The bootstrap effect runs once, on the first render's closure; the ref
+  // reaches the live one (same reason as sendMessageRef below).
+  const attachIntoTabRef = useRef(null);
+  attachIntoTabRef.current = attachIntoTab;
+
   const sendMessage = async (overrideText) => {
     // Defensive: a DOM handler wired as onClick={sendMessage} would hand us a
     // SyntheticEvent here, which then becomes the message body and the React
@@ -777,21 +928,13 @@ export function Chatbot({
     _cs.tabCancelled[tabId] = false;
     // Hoisted so the failure paths below can put the drained observations back.
     let observations = "";
-    // Stopped — by our own abort (Stop) or by the proxy's `cancelled` event
-    // (the turn was stopped from outside this reader). Either way the bubble
-    // keeps what streamed and is marked stopped; there is never a completion
-    // pass, so no tag in the partial text is applied and nothing is enqueued.
-    const markStopped = () => {
-      setTabs(prev => prev.map(t => {
-        if (t.id !== tabId) return t;
-        const msgs = t.messages;
-        const last = msgs[msgs.length - 1];
-        if (last && last.role === "assistant" && last._streaming) {
-          return { ...t, messages: [...msgs.slice(0, -1), { role: "assistant", content: last.content, stopped: true }] };
-        }
-        return { ...t, messages: [...msgs, { role: "assistant", content: "", stopped: true }] };
-      }));
-    };
+    // True once the POST got a response (ok or not): the server saw this
+    // message. False means the request never arrived there -- a throw from
+    // fetch itself -- which is distinct from a stream that broke mid-turn
+    // after the server had already taken the turn (that case is exactly what
+    // attach is for, and must not be treated the same way).
+    let reachedServer = false;
+    const markStopped = () => markTabStopped(tabId);
     try {
       let attachmentNote = "";
       if (currentAtts.length > 0) {
@@ -836,6 +979,7 @@ export function Chatbot({
         signal: controller.signal,
         body: JSON.stringify(reqBody),
       });
+      reachedServer = true;
       if (!res.ok) {
         let errMsg = `API error (${res.status})`;
         try {
@@ -843,83 +987,24 @@ export function Chatbot({
           if (errData.error?.message) errMsg = errData.error.message;
         } catch (_) {}
         obsQueue.requeue(tab.sessionId, observations);
-        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, messages: [...t.messages, { role: "assistant", content: errMsg }] } : t));
+        // Refused before the server counted it (proxy.js increments
+        // messageCount only on a taken turn): not one of the questions the
+        // server numbered. Leaving it counted would push needsAttach's
+        // `asked` one ahead of the server's count forever (turnStream.js).
+        setTabs(prev => prev.map(t => t.id === tabId
+          ? { ...t, messages: [...t.messages.map(m => m === displayMsg ? { ...m, unsent: true } : m), { role: "assistant", content: errMsg }] }
+          : t));
         return;
       }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let sseBuffer = "";
-      let finalText = "";
-      let doneReceived = false;
-      let stopped = false;
-      let errored = false;
-      const updateAssistantMsg = (content) => {
-        setTabs(prev => prev.map(t => {
-          if (t.id !== tabId) return t;
-          const msgs = t.messages;
-          if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1]._streaming) {
-            return { ...t, messages: [...msgs.slice(0, -1), { role: "assistant", content, _streaming: true }] };
-          }
-          return { ...t, messages: [...msgs, { role: "assistant", content, _streaming: true }] };
-        }));
-      };
-      // eventType lives OUTSIDE the read loop: a network chunk can end between
-      // an "event:" line and its "data:" line, and resetting per read would
-      // silently drop that event (missing text / missing done depending on
-      // where the transport happened to split).
-      let eventType = null;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuffer += decoder.decode(value, { stream: true });
-        const lines = sseBuffer.split("\n");
-        sseBuffer = lines.pop();
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ") && eventType) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (eventType === "status") {
-                if (data.type === "tool") {
-                  updateTab(tabId, { statusText: `Using ${data.name}${data.description ? ": " + data.description : ""}...` });
-                } else if (data.type === "thinking") {
-                  updateTab(tabId, { statusText: "Thinking..." });
-                }
-              } else if (eventType === "text") {
-                updateTab(tabId, { statusText: "" });
-                finalText += data.text;
-                // Streaming render is display-only: parse WITHOUT callbacks so a
-                // completed <<EDIT_GRAPH>> inside the accumulating text is not
-                // re-applied on every subsequent chunk. Side effects dispatch
-                // exactly once, from the completion pass below.
-                updateAssistantMsg(parseChatResponse(stripUnclosedTags(finalText)).display);
-              } else if (eventType === "done") {
-                finalText = data.text || finalText;
-                doneReceived = true;
-                updateTab(tabId, { statusText: "" });
-              } else if (eventType === "error") {
-                // Route the error through finalText so the completion pass
-                // below finalises the bubble. Painting it with
-                // updateAssistantMsg alone left the message flagged
-                // _streaming forever, which permanently disables its
-                // reply-block wrapping (and so click-to-context on it).
-                finalText = data.message || "Error";
-                errored = true;
-                doneReceived = true;
-                updateTab(tabId, { statusText: "" });
-              } else if (eventType === "cancelled") {
-                stopped = true;
-                doneReceived = true;
-                updateTab(tabId, { statusText: "" });
-              }
-            } catch (_) {}
-            eventType = null;
-          } else if (line === "") {
-            eventType = null;
-          }
-        }
-      }
+      // A stream that dies mid-turn (the phone slept, the edge cut) is not the
+      // end of the reply: the hosted tutor kept the turn, and attach streams it
+      // again from its first event (turnStream.js). restart drops the bubble
+      // built so far, so the replay rebuilds it rather than doubling it.
+      const { finalText, stopped, errored } = await readTurnWithReattach({
+        res, fetchImpl: fetch, url: API.chat, signal: controller.signal,
+        sessionId: ATTACH_ENABLED ? tab.sessionId : null,
+        on: turnHandlers(tabId),
+      });
       if (stopped) {
         obsQueue.requeue(tab.sessionId, observations);
         markStopped();
@@ -933,24 +1018,7 @@ export function Chatbot({
         // drained into it — including a folded thread's summary.
         markFoldsDelivered(tabId, observations);
       }
-      if (!stopped && finalText) {
-        const reply = processResponse(finalText);
-        setTabs(prev => prev.map(t => {
-          if (t.id !== tabId) return t;
-          const msgs = t.messages;
-          // Merge any new reinforced-behavior entries (dedup, cap at 20 most recent).
-          const existingReinf = t.reinforced || [];
-          const mergedReinf = [...existingReinf];
-          for (const r of reply.reinforced || []) {
-            if (!mergedReinf.includes(r)) mergedReinf.push(r);
-          }
-          const cappedReinf = mergedReinf.length > 20 ? mergedReinf.slice(mergedReinf.length - 20) : mergedReinf;
-          if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1]._streaming) {
-            return { ...t, reinforced: cappedReinf, messages: [...msgs.slice(0, -1), { role: "assistant", content: reply.display, suggestion: reply.suggestion || null, commitSuggest: reply.commitSuggest || null }] };
-          }
-          return { ...t, reinforced: cappedReinf };
-        }));
-      }
+      if (!stopped && finalText) applyReply(tabId, finalText);
     } catch (e) {
       // Observations drained into this turn ride the next one instead: the
       // model never finished acting on them, and re-sending is the safe side.
@@ -958,12 +1026,16 @@ export function Chatbot({
       if (e.name === "AbortError") {
         markStopped();
       } else {
-        const errContent = `Connection error: ${e.message || "unknown"}. Is the proxy server running?`;
-        setTabs(prev => prev.map(t => {
-          if (t.id !== tabId) return t;
-          const msgs = t.messages.map(m => m._streaming ? { role: m.role, content: m.content } : m);
-          return { ...t, messages: [...msgs, { role: "assistant", content: errContent }] };
-        }));
+        // Thrown before any response arrived: the server never took this
+        // message, same bookkeeping as the !res.ok path above. Once
+        // reachedServer is true (readTurnWithReattach ran out of retries),
+        // the server did take it -- attach is what brings that turn back.
+        if (!reachedServer) {
+          setTabs(prev => prev.map(t => t.id === tabId
+            ? { ...t, messages: t.messages.map(m => m === displayMsg ? { ...m, unsent: true } : m) }
+            : t));
+        }
+        showTurnLost(tabId, e);
       }
     } finally {
       delete _cs.tabAborts[tabId];
@@ -1702,7 +1774,7 @@ export function Chatbot({
                    role="button" tabIndex={0}
                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setActiveTabIdx(idx); }}>
                 <span className="chat-tab-label">
-                  {tab.title || (tab.chatNum ? `Chat ${tab.chatNum}` : "New chat")}
+                  {tabLabel(tab, tabs)}
                 </span>
                 {tabs.length > 1 && (
                   <span className="chat-tab-x" title="Close tab"
