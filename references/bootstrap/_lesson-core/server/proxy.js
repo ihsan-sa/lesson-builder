@@ -149,6 +149,7 @@ const realpathOf = (p) => { try { return fs.realpathSync(p); } catch (_) { retur
 const LESSON_DIR = realpathOf(process.cwd());
 // The served workspace root the tutor's prompt names as WORKSPACE_ROOT (chat/buildSystemPrompt.js):
 // REPO_DIR, the dir the last --add-dir names, resolved, so a find rooted there stays in this checkout.
+// The browser that builds the prompt cannot know this path, so the line is added here, on the way out.
 const WORKSPACE_ROOT = realpathOf(REPO_DIR);
 const STARTED_AT = new Date().toISOString();
 let BOUND_PORT = null;
