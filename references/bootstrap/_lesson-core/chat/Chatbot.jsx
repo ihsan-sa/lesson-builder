@@ -425,7 +425,7 @@ export function Chatbot({
       });
       const data = await res.json();
       if (data.sessionId) {
-        updateTab(tabId, { sessionId: data.sessionId, chatNum: data.chatNum, sessionStatus: "ready", messages: [] });
+        updateTab(tabId, { sessionId: data.sessionId, chatNum: data.chatNum, sessionStatus: "ready", messages: [], spend: undefined });
       } else {
         updateTab(tabId, { sessionStatus: "error" });
       }
@@ -500,7 +500,7 @@ export function Chatbot({
             if (typeof parsed === "number" && Number.isFinite(parsed)) savedSpend = parsed;
           }
         } catch (_) {}
-        updateTab(tabId, { sessionId: sid, chatNum: data.chatNum || num, sessionStatus: "ready", isolated: !!data.isolated, ...(savedMsgs.length > 0 ? { messages: savedMsgs } : {}), ...(Array.isArray(savedReinf) && savedReinf.length > 0 ? { reinforced: savedReinf } : {}), ...(typeof savedSpend === "number" ? { spend: savedSpend } : {}) });
+        updateTab(tabId, { sessionId: sid, chatNum: data.chatNum || num, sessionStatus: "ready", isolated: !!data.isolated, ...(savedMsgs.length > 0 ? { messages: savedMsgs } : {}), ...(Array.isArray(savedReinf) && savedReinf.length > 0 ? { reinforced: savedReinf } : {}), spend: savedSpend });
         // model/effort are global chat state, not per-tab: resuming any tab
         // switches the whole chat to the settings that session was created
         // with. A model the client's MODELS list no longer carries is left

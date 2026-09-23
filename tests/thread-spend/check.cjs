@@ -178,9 +178,13 @@ function response(chunks) {
     check('resumeSessionIntoTab reads it back, guarded to a finite number',
       /const rawSpend = _ss\.getItem\(spendKey\(LESSON_BASE, sid\)\);/.test(chatbotSrc)
       && /typeof parsed === "number" && Number\.isFinite\(parsed\)\) savedSpend = parsed;/.test(chatbotSrc));
-    check('…and only merges spend into the tab when that restore actually produced a number',
-      /\.\.\.\(typeof savedSpend === "number" \? \{ spend: savedSpend \} : \{\}\) \}\);/.test(chatbotSrc));
+    check('…and always sets spend from that restore, so a tab\'s earlier total never carries into a resumed session',
+      /reinforced: savedReinf \} : \{\}\), spend: savedSpend \}\);/.test(chatbotSrc));
   }
+
+  heading('10', 'a new session for a tab starts with no spend (landing review, 2026-09-23)');
+  check('createSessionForTab clears spend along with messages',
+    /sessionStatus: "ready", messages: \[\], spend: undefined \}\);/.test(chatbotSrc));
 
   console.log('');
   for (const f of failures) console.log(`  FAIL  ${f}`);
