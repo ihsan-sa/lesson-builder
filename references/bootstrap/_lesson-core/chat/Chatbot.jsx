@@ -11,7 +11,7 @@ import { buildActiveContext } from "./buildActiveContext.js";
 import * as obsQueue from "./observationQueue.js";
 import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
 import { readTurnWithReattach, attachTurn, needsAttach, dropPartialTail } from "./turnStream.js";
-import { msgsKey, reinfKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
+import { msgsKey, reinfKey, spendKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/icons.jsx";
 
@@ -328,6 +328,9 @@ export function Chatbot({
       if (!tab.keepContext || !tab.sessionId) continue;
       try {
         _ss.setItem(reinfKey(LESSON_BASE, tab.sessionId), JSON.stringify(tab.reinforced || []));
+        // Only once a real cost has arrived -- nothing to save before then,
+        // and writing "undefined" would just be a key that never parses back.
+        if (typeof tab.spend === "number") _ss.setItem(spendKey(LESSON_BASE, tab.sessionId), JSON.stringify(tab.spend));
       } catch (_) {}
     }
   }, [tabs]);
@@ -486,7 +489,18 @@ export function Chatbot({
           const rawReinf = _ss.getItem(reinfKey(LESSON_BASE, sid));
           if (rawReinf) savedReinf = JSON.parse(rawReinf);
         } catch (_) {}
-        updateTab(tabId, { sessionId: sid, chatNum: data.chatNum || num, sessionStatus: "ready", isolated: !!data.isolated, ...(savedMsgs.length > 0 ? { messages: savedMsgs } : {}), ...(Array.isArray(savedReinf) && savedReinf.length > 0 ? { reinforced: savedReinf } : {}) });
+        // undefined unless a real number comes back: a tab's spend before this
+        // resumes is not this session's history, and a NaN/garbage value from
+        // a hand-edited sessionStorage must not become the new running total.
+        let savedSpend;
+        try {
+          const rawSpend = _ss.getItem(spendKey(LESSON_BASE, sid));
+          if (rawSpend != null) {
+            const parsed = JSON.parse(rawSpend);
+            if (typeof parsed === "number" && Number.isFinite(parsed)) savedSpend = parsed;
+          }
+        } catch (_) {}
+        updateTab(tabId, { sessionId: sid, chatNum: data.chatNum || num, sessionStatus: "ready", isolated: !!data.isolated, ...(savedMsgs.length > 0 ? { messages: savedMsgs } : {}), ...(Array.isArray(savedReinf) && savedReinf.length > 0 ? { reinforced: savedReinf } : {}), ...(typeof savedSpend === "number" ? { spend: savedSpend } : {}) });
         // model/effort are global chat state, not per-tab: resuming any tab
         // switches the whole chat to the settings that session was created
         // with. A model the client's MODELS list no longer carries is left

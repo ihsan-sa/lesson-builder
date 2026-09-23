@@ -22,8 +22,15 @@ const SKILL = path.resolve(__dirname, '..', '..');
 const CHAT = path.join(SKILL, 'references', 'bootstrap', '_lesson-core', 'chat');
 const TURN_JS = path.join(CHAT, 'turnStream.js');
 const STATE_JS = path.join(CHAT, 'chatState.js');
+const SESSIONS_JS = path.join(CHAT, 'lessonSessions.js');
 const CHATBOT_JSX = path.join(CHAT, 'Chatbot.jsx');
 const THREAD_PANEL_JSX = path.join(CHAT, 'ThreadPanel.jsx');
+
+// A sessionStorage of its own per case, same shape tests/lesson-session-scope uses.
+function storage(entries) {
+  const m = new Map(Object.entries(entries || {}));
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), raw: m };
+}
 
 let pass = 0;
 const failures = [];
@@ -48,6 +55,7 @@ function response(chunks) {
   const T = await import(pathToFileURL(TURN_JS).href);
   globalThis.window = {};
   const St = await import(pathToFileURL(STATE_JS).href);
+  const Sess = await import(pathToFileURL(SESSIONS_JS).href);
   const chatbotSrc = fs.readFileSync(CHATBOT_JSX, 'utf8');
   const threadPanelSrc = fs.readFileSync(THREAD_PANEL_JSX, 'utf8');
 
@@ -133,6 +141,45 @@ function response(chunks) {
     check('the chat header shows it only once a cost has actually arrived',
       /typeof activeTab\?\.spend === "number" && \(/.test(chatbotSrc));
     check('…through fmtSpend, in its own class', /className="chat-header-spend"[^>]*>\{fmtSpend\(activeTab\.spend\)\}/.test(chatbotSrc));
+  }
+
+  heading('9', 'the main chat\'s spend survives a reload, under its own key (landing review, 2026-09-23)');
+  {
+    const BASE = '/ece206/ece206-course-overview/';
+    check('lessonSessions.js exports a spend key, scoped like msgsKey/reinfKey',
+      typeof Sess.spendKey === 'function' && Sess.spendKey(BASE, 'sid-1') !== Sess.msgsKey(BASE, 'sid-1') && Sess.spendKey(BASE, 'sid-1') !== Sess.reinfKey(BASE, 'sid-1'));
+
+    // The exact round trip Chatbot.jsx's save effect / resumeSessionIntoTab do:
+    // write only when the tab's spend is a number, read back only when it
+    // parses to a finite one.
+    const save = (ss, sid, spend) => { if (typeof spend === 'number') ss.setItem(Sess.spendKey(BASE, sid), JSON.stringify(spend)); };
+    const restore = (ss, sid) => {
+      let out;
+      const raw = ss.getItem(Sess.spendKey(BASE, sid));
+      if (raw != null) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === 'number' && Number.isFinite(parsed)) out = parsed;
+      }
+      return out;
+    };
+    const ss1 = storage();
+    save(ss1, 'sid-1', 0.35);
+    check('a real total round-trips exactly', restore(ss1, 'sid-1') === 0.35, restore(ss1, 'sid-1'));
+
+    const ss2 = storage();
+    save(ss2, 'sid-2', undefined);
+    check('no cost yet: nothing is written (no key to restore from)', restore(ss2, 'sid-2') === undefined && ss2.raw.size === 0);
+
+    const ss3 = storage({ [Sess.spendKey(BASE, 'sid-3')]: '"not a number"' });
+    check('garbage in sessionStorage is ignored on restore, not coerced', restore(ss3, 'sid-3') === undefined);
+
+    check('Chatbot.jsx\'s save effect writes it beside reinfKey, only when tab.spend is a number',
+      /_ss\.setItem\(reinfKey\(LESSON_BASE, tab\.sessionId\), JSON\.stringify\(tab\.reinforced \|\| \[\]\)\);\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*if \(typeof tab\.spend === "number"\) _ss\.setItem\(spendKey\(LESSON_BASE, tab\.sessionId\), JSON\.stringify\(tab\.spend\)\);/.test(chatbotSrc));
+    check('resumeSessionIntoTab reads it back, guarded to a finite number',
+      /const rawSpend = _ss\.getItem\(spendKey\(LESSON_BASE, sid\)\);/.test(chatbotSrc)
+      && /typeof parsed === "number" && Number\.isFinite\(parsed\)\) savedSpend = parsed;/.test(chatbotSrc));
+    check('…and only merges spend into the tab when that restore actually produced a number',
+      /\.\.\.\(typeof savedSpend === "number" \? \{ spend: savedSpend \} : \{\}\) \}\);/.test(chatbotSrc));
   }
 
   console.log('');
