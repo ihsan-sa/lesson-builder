@@ -41,6 +41,10 @@ export function makeTab(title) {
     loading: false,
     statusText: "",
     reinforced: [],
+    // Running total off each main turn's "done" event (addSpend, below).
+    // undefined until one actually carries a cost -- shows nothing, never
+    // "$0.00" (Chatbot's applyReply, the chat header).
+    spend: undefined,
   };
 }
 
@@ -58,3 +62,22 @@ export function tabLabel(tab, tabs) {
 // test_lesson.cjs "no localStorage" pattern, which blocks bare references
 // to browser storage APIs).
 export const _ss = window["session" + "Storage"];
+
+// A thread's running dollar total (chat.py's total_cost_usd, sent as "cost" on
+// every SSE "done" event). chat.py's own bookkeeping sums it the same way --
+// Book.tokens["cost"] += parsed["total_cost_usd"] per turn -- because each turn
+// is a fresh `--resume`d CLI process and the figure it reports is that turn's
+// own cost, not a running total for the session; summing per turn here mirrors
+// that. `current` stays undefined (shows nothing, never "$0.00") until a done
+// event actually carries a cost -- an older proxy or a local dev build that
+// never sends the field must not make every thread read as free.
+export function addSpend(current, cost) {
+  return typeof cost === "number" && Number.isFinite(cost) ? (current || 0) + cost : current;
+}
+
+// Small and unobtrusive: 2 decimals down to a cent, 4 below it so a handful of
+// sub-cent turns don't all read as "$0.00". undefined/invalid renders nothing.
+export function fmtSpend(n) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "";
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}

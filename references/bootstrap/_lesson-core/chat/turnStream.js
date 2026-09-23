@@ -18,7 +18,9 @@ export async function readTurn(res, on = {}) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let sseBuffer = "";
-  const turn = { finalText: "", doneReceived: false, stopped: false, errored: false };
+  // cost: the "done" event's total_cost_usd (chatState.js addSpend), undefined
+  // when the event carried none (older proxy, local dev) -- never coerced to 0.
+  const turn = { finalText: "", doneReceived: false, stopped: false, errored: false, cost: undefined };
   // eventType lives OUTSIDE the read loop: a network chunk can end between
   // an "event:" line and its "data:" line, and resetting per read would
   // silently drop that event (missing text / missing done depending on
@@ -44,6 +46,7 @@ export async function readTurn(res, on = {}) {
             on.text?.(turn.finalText);
           } else if (eventType === "done") {
             turn.finalText = data.text || turn.finalText;
+            if (typeof data.cost === "number") turn.cost = data.cost;
             turn.doneReceived = true;
             on.settled?.();
           } else if (eventType === "error") {

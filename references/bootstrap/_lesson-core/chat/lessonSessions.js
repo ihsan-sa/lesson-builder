@@ -30,6 +30,7 @@
 export function keptKey(base) { return "kcSessions@" + base; }
 export function msgsKey(base, sid) { return "chatMsgs@" + base + sid; }
 export function reinfKey(base, sid) { return "chatReinf@" + base + sid; }
+export function spendKey(base, sid) { return "chatSpend@" + base + sid; }
 
 // The kept-context list for this lesson: [{ sessionId, chatNum }]. Unreadable
 // or absent -> [].

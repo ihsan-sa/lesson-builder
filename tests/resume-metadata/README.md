@@ -53,7 +53,7 @@ sites in `Chatbot.jsx`), so exercising the picker path here is exercising both.
    `model=claude-fable-5 effort=max`.
 8. For criterion 3, `curl` a session into existence with an off-list model directly against the
    proxy port: `curl -s localhost:$PROXY_PORT/session/init -H 'content-type: application/json' -d
-   '{"model":"claude-legacy-oddball","effort":"xhigh"}'`, then release it with
+   '{"model":"claude-legacy-oddball","effort":"medium"}'`, then release it with
    `curl -s localhost:$PROXY_PORT/session/close -d '{"sessionId":"<id>","keepContext":true}'`.
    Resume it from the picker the same way — the selection should not move, and the browser
    console should show no error.

@@ -35,21 +35,26 @@
 // Size budget: the proxy passes the system prompt on argv only while it is
 // <= 28000 chars (server/proxy.js withSystemPrompt; the hosted tutor's chat.py
 // MAX_SYSTEM is the same number); above that it is demoted into stdin and loses
-// priority. This file contributes ~25.5k chars before the lesson's LESSON_CONTEXT
-// (0.3-2.4k across the 48 lessons built so far, so ~27.7k assembled in the worst
-// case, ECE231/ece231-course-overview, in isolation mode). Headroom is 260 chars on the
-// largest lesson: measure EVERY lesson before adding (tests/tutor-policy/sweep.mjs
-// does; tests/tutor-policy/check.cjs holds the ceiling in the gate; every lesson's
-// test_lesson.cjs T18 fails its own gate over it; the number is constants/promptBudget.js), and pay for
-// new text by rewriting a section, not by appending to one. One line is added after the
-// prompt leaves the browser -- withWorkspaceRoot's WORKSPACE_ROOT line, 111 chars plus the
-// absolute path, inserted by server/proxy.js before its own ceiling check -- so a served
-// prompt has that much less headroom than the figures above. The 2026-09-05 Stage 1
-// fix was paid for that way -- it added ~1.4k and the duplicated statements of the
+// priority. This file contributes ~25.6k chars before the lesson's LESSON_CONTEXT
+// (0.3-2.4k across the 48 lessons built so far, so ~27.9k assembled in the worst
+// case, ECE260/ece260-ac-circuits, in isolation mode). Headroom is 142 chars on the
+// largest real lesson (15 on tests/tutor-policy/check.cjs's synthetic worst case,
+// which also forces the file-access line): measure EVERY lesson before adding
+// (tests/tutor-policy/sweep.mjs does; check.cjs holds the ceiling in the gate; every
+// lesson's test_lesson.cjs T18 fails its own gate over it; the number is
+// constants/promptBudget.js), and pay for new text by rewriting a section, not by
+// appending to one. One line is added after the prompt leaves the browser --
+// withWorkspaceRoot's WORKSPACE_ROOT line, 111 chars plus the absolute path,
+// inserted by server/proxy.js before its own ceiling check -- so a served prompt has
+// that much less headroom than the figures above. The 2026-09-05 Stage 1 fix was
+// paid for that way -- it added ~1.4k and the duplicated statements of the
 // dollar-math rule, the figure-is-a-format rule and the <<DESMOS>> cost rule were
 // folded back into one place each. The 2026-09-20 attempt-first and study-record
 // rules (~0.9k) were paid for by tightening the DESMOS, INLINE DEMO, THREADS and
-// REINFORCEMENT sections, which said the same things at greater length.
+// REINFORCEMENT sections, which said the same things at greater length. The
+// 2026-09-23 "settled unless questioned" sentence in THREADS (87 chars, cuts
+// thinking on thread follow-ups) rode the remaining headroom as-is -- kept short
+// because that headroom was already down to double digits.
 
 // Canonical tutoring policy. Single source of truth — the lesson-builder
 // pipeline's Phase 4 pedagogy gate and the lesson template both assume this
@@ -372,7 +377,7 @@ SOURCES: when citing research, collect at the end:
 - Source name (URL if available)
 <<END_SOURCES>>
 
-THREADS: messages prefixed with [THREAD:id | "snippet"] are side-threads -- a narrow question hanging off one block of a reply, or off a block of the lesson itself (those quote an anchor snippet from the lesson). Prefix replies with [THREAD:id] and scope tightly to the snippet; a thread is one loose end, not a second conversation. A thread runs in its OWN session, forked from the main conversation when its first message is sent: everything said there up to then is yours, and nothing you say from here on reaches it. So you never see a thread's messages while answering in the main conversation -- if the student refers to something only a thread knows, say you have not seen it rather than guessing -- and a wrong turn in a thread costs the main conversation nothing, so explore.
+THREADS: messages prefixed with [THREAD:id | "snippet"] are side-threads -- a narrow question hanging off one block of a reply, or off a block of the lesson itself (those quote an anchor snippet from the lesson). Prefix replies with [THREAD:id] and scope tightly to the snippet; a thread is one loose end, not a second conversation. A thread runs in its OWN session, forked from the main conversation when its first message is sent: everything said there up to then is yours, and nothing you say from here on reaches it. So you never see a thread's messages while answering in the main conversation -- if the student refers to something only a thread knows, say you have not seen it rather than guessing -- and a wrong turn in a thread costs the main conversation nothing, so explore. An earlier thread answer stands unless the student questions it -- don't re-derive it.
 The student can fold a thread back: a summary written by this session rides their next main message. That is the only route from a thread to the main conversation.
 In a thread you MAY emit the display-only tags -- <<DEMO>>, <<DESMOS>>, <<SOURCES>> -- and <<REINFORCE>>, which counts for the whole chat. You may NOT emit <<EDIT_GRAPH>>, <<SUGGEST>> or <<COMMIT_SUGGEST>> there: their approval UI exists only on main-transcript messages, so the client strips them and returns a thread-tag-deferred observation. If a thread surfaces something one of those should do, say so and tell the student to fold it back or raise it in the main conversation.
 
