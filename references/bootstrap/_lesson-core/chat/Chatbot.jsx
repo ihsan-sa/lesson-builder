@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "../constants/models.js";
 import { TUTOR_ENABLED, API } from "../constants/build.js";
-import { _cs, _ss, makeTab, tabLabel } from "./chatState.js";
+import { _cs, _ss, makeTab, tabLabel, addSpend } from "./chatState.js";
 import { ChatBubble } from "./ChatBubble.jsx";
 import { ThreadPanel } from "./ThreadPanel.jsx";
 import { buildSystemPrompt } from "./buildSystemPrompt.js";
@@ -1191,7 +1191,7 @@ export function Chatbot({
         if (i !== msgIdx) return m;
         if (m.threads?.some(th => th.blockIdx === blockIdx && th.snippet === snippet)) return m;
         const threads = m.threads ? [...m.threads] : [];
-        threads.push({ id: `t${++_cs.threadCounter}`, snippet, blockIdx: blockIdx ?? null, messages: [], collapsed: false, loading: false, sessionId: null, folded: false });
+        threads.push({ id: `t${++_cs.threadCounter}`, snippet, blockIdx: blockIdx ?? null, messages: [], collapsed: false, loading: false, sessionId: null, folded: false, spend: undefined });
         return { ...m, threads };
       });
       return { ...t, messages: msgs };
@@ -1225,7 +1225,7 @@ export function Chatbot({
         role: "anchor",
         content: clean,
         source: source || "lesson",
-        threads: [{ id: `t${++_cs.threadCounter}`, snippet: clean, blockIdx: null, messages: [], collapsed: false, loading: false, sessionId: null, folded: false }],
+        threads: [{ id: `t${++_cs.threadCounter}`, snippet: clean, blockIdx: null, messages: [], collapsed: false, loading: false, sessionId: null, folded: false, spend: undefined }],
       };
       return { ...t, messages: [...t.messages, anchor] };
     }));
@@ -1479,6 +1479,11 @@ export function Chatbot({
       const decoder = new TextDecoder();
       let sseBuffer = "";
       let finalText = "";
+      // This turn's own cost (chat.py's total_cost_usd on the "done" event),
+      // undefined when the event carried none. Added into the thread's
+      // running spend below, not shown here alone -- ThreadPanel reads the
+      // accumulated total off the thread record.
+      let turnCost;
 
       const updateThreadAssistant = (content) => {
         setTabs(prev => prev.map(t => {
@@ -1528,6 +1533,7 @@ export function Chatbot({
                 updateThreadAssistant(display);
               } else if (eventType === "done") {
                 finalText = data.text || finalText;
+                if (typeof data.cost === "number") turnCost = data.cost;
               } else if (eventType === "error") {
                 // Same route as the main reader: through finalText, so the
                 // completion pass finalises the bubble instead of leaving it
@@ -1583,7 +1589,7 @@ export function Chatbot({
                   const finalized = tmsgs.length > 0 && tmsgs[tmsgs.length - 1]._streaming
                     ? [...tmsgs.slice(0, -1), { role: "assistant", content: display }]
                     : [...tmsgs, { role: "assistant", content: display }];
-                  return { ...th, messages: finalized };
+                  return { ...th, messages: finalized, spend: addSpend(th.spend, turnCost) };
                 }),
               };
             }),

@@ -270,7 +270,7 @@ Rules:
 - **One dial, stated once.** Log the chosen `effort_mode` at Phase 0 and surface it in the plan for approval. Do not re-derive it per phase.
 - `effort_mode` and `resource_mode` are related but distinct: `light` implies `resource_mode: "limited"`, and `limited` caps `effort_mode` at `standard`. `deep` never implies `limited`.
 
-The student-facing tutor has its own default, set in `_lesson-core/constants/models.js`: Opus 5 at `xhigh`, with Fable 5, Sonnet 5, Opus 4.8 and Haiku 4.5 selectable from the settings popover. That is a runtime choice by the student and is independent of the build-time policy above.
+The student-facing tutor has its own default, set in `_lesson-core/constants/models.js`: Opus 5.5 at `medium`, with Opus 5, Fable 5, Sonnet 5, Opus 4.8 and Haiku 4.5 selectable from the settings popover. That is a runtime choice by the student and is independent of the build-time policy above.
 
 **Orchestration and content** (main Claude owns all worker spawns — subagents cannot spawn subagents; workers persist full output to `.build-scratch/evidence/` and return summaries):
 - `content-orchestrator-agent` — Phase 1 SYNTHESIS over persisted worker evidence (new: compile + conflict resolution; update: diff/classify driver)

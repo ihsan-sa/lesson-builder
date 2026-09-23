@@ -64,6 +64,8 @@ FIXTURES=(
   "lesson-session-scope|node tests/lesson-session-scope/check.cjs"
   "chat-reattach|node tests/chat-reattach/check.cjs"
   "chat-log-rotation|node tests/chat-log-rotation/check.cjs"
+  "tutor-defaults|node tests/tutor-defaults/check.cjs"
+  "thread-spend|node tests/thread-spend/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
   "shell-reach|tests/shell-reach/run.sh"

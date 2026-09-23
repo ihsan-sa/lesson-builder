@@ -149,12 +149,12 @@ async function sessionsList(page) {
     // pick an off-list model), then released so it appears in the picker.
     // Node's own fetch, not page.evaluate: pageB now sits on about:blank,
     // which has no origin to resolve a relative /session/init against.
-    // effort "xhigh" matches DEFAULT_EFFORT so the chip comparison below
+    // effort "medium" matches DEFAULT_EFFORT so the chip comparison below
     // isolates the model half of the guard: effort is always one of a known
     // fixed set (SAFE_EFFORTS), so there is no "unknown effort" case to test.
     const oddInit = await (await fetch(`${BASE_URL}/session/init`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-legacy-oddball", effort: "xhigh", isolated: true }),
+      body: JSON.stringify({ model: "claude-legacy-oddball", effort: "medium", isolated: true }),
     })).json();
     await fetch(`${BASE_URL}/session/close`, {
       method: "POST", headers: { "Content-Type": "application/json" },

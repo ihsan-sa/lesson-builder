@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ChatBubble } from "./ChatBubble.jsx";
+import { fmtSpend } from "./chatState.js";
 
 // Inline side-thread UI. Rendered via createPortal into a container inserted
 // after the target block of a .chat-msg element (see Chatbot's portal-placement
@@ -12,8 +13,11 @@ import { ChatBubble } from "./ChatBubble.jsx";
 //
 // Props:
 //   thread            { id, snippet, blockIdx, messages, collapsed, loading,
-//                       sessionId, folded, folding } — sessionId is the
-//                     thread's own session, null until its first send
+//                       sessionId, folded, folding, spend } — sessionId is the
+//                     thread's own session, null until its first send; spend
+//                     is the running dollar total off each turn's "done"
+//                     event (chatState.js addSpend), undefined until one
+//                     carries a cost -- shown as nothing, never "$0.00"
 //   onToggleCollapse  collapse/expand
 //   onSend            (text, contextArray|null, attachmentsArray|null)
 //   onCancel          stop this thread's reply (this thread's process only)
@@ -104,6 +108,12 @@ export function ThreadPanel({
         </button>
         <span className="thread-snippet">"{snippetPreview}"</span>
         <span className="thread-count">{thread.folded ? "folded" : thread.messages.length > 0 ? `${thread.messages.length}` : "new"}</span>
+        {/* Nothing until a "done" event has actually carried a cost -- an
+            older proxy or a local dev build never sends one, and showing
+            "$0.00" there would read as a real, free turn. */}
+        {typeof thread.spend === "number" && (
+          <span className="thread-spend" title="Running spend on this thread">{fmtSpend(thread.spend)}</span>
+        )}
         {/* Fold: the only route out of a thread. Offered once the thread has a
             session of its own to summarize, and once only — a second fold
             would put a second summary into the main conversation. */}

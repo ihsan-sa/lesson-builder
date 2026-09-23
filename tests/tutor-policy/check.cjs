@@ -28,10 +28,10 @@ const PROMPT_JS = path.join(SKILL, 'references', 'bootstrap', '_lesson-core', 'c
 
 // The argv ceiling (server/proxy.js, lessons/chat.py): read from its one source, below.
 const PROMPT_BUDGET_JS = path.join(SKILL, 'references', 'bootstrap', '_lesson-core', 'constants', 'promptBudget.js');
-// The longest LESSON_CONTEXT in the lessons sweep: RF/directional-couplers, 2240 chars on
-// 2026-09-20 over 48 lessons (`node tests/tutor-policy/sweep.mjs` prints the current one).
+// The longest LESSON_CONTEXT in the lessons sweep: ECE260/ece260-ac-circuits, 2412 chars on
+// 2026-09-23 over 48 lessons (`node tests/tutor-policy/sweep.mjs` prints the current one).
 // Bump it when the sweep grows, and the case says whether the prompt still fits.
-const LARGEST_CONTEXT_CHARS = 2240;
+const LARGEST_CONTEXT_CHARS = 2412;
 
 let pass = 0;
 const failures = [];
