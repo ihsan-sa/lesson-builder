@@ -1,0 +1,44 @@
+{
+ "type": "gate",
+ "alt": "One approval by a person, then a review that sends work back",
+ "canvas": 553,
+ "nodes": [
+  {
+   "id": "plan",
+   "title": "Plan",
+   "sub": "approved once",
+   "role": "gate",
+   "hot": true
+  },
+  {
+   "id": "build",
+   "title": "Build",
+   "sub": "in parallel",
+   "role": "work"
+  },
+  {
+   "id": "review",
+   "title": "Review",
+   "sub": "other agents",
+   "role": "gate"
+  },
+  {
+   "id": "deploy",
+   "title": "Ship",
+   "sub": "build, commit",
+   "role": "io"
+  }
+ ],
+ "fail": {
+  "from": [
+   "review"
+  ],
+  "into": {
+   "title": "Fix",
+   "sub": "up to 6 times"
+  },
+  "back": "build",
+  "pass": false
+ },
+ "colGap": 24
+}
