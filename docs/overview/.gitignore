@@ -1,0 +1,4 @@
+# build.sh renders these beside each spec; the spec and its PDF are what is kept
+figures/*.svg
+figures/*.png
+overview-page-*.png

@@ -1,0 +1,78 @@
+{
+ "type": "context",
+ "alt": "A lesson is a web page, and its tutor is a Claude session behind a local proxy",
+ "canvas": 553,
+ "nodes": [
+  {
+   "id": "st",
+   "title": "Student",
+   "sub": "a browser",
+   "role": "actor",
+   "col": 0,
+   "row": 0
+  },
+  {
+   "id": "pg",
+   "title": "Lesson",
+   "sub": "a Vite page",
+   "role": "io",
+   "col": 1,
+   "row": 0
+  },
+  {
+   "id": "px",
+   "title": "Proxy",
+   "sub": "Express",
+   "role": "work",
+   "col": 2,
+   "row": 0
+  },
+  {
+   "id": "cl",
+   "title": "Claude Code",
+   "sub": "one per chat",
+   "role": "work",
+   "col": 3,
+   "row": 0
+  },
+  {
+   "id": "co",
+   "title": "Shared core",
+   "sub": "the @core alias",
+   "role": "neutral",
+   "col": 1.5,
+   "row": 1
+  }
+ ],
+ "edges": [
+  {
+   "from": "st",
+   "to": "pg",
+   "both": true
+  },
+  {
+   "from": "pg",
+   "to": "px",
+   "both": true
+  },
+  {
+   "from": "px",
+   "to": "cl"
+  },
+  {
+   "from": "co",
+   "to": "pg",
+   "kind": "dash",
+   "route": "vh",
+   "fromAt": 0.3
+  },
+  {
+   "from": "co",
+   "to": "px",
+   "kind": "dash",
+   "route": "vh",
+   "fromAt": 0.7
+  }
+ ],
+ "colGap": 24
+}

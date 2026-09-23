@@ -1,0 +1,84 @@
+{
+ "type": "boundary",
+ "alt": "The tutor can write its own lesson and nothing else",
+ "canvas": 553,
+ "nodes": [
+  {
+   "id": "st",
+   "title": "Student",
+   "sub": "asks",
+   "role": "actor",
+   "col": 0,
+   "row": 0.5
+  },
+  {
+   "id": "px",
+   "title": "Proxy",
+   "sub": "checks flags",
+   "role": "gate",
+   "col": 1,
+   "row": 0.5
+  },
+  {
+   "id": "tu",
+   "title": "Tutor",
+   "sub": "restricted",
+   "role": "work",
+   "col": 2,
+   "row": 0
+  },
+  {
+   "id": "ls",
+   "title": "Its lesson",
+   "sub": "writable",
+   "role": "work",
+   "col": 2,
+   "row": 1
+  },
+  {
+   "id": "no",
+   "title": "No writes",
+   "sub": [
+    "outside",
+    "its lesson"
+   ],
+   "role": "neutral",
+   "col": 3,
+   "row": 0.5
+  }
+ ],
+ "edges": [
+  {
+   "from": "st",
+   "to": "px"
+  },
+  {
+   "from": "px",
+   "to": "tu",
+   "route": "vh"
+  },
+  {
+   "from": "tu",
+   "to": "ls"
+  }
+ ],
+ "zones": [
+  {
+   "label": "sandbox",
+   "members": [
+    "tu",
+    "ls"
+   ],
+   "fence": true
+  }
+ ],
+ "blocked": [
+  {
+   "from": "tu",
+   "side": "r",
+   "label": "the fence"
+  }
+ ],
+ "colGap": 24,
+ "rowGap": 28
+}
