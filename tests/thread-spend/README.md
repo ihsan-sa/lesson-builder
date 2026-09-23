@@ -1,8 +1,9 @@
 # Thread-spend evidence
 
-Proof that each reply-thread's running dollar total is summed correctly off the hosted tutor's
-SSE `"done"` events, that a `done` with no cost shows nothing rather than `$0.00`, and that
-`Chatbot.jsx`/`ThreadPanel.jsx` are wired to the pieces this checks directly.
+Proof that each reply-thread's running dollar total — and the main conversation's own, added
+after a landing review caught it missing (2026-09-23) — is summed correctly off the hosted
+tutor's SSE `"done"` events, that a `done` with no cost shows nothing rather than `$0.00`, and
+that `Chatbot.jsx`/`ThreadPanel.jsx` are wired to the pieces this checks directly.
 
 ```
 node tests/thread-spend/check.cjs
@@ -28,6 +29,7 @@ place to recheck it.
 | 5 | `chatState.js`'s `fmtSpend` | two decimals at or above a cent, four below it (so a few sub-cent turns don't all read as `$0.00`), and `""` for anything that isn't a number yet |
 | 6 | `Chatbot.jsx`'s thread SSE loop (its own reader — threads don't use `turnStream.js`'s attach/reattach) | reads `data.cost` off its own `done` event into `turnCost`, folds it into the finished thread record with `addSpend(th.spend, turnCost)`, both thread-creation sites seed `spend: undefined`, and the save effect's `{ ...t, ... }` spread keeps `spend` in what a reload restores |
 | 7 | `ThreadPanel.jsx` | imports `fmtSpend`, renders the total only when `thread.spend` is actually a number, through `fmtSpend` |
+| 8 | `Chatbot.jsx`'s MAIN conversation (the tab itself, not a side-thread) | `applyReply` — shared by a sent message and a turn picked back up by attach — takes this turn's `cost` and folds it into the tab with `addSpend`; both call sites pull `cost` off `readTurnWithReattach` and pass it through; a new tab seeds `spend: undefined`; the chat header shows it through `fmtSpend`, only once `activeTab.spend` is actually a number |
 
 No fixture drives a live proxy here — `tests/hosted-build` and a manual build are what confirm
 the built bundle actually carries this wiring end to end.

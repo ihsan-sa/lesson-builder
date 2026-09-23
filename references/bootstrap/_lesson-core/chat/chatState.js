@@ -41,6 +41,10 @@ export function makeTab(title) {
     loading: false,
     statusText: "",
     reinforced: [],
+    // Running total off each main turn's "done" event (addSpend, below).
+    // undefined until one actually carries a cost -- shows nothing, never
+    // "$0.00" (Chatbot's applyReply, the chat header).
+    spend: undefined,
   };
 }
 

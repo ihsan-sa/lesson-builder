@@ -116,6 +116,25 @@ function response(chunks) {
     check('…through fmtSpend, in its own class', /className="thread-spend"[^>]*>\{fmtSpend\(thread\.spend\)\}/.test(threadPanelSrc));
   }
 
+  heading('8', 'Chatbot.jsx: the MAIN conversation also totals its spend, not just side-threads (landing review, 2026-09-23)');
+  {
+    check('imports fmtSpend alongside addSpend from chatState.js',
+      /import \{[^}]*addSpend[^}]*fmtSpend[^}]*\} from "\.\/chatState\.js"/.test(chatbotSrc)
+      || /import \{[^}]*fmtSpend[^}]*addSpend[^}]*\} from "\.\/chatState\.js"/.test(chatbotSrc));
+    check('applyReply (shared by a sent message and an attached turn) takes this turn\'s cost',
+      /const applyReply = \(tabId, finalText, cost\) => \{/.test(chatbotSrc));
+    check('…and folds it into the tab with addSpend', /const spend = addSpend\(t\.spend, cost\);/.test(chatbotSrc));
+    check('a sent message reads cost off readTurnWithReattach and hands it to applyReply',
+      /const \{ finalText, stopped, errored, cost \} = await readTurnWithReattach\(\{/.test(chatbotSrc)
+      && /applyReply\(tabId, finalText, cost\);/.test(chatbotSrc));
+    check('an attached (picked-back-up) turn does the same',
+      /const \{ finalText, stopped, cost \} = await readTurnWithReattach\(\{/.test(chatbotSrc));
+    check('a new tab starts with no spend (undefined, not 0)', /spend: undefined,/.test(fs.readFileSync(STATE_JS, 'utf8')));
+    check('the chat header shows it only once a cost has actually arrived',
+      /typeof activeTab\?\.spend === "number" && \(/.test(chatbotSrc));
+    check('…through fmtSpend, in its own class', /className="chat-header-spend"[^>]*>\{fmtSpend\(activeTab\.spend\)\}/.test(chatbotSrc));
+  }
+
   console.log('');
   for (const f of failures) console.log(`  FAIL  ${f}`);
   console.log(`\n${pass}/${pass + failures.length} checks passed`);

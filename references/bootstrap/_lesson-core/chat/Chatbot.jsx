@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "../constants/models.js";
 import { TUTOR_ENABLED, API } from "../constants/build.js";
-import { _cs, _ss, makeTab, tabLabel, addSpend } from "./chatState.js";
+import { _cs, _ss, makeTab, tabLabel, addSpend, fmtSpend } from "./chatState.js";
 import { ChatBubble } from "./ChatBubble.jsx";
 import { ThreadPanel } from "./ThreadPanel.jsx";
 import { buildSystemPrompt } from "./buildSystemPrompt.js";
@@ -761,8 +761,11 @@ export function Chatbot({
 
   // A turn's reply is final: parse its tags once (suggestion, commit offer,
   // reinforced behaviours) and replace the streaming bubble with it. Shared by
-  // a sent message and a turn picked up again by attach.
-  const applyReply = (tabId, finalText) => {
+  // a sent message and a turn picked up again by attach. `cost` is this turn's
+  // own figure off the "done" event (turnStream.js), undefined when it carried
+  // none -- addSpend leaves the tab's running total exactly as it was then, the
+  // same rule ThreadPanel's side-threads follow.
+  const applyReply = (tabId, finalText, cost) => {
     const reply = processResponse(finalText);
     setTabs(prev => prev.map(t => {
       if (t.id !== tabId) return t;
@@ -774,10 +777,11 @@ export function Chatbot({
         if (!mergedReinf.includes(r)) mergedReinf.push(r);
       }
       const cappedReinf = mergedReinf.length > 20 ? mergedReinf.slice(mergedReinf.length - 20) : mergedReinf;
+      const spend = addSpend(t.spend, cost);
       if (msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1]._streaming) {
-        return { ...t, reinforced: cappedReinf, messages: [...msgs.slice(0, -1), { role: "assistant", content: reply.display, suggestion: reply.suggestion || null, commitSuggest: reply.commitSuggest || null }] };
+        return { ...t, reinforced: cappedReinf, spend, messages: [...msgs.slice(0, -1), { role: "assistant", content: reply.display, suggestion: reply.suggestion || null, commitSuggest: reply.commitSuggest || null }] };
       }
-      return { ...t, reinforced: cappedReinf };
+      return { ...t, reinforced: cappedReinf, spend };
     }));
   };
 
@@ -864,11 +868,11 @@ export function Chatbot({
     try {
       const res = await attachTurn({ fetchImpl: fetch, url: API.chat, sessionId, signal: controller.signal });
       on.restart();
-      const { finalText, stopped } = await readTurnWithReattach({
+      const { finalText, stopped, cost } = await readTurnWithReattach({
         res, fetchImpl: fetch, url: API.chat, sessionId, signal: controller.signal, on,
       });
       if (stopped) markTabStopped(tabId);
-      else if (finalText) applyReply(tabId, finalText);
+      else if (finalText) applyReply(tabId, finalText, cost);
     } catch (e) {
       if (e.name === "AbortError") markTabStopped(tabId);
       else if (!(e.name === "AttachRefused" && e.status === 409)) showTurnLost(tabId, e);
@@ -1000,7 +1004,7 @@ export function Chatbot({
       // end of the reply: the hosted tutor kept the turn, and attach streams it
       // again from its first event (turnStream.js). restart drops the bubble
       // built so far, so the replay rebuilds it rather than doubling it.
-      const { finalText, stopped, errored } = await readTurnWithReattach({
+      const { finalText, stopped, errored, cost } = await readTurnWithReattach({
         res, fetchImpl: fetch, url: API.chat, signal: controller.signal,
         sessionId: ATTACH_ENABLED ? tab.sessionId : null,
         on: turnHandlers(tabId),
@@ -1018,7 +1022,7 @@ export function Chatbot({
         // drained into it — including a folded thread's summary.
         markFoldsDelivered(tabId, observations);
       }
-      if (!stopped && finalText) applyReply(tabId, finalText);
+      if (!stopped && finalText) applyReply(tabId, finalText, cost);
     } catch (e) {
       // Observations drained into this turn ride the next one instead: the
       // model never finished acting on them, and re-sending is the safe side.
@@ -1798,6 +1802,11 @@ export function Chatbot({
                 <span className="chat-header-dot" style={{ background: statusColor }}
                       title={sessionId ? `Session ${sessionId.slice(0, 8)} — ${sessionStatus}` : sessionStatus} />
                 <span>{topicTitle}</span>
+                {/* Nothing until a "done" event has actually carried a cost --
+                    same rule as ThreadPanel's side-thread total. */}
+                {typeof activeTab?.spend === "number" && (
+                  <span className="chat-header-spend" title="Running spend on this chat">{fmtSpend(activeTab.spend)}</span>
+                )}
               </div>
             </div>
             <div className="chat-header-actions">
