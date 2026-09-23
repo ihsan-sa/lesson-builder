@@ -1,0 +1,85 @@
+{
+ "type": "context",
+ "alt": "Workers read the sources in parallel; one agent writes the result up",
+ "canvas": 553,
+ "nodes": [
+  {
+   "title": "Main Claude",
+   "sub": "owns every spawn",
+   "role": "actor",
+   "id": "L",
+   "col": 0,
+   "row": 1.0
+  },
+  {
+   "title": "Research agent",
+   "sub": "one per source",
+   "role": "work",
+   "id": "m0",
+   "col": 1,
+   "row": 0
+  },
+  {
+   "title": "Research agent",
+   "sub": "beyond the sources",
+   "role": "work",
+   "id": "m1",
+   "col": 1,
+   "row": 1
+  },
+  {
+   "title": "Research agent",
+   "sub": "gaps in the first wave",
+   "role": "work",
+   "id": "m2",
+   "col": 1,
+   "row": 2
+  },
+  {
+   "title": "Orchestrator",
+   "sub": "writes up the evidence",
+   "role": "work",
+   "id": "R",
+   "col": 2,
+   "row": 0.5
+  },
+  {
+   "title": "Content review",
+   "sub": "2 rounds at most",
+   "role": "gate",
+   "id": "X",
+   "col": 2,
+   "row": 1.5
+  }
+ ],
+ "edges": [
+  {
+   "from": "L",
+   "to": "m0"
+  },
+  {
+   "from": "m0",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m1"
+  },
+  {
+   "from": "m1",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m2"
+  },
+  {
+   "from": "m2",
+   "to": "R"
+  },
+  {
+   "from": "R",
+   "to": "X"
+  }
+ ]
+}
