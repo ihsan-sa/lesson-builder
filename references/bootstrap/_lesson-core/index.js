@@ -26,6 +26,7 @@ export { useShell } from "./ui/shellContext.js";
 export { Eq, M } from "./ui/Eq.jsx";
 export { P, Section, KeyConcept, CollapsibleBlock, RefImg, PracticeProblem, FormulaSheetBox, SummaryBox } from "./ui/primitives.jsx";
 export { DesmosGraph } from "./ui/DesmosGraph.jsx";
+export { GeoGebraGraph } from "./ui/GeoGebraGraph.jsx";
 
 export {
   Slider, RangeSlider, NumberInput, Toggle, Button, Dropdown, Stepper,
@@ -40,3 +41,4 @@ export { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "./constant
 // `useKatexStatus()` gives the tri-state for components that render math.
 export { useKatex, useKatexStatus, injectKatexStylesheet, KATEX_CSS_URL, KATEX_JS_URL } from "./hooks/useKatex.js";
 export { useDesmos } from "./hooks/useDesmos.js";
+export { useGeoGebra } from "./hooks/useGeoGebra.js";

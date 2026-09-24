@@ -41,12 +41,12 @@ references/bootstrap/
                              + observationQueue
     ui/                      Eq, primitives (P, Section, KeyConcept, CollapsibleBlock,
                              RefImg, PracticeProblem, FormulaSheetBox, SummaryBox),
-                             primitives-interactive (Slider, Toggle, …), DesmosGraph
+                             primitives-interactive (Slider, Toggle, …), DesmosGraph, GeoGebraGraph
     constants/               THEMES_G + MODELS + EFFORT_LEVELS + DEFAULT_MODEL
                              + DEFAULT_EFFORT (chat opens on the default-flagged model)
                              + build.js (TUTOR_ENABLED / API — whether this build
                              carries the tutor, and the chat URLs under its base)
-    hooks/                   useKatex, useDesmos
+    hooks/                   useKatex, useDesmos, useGeoGebra
     helpers/                 manim-runner + empty manim_scratch/ (.gitkeep)
     prompts/                 graph-editing / lesson-augmentation
     server/proxy.js          Canonical Express proxy (imported via shim from

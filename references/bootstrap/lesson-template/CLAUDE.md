@@ -7,7 +7,7 @@
 ## Stack
 - React 19 + Vite 6 (JSX, no TypeScript)
 - KaTeX for math rendering (loaded from CDN)
-- Inline SVG graphs; optional `<DesmosGraph>` (needs `VITE_DESMOS_KEY` in the workspace-root `.env.local`, resolved via `envDir` in `vite.config.js`)
+- Inline SVG graphs; optional `<DesmosGraph>` (needs `VITE_DESMOS_KEY` in the workspace-root `.env.local`, resolved via `envDir` in `vite.config.js`); optional `<GeoGebraGraph>` for draggable constructions and 3D (no key; loads from geogebra.org)
 - Shared chat + UI infrastructure imported from `@core` (`<workspace_root>/_lesson-core/`) — never inlined here
 - Express proxy (`server/proxy.js` shim) spawning the local `claude` CLI per chat session
 

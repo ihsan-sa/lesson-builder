@@ -21,6 +21,7 @@ Match the medium to the **content**, never to a learner "style" (learning-styles
 - **matplotlib-ref** — static reference PNG via `RefImg`; multi-panel plots, 3D surfaces, heatmaps, scientifically validated rendering.
 - **manim-video** — smooth geometric transforms, vector flows, 3D rotations, animated derivations; one-time assets, not runtime-parameterized.
 - **interactive-demo** — composed `@core` primitives; discrete/custom behavior the student manipulates live.
+- **geogebra-graph** — `<GeoGebraGraph>` embed; a figure the student drags or rotates: geometric constructions whose property holds under dragging, 3D surfaces and solids, vector fields with a movable point. Not for plain 2D curves with sliders (desmos-graph) or a shape one static picture shows (svg-graph). First applet on a page fetches several MB and takes ~7 s; at most two per topic. See `references/geogebra.md`.
 - **desmos-graph** — `<DesmosGraph>` embed; function shape under continuous parameters, zoom/pan, typed expressions, multi-curve overlays. First embed on a page costs a ~1.3 MB CDN fetch; don't reach for it when a static SVG with 1-3 curves tells the story.
 - **web-image** — real-world appearance matters: apparatus photo, micrograph, spectrum.
 - **practice-problems** — a per-topic block of attributed problems (past finals/midterms/HW/problem sets) from Phase 1's `practice_problems` array, rendered with collapsed worked solutions. **Additive, not competing**: a topic carries one explanatory medium AND a practice block whenever real problems exist. Never fabricate problems; omit the block when the topic's array is empty.
@@ -43,7 +44,7 @@ For each topic return a ranked recommendation (1-3 entries, best first) with a o
       "selected": [
         { "media_id": "<topic_id>-<kebab-descriptor>",   // stable ID; becomes scratch filename + asset stem
           "medium": "...",
-          "specialist": "graphics-agent|manim-agent|interactive-demo-agent|web-image-agent|null",  // null = main Claude authors (prose, desmos-graph, practice)
+          "specialist": "graphics-agent|manim-agent|interactive-demo-agent|web-image-agent|null",  // null = main Claude authors (prose, desmos-graph, geogebra-graph, practice)
           "build_brief": "2-5 sentences: what to show, governing equation/behavior, key constraints, suggested stem",
           "confidence": 0.0-1.0 }
       ],
@@ -91,7 +92,7 @@ User hints win unless they violate scientific accuracy or pedagogical correctnes
 }
 ```
 
-Briefs are 2-5 sentence specialist instructions — they become the Phase 3 spawn briefs, so make them self-contained: what to show, governing equation, expected behavior, constraints. Specialist routing: graphics-agent (svg-graph, matplotlib-ref), manim-agent (manim-video), interactive-demo-agent (interactive-demo), web-image-agent (static-image); `null` for keep/remove AND for `desmos-graph` add verdicts — Desmos embeds are authored directly by main Claude during splice, so a desmos gap verdict carries `specialist: null` with the desired state described in `add_brief`.
+Briefs are 2-5 sentence specialist instructions — they become the Phase 3 spawn briefs, so make them self-contained: what to show, governing equation, expected behavior, constraints. Specialist routing: graphics-agent (svg-graph, matplotlib-ref), manim-agent (manim-video), interactive-demo-agent (interactive-demo), web-image-agent (static-image); `null` for keep/remove AND for `desmos-graph` and `geogebra-graph` add verdicts — both embeds are authored directly by main Claude during splice, so such a gap verdict carries `specialist: null` with the desired state or construction described in `add_brief`.
 
 ## Runtime mode (spawned by the tutor mid-chat)
 

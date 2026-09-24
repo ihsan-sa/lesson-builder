@@ -5,7 +5,7 @@ New-mode Phase 3 starting point. Main Claude copies this skeleton into `src/<slu
 ## What's per-lesson vs from @core
 
 - **Per-lesson**: `LESSON_CONTEXT`, `TOPIC_CONTEXT`, `DEFAULT_GRAPH_PARAMS`, `GRAPH_SCHEMA`, graph components, `TOPICS`, `LessonApp`.
-- **From @core**: `LessonShell` (top bar, contents rail, article, tutor docking), `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Opus 5.5 as the default the chat opens with, at `medium` effort), hooks (`useKatex`, `useDesmos`).
+- **From @core**: `LessonShell` (top bar, contents rail, article, tutor docking), `Chatbot`, `STYLES`, UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`, `PracticeProblem`, `FormulaSheetBox`, `SummaryBox`), `DesmosGraph`, `GeoGebraGraph`, interactive primitives (`Slider`, `Toggle`, ...), constants (`THEMES_G`, `MODELS`, `EFFORT_LEVELS`, `DEFAULT_MODEL`, `DEFAULT_EFFORT` — `MODELS` marks Opus 5.5 as the default the chat opens with, at `medium` effort), hooks (`useKatex`, `useDesmos`, `useGeoGebra`).
 - **External**: `server/proxy.js` is a 1-line shim, added by the file-scaffolding step.
 
 ## GRAPH_SCHEMA requirement
@@ -36,6 +36,9 @@ import {
 //                                envDir setting in vite.config.js; the hook
 //                                fails loud and renders a red fallback if
 //                                the key is missing).
+//   GeoGebraGraph, useGeoGebra   GeoGebra applets (constructions, 3D,
+//                                vector fields). No key; loads from
+//                                geogebra.org. See references/geogebra.md.
 
 // ───────────────────────────────────────────────────────────────
 // Lesson Context (passed to Chatbot as system-prompt scaffolding)
