@@ -13,7 +13,7 @@ import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } f
 import { readTurnWithReattach, attachTurn, needsAttach, dropPartialTail } from "./turnStream.js";
 import { msgsKey, reinfKey, spendKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
 import { useShell } from "../ui/shellContext.js";
-import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose } from "../ui/icons.jsx";
+import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose, IconMaximize, IconMinimize } from "../ui/icons.jsx";
 
 // This bundle's own lesson, "/ece206/ece206-course-overview/" in a hosted
 // build and "/" under vite dev. Every sessionStorage key the chat writes is
@@ -165,7 +165,7 @@ export function Chatbot({
   }, [activeTab?.messages?.length, activeTab?.loading]);
 
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 150);
+    if (open) setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 150);
   }, [open, activeTabIdx]);
 
   useEffect(() => {
@@ -389,7 +389,7 @@ export function Chatbot({
       if (addSnippet) addSnippet(latex, label || "equation");
       if (setOpen) setOpen(true);
       setShowSettings(false);
-      setTimeout(() => inputRef.current?.focus(), 120);
+      setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 120);
     };
     window.addEventListener("lesson:explain", onExplain);
     return () => window.removeEventListener("lesson:explain", onExplain);
@@ -1784,6 +1784,29 @@ export function Chatbot({
               <button className="chat-icon-btn" onClick={closePanel} title="Close"><IconClose /></button>
             </div>
           )}
+          {/* Phone bottom sheet: the grabber toggles half / full height, and a
+              drag snaps to the nearer one -- down from half closes the sheet. */}
+          {dock === "sheet" && (
+            <div className="chat-sheet-grab"
+                 onPointerDown={(e) => {
+                   const y0 = e.clientY;
+                   const el = e.currentTarget;
+                   try { el.setPointerCapture(e.pointerId); } catch (_) {}
+                   const up = (ev) => {
+                     el.removeEventListener("pointerup", up);
+                     el.removeEventListener("pointercancel", up);
+                     const dy = ev.clientY - y0;
+                     if (Math.abs(dy) < 8) shell.setSheetFull(!shell.sheetFull);
+                     else if (dy < 0) shell.setSheetFull(true);
+                     else if (shell.sheetFull) shell.setSheetFull(false);
+                     else closePanel();
+                   };
+                   el.addEventListener("pointerup", up);
+                   el.addEventListener("pointercancel", up);
+                 }}
+                 aria-label={shell.sheetFull ? "Collapse the tutor" : "Expand the tutor"}
+                 role="button"><span /></div>
+          )}
           {shell && shell.blocked && (
             <div className="chat-blocked-note">Pop-ups blocked — shown in-app</div>
           )}
@@ -1824,7 +1847,7 @@ export function Chatbot({
               </div>
             </div>
             <div className="chat-header-actions">
-              {shell && (
+              {shell && dock !== "sheet" && (
                 <div className="chat-dock-switch">
                   <button className={`chat-dock-btn ${dock === "side" ? "active" : ""}`}
                           onClick={() => shell.setDock("side")} title="Dock to the side"><IconDockSide /></button>
@@ -1838,6 +1861,12 @@ export function Chatbot({
                       onClick={() => setShowSettings(s => !s)} title="Settings"><IconSettings /></button>
               <button className="chat-icon-btn" onClick={() => setShowHelp(h => !h)}
                       title="Shortcuts and gestures (Ctrl+Shift+?)">?</button>
+              {dock === "sheet" && (
+                <button className="chat-icon-btn" onClick={() => shell.setSheetFull(!shell.sheetFull)}
+                        title={shell.sheetFull ? "Collapse the tutor" : "Expand the tutor"}>
+                  {shell.sheetFull ? <IconMinimize /> : <IconMaximize />}
+                </button>
+              )}
               {dock !== "popup" && dock !== "window" && (
                 <button className="chat-icon-btn" onClick={closePanel} title="Close the tutor"><IconClose /></button>
               )}

@@ -1,7 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { ShellContext } from "./shellContext.js";
-import { IconPanelLeft, IconExternal } from "./icons.jsx";
+import {
+  IconPanelLeft, IconExternal, IconList, IconChevronDown, IconChevronLeft, IconChevronRight, IconClose,
+} from "./icons.jsx";
 import { SHELL_STYLES } from "../chat/shell.css.js";
 import { injectKatexStylesheet } from "../hooks/useKatex.js";
 import { TUTOR_ENABLED } from "../constants/build.js";
@@ -22,9 +24,8 @@ import { TUTOR_ENABLED } from "../constants/build.js";
 // SHELL_STYLES, so everything styled from the tokens repaints on the swap. See
 // the theme block below for the one thing that does not follow on its own.
 //
-// The rail starts open, except at a width too narrow to hold it beside an
-// article of ARTICLE_MIN_W — a phone — where it starts collapsed to its number
-// strip. See railFits below.
+// The rail starts open. It only exists at PHONE_W and wider, where it always
+// leaves the article more than ARTICLE_MIN_W beside it.
 //
 // This file is in all 41 lessons' import graphs: every lesson imports "@core",
 // which resolves to index.js, and index.js re-exports LessonShell statically.
@@ -33,6 +34,14 @@ import { TUTOR_ENABLED } from "../constants/build.js";
 // one and reads both bundles, so that is measured rather than assumed. Dropping
 // the barrel export would settle it at the source and is not available: the two
 // shell lessons import LessonShell from "@core".
+//
+// Below PHONE_W the same shell renders the phone layout instead (design
+// handoff README-mobile.md): an app bar and a section strip for the top bar,
+// a bottom sheet for the contents rail, a second bottom sheet (dock "sheet",
+// half or full height) for the tutor, and a bottom action bar with prev /
+// next / Ask the tutor. The tutor's tabs, transcripts and settings live in
+// Chatbot, which never remounts across the switch, so rotating a phone or
+// resizing a window across 720px keeps the conversation.
 //
 // The icons this file shares with the tutor panel live in ./icons.jsx.
 //
@@ -49,19 +58,28 @@ const WIN_MIN_W = 380, WIN_MIN_H = 320;
 const ARTICLE_MIN_W = 280, ARTICLE_MIN_H = 160;
 const RAIL_W = 262, RAIL_W_COLLAPSED = 48, STRIP = 9;
 
+// "Below 720px wide, switch to the mobile layout specified in README-mobile.md."
+const PHONE_W = 720;
+
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 const viewportW = () => (typeof window === "undefined" ? 1440 : window.innerWidth);
 const viewportH = () => (typeof window === "undefined" ? 900 : window.innerHeight);
 
-// The contents rail may sit beside the article only while the article still
-// gets ARTICLE_MIN_W — the same three terms sideMax() clamps the tutor dock by.
-// It does not hold on a phone: at 390px the open rail leaves .article 128px and
-// .article-col 72px, which is narrower than an equation block's own padding, so
-// .eq-body computes to zero width and the equation is not on screen at all
-// (measured — tests/phone-width). Below 551px the shell starts with the rail
-// collapsed to its 48px number strip, which clears the minimum with room over.
-const railFits = () => viewportW() >= RAIL_W + STRIP + ARTICLE_MIN_W;
+const phoneQuery = () =>
+  typeof window === "undefined" || !window.matchMedia ? null : window.matchMedia(`(max-width: ${PHONE_W - 0.02}px)`);
+function usePhone() {
+  const [phone, setPhone] = useState(() => !!(phoneQuery() && phoneQuery().matches));
+  useEffect(() => {
+    const mq = phoneQuery();
+    if (!mq) return;
+    const on = () => setPhone(mq.matches);
+    on();
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => (mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on));
+  }, []);
+  return phone;
+}
 
 // Pointer-capture drag. onMove receives deltas from the pointerdown origin, so
 // callers close over the value at drag start and never accumulate rounding.
@@ -113,7 +131,7 @@ export function LessonShell({
   // Root-level handlers the lesson needs for context capture
   ...rootProps
 }) {
-  const [railOpen, setRailOpen] = useState(railFits);
+  const [railOpen, setRailOpen] = useState(true);
   const [dock, setDockRaw] = useState("side");
   const [sideW, setSideW] = useState(SIDE_DEFAULT);
   const [bottomH, setBottomH] = useState(BOTTOM_DEFAULT);
@@ -123,6 +141,12 @@ export function LessonShell({
   const [secIdx, setSecIdx] = useState(0);
   const [popupHost, setPopupHost] = useState(null);
   const [themeOwn, setThemeOwn] = useState("light");
+  // Phone layout only: which sheet is open besides the tutor's, whether the
+  // tutor sheet is at full height, and the reading progress in this topic.
+  const phone = usePhone();
+  const [contentsOpen, setContentsOpen] = useState(false);
+  const [sheetFull, setSheetFull] = useState(false);
+  const [prog, setProg] = useState(0);
 
   const articleRef = useRef(null);
   const popupRef = useRef(null);
@@ -187,6 +211,7 @@ export function LessonShell({
   // Topic switch: back to the top, outline highlight resets.
   useEffect(() => {
     setSecIdx(0);
+    setProg(0);
     const el = articleRef.current;
     if (el) el.scrollTop = 0;
   }, [activeIdx]);
@@ -207,9 +232,17 @@ export function LessonShell({
   const handleScroll = useCallback(() => {
     const { main, tops } = headingOffsets();
     if (!main) return;
+    // 60px on desktop; "within 80px" on a phone, whose strip sits over the top.
+    const spy = phone ? 80 : 60;
     let best = 0;
     for (let i = 0; i < tops.length; i++) {
-      if (tops[i] - 60 <= main.scrollTop) best = i;
+      if (tops[i] - spy <= main.scrollTop) best = i;
+    }
+    // "Progress = scrollTop / (scrollHeight − clientHeight)", as 0-100.
+    if (phone) {
+      const room = main.scrollHeight - main.clientHeight;
+      const p = room > 0 ? Math.round((main.scrollTop / room) * 100) : 0;
+      setProg((prev) => (prev === p ? prev : p));
     }
     // Bottom clamp. Whenever the content under the last heading is shorter
     // than the viewport, that heading never reaches the 60px line and the
@@ -219,14 +252,15 @@ export function LessonShell({
       best = tops.length - 1;
     }
     setSecIdx((prev) => (prev === best ? prev : best));
-  }, []);
+  }, [phone]);
 
   const jumpToSection = useCallback((i) => {
     const { main, tops } = headingOffsets();
     if (!main || tops[i] == null) return;
-    main.scrollTo({ top: Math.max(0, tops[i] - 18), behavior: "smooth" });
+    // 18px below the top edge on desktop, 12px below the strip on a phone.
+    main.scrollTo({ top: Math.max(0, tops[i] - (phone ? 12 : 18)), behavior: "smooth" });
     setSecIdx(i);
-  }, []);
+  }, [phone]);
 
   // ── Popup window. A React portal into window.open's document: the panel
   // stays in the same React tree and the same JS context, so session state,
@@ -362,23 +396,6 @@ export function LessonShell({
     return () => window.removeEventListener("resize", refit);
   }, [sideMax, bottomMax]);
 
-  // Close the rail when the window is resized (or the phone rotated) to a width
-  // that cannot give the article its minimum beside it. Only ever closes, and
-  // only on a resize: a reader who presses "Show contents" on a phone keeps the
-  // rail open until they close it or the width changes again, and widening
-  // never reopens a rail a reader shut.
-  //
-  // Its own effect, listening for nothing but resize, because the clamps above
-  // re-run on every railOpen change -- sideMax is keyed on railOpen. Sharing
-  // that effect made pressing "Show contents" below 551px re-run this line and
-  // shut the rail in the same tick, so the button was inert on a phone and the
-  // contents list could not be reached at all.
-  useEffect(() => {
-    const closeIfCramped = () => { if (!railFits()) setRailOpen(false); };
-    window.addEventListener("resize", closeIfCramped);
-    return () => window.removeEventListener("resize", closeIfCramped);
-  }, []);
-
   const onWindowDrag = useCallback((e) => {
     const g = win;
     startDrag(e, (dx, dy) => setWin((p) => ({
@@ -403,7 +420,10 @@ export function LessonShell({
   // empty window.
   const tutorEnabled = !!tutor && TUTOR_ENABLED;
   const showTutor = chatOpen && tutorEnabled;
-  const place = showTutor ? (popupHost ? "popup" : dock) : null;
+  // On a phone the tutor is always the bottom sheet: "Dock switching and
+  // pop-out don't exist on mobile." A pop-out opened before a desktop window
+  // was narrowed keeps its own window.
+  const place = showTutor ? (popupHost ? "popup" : phone ? "sheet" : dock) : null;
 
   // Dock changes must not remount the tutor, or the session, transcript and
   // open threads go with it. Two things would cause a remount and both are
@@ -418,6 +438,7 @@ export function LessonShell({
   const [sideSlot, setSideSlot] = useState(null);
   const [bottomSlot, setBottomSlot] = useState(null);
   const [windowSlot, setWindowSlot] = useState(null);
+  const [sheetSlot, setSheetSlot] = useState(null);
 
   const hostRef = useRef(null);
   if (!hostRef.current && typeof document !== "undefined") {
@@ -436,9 +457,10 @@ export function LessonShell({
       place === "side" ? sideSlot :
       place === "bottom" ? bottomSlot :
       place === "window" ? windowSlot :
+      place === "sheet" ? sheetSlot :
       windowSlot;
     if (target && host.parentNode !== target) target.appendChild(host);
-  }, [host, place, popupHost, sideSlot, bottomSlot, windowSlot]);
+  }, [host, place, popupHost, sideSlot, bottomSlot, windowSlot, sheetSlot]);
 
   const panelStyle = useMemo(() => {
     if (place === "window") return { left: win.x, top: win.y, width: win.w, height: win.h };
@@ -458,8 +480,11 @@ export function LessonShell({
     closeChat: () => setChatOpen && setChatOpen(false),
     topicTitle: active.title || "",
     topicNumber: activeIdx + 1,
+    // Tutor sheet height, phone only.
+    sheetFull,
+    setSheetFull,
   }), [place, dock, setDock, openPopup, closePopup, blocked, panelStyle, onWindowDrag,
-       onWindowResize, chatOpen, setChatOpen, active.title, activeIdx]);
+       onWindowResize, chatOpen, setChatOpen, active.title, activeIdx, sheetFull]);
 
   const mono = monogram || (courseCode || lessonTitle || "L").trim().charAt(0).toUpperCase() || "L";
   // Position, not progress: "you are on topic N of M". Counting the current
@@ -472,7 +497,37 @@ export function LessonShell({
       <div className={`lesson-shell ${themeClass} ${chatOpen ? "ctx-active" : ""}`} {...rootProps}>
         <style>{SHELL_STYLES}</style>
 
-        {/* ── Top bar ── */}
+        {/* ── Top bar (desktop) / app bar + section strip (phone) ── */}
+        {phone ? (
+          <>
+            <div className="appbar">
+              <button className="appbar-btn" onClick={() => setContentsOpen(true)}
+                      aria-label="Contents" title="Contents">
+                <IconList />
+              </button>
+              <div className="appbar-titles">
+                {(courseCode || courseName) && (
+                  <div className="appbar-course">
+                    {courseCode}{courseCode && courseName ? " · " : ""}{courseName}
+                  </div>
+                )}
+                <h1 className="appbar-title">{lessonTitle}</h1>
+              </div>
+              {topics.length > 0 && (
+                <div className="appbar-position" title="Position in this lesson">
+                  {pad(activeIdx + 1)} / {pad(topics.length)}
+                </div>
+              )}
+            </div>
+            <button className="section-strip" onClick={() => setContentsOpen(true)}
+                    aria-label="Open the contents">
+              <span className="section-strip-num">{pad(activeIdx + 1)}</span>
+              <span className="section-strip-title">{sections[secIdx] || active.tab || active.title || ""}</span>
+              <span className="section-strip-chev"><IconChevronDown /></span>
+              <span className="section-strip-progress" style={{ width: `${prog}%` }} />
+            </button>
+          </>
+        ) : (
         <div className="topbar">
           <div className="topbar-left">
             <button
@@ -538,6 +593,7 @@ export function LessonShell({
             )}
           </div>
         </div>
+        )}
 
         {/* "a build with nothing extra set emits no tutor UI at all" — so the
             banner is the inverse of the tutor gate, not a test for a
@@ -551,7 +607,7 @@ export function LessonShell({
 
         {/* ── Body ── */}
         <div className="shell-body">
-          {railOpen ? (
+          {phone ? null : railOpen ? (
             <nav className="rail" aria-label="Contents">
               <div className="rail-label">Contents</div>
               {topics.map((t, i) => (
@@ -642,6 +698,78 @@ export function LessonShell({
             </>
           )}
         </div>
+
+        {/* ── Phone: action bar, scrim, contents sheet, tutor sheet ── */}
+        {phone && (
+          <>
+            <div className="action-bar">
+              <button className="action-step" disabled={activeIdx <= 0}
+                      onClick={() => activeIdx > 0 && onSelectTopic && onSelectTopic(activeIdx - 1)}
+                      aria-label="Previous topic"><IconChevronLeft /></button>
+              {tutorEnabled ? (
+                <button className="action-ask" onClick={() => setChatOpen && setChatOpen(true)}>
+                  Ask the tutor
+                </button>
+              ) : <span className="action-gap" />}
+              <button className="action-step" disabled={activeIdx >= topics.length - 1}
+                      onClick={() => activeIdx < topics.length - 1 && onSelectTopic && onSelectTopic(activeIdx + 1)}
+                      aria-label="Next topic"><IconChevronRight /></button>
+            </div>
+            <div className={`sheet-scrim ${contentsOpen || place === "sheet" ? "sheet-scrim-on" : ""}`}
+                 onClick={() => { setContentsOpen(false); if (place === "sheet" && setChatOpen) setChatOpen(false); }} />
+            <nav className={`contents-sheet ${contentsOpen ? "sheet-open" : ""}`} aria-label="Contents"
+                 aria-hidden={!contentsOpen}>
+              <div className="sheet-grabber" onClick={() => setContentsOpen(false)}><span /></div>
+              <div className="contents-sheet-head">
+                <span className="rail-label">Contents</span>
+                <button className="appbar-btn" onClick={() => setContentsOpen(false)} aria-label="Close the contents">
+                  <IconClose />
+                </button>
+              </div>
+              <div className="contents-sheet-body">
+                {topics.map((t, i) => (
+                  <div key={t.id}>
+                    <button
+                      className={`rail-topic ${i === activeIdx ? "rail-topic-active" : ""}`}
+                      onClick={() => { setContentsOpen(false); if (i !== activeIdx && onSelectTopic) onSelectTopic(i); }}
+                    >
+                      <span className="rail-topic-num">{pad(i + 1)}</span>
+                      <span className="rail-topic-title">{t.tab || t.title}</span>
+                    </button>
+                    {i === activeIdx && sections.length > 0 && (
+                      <div className="rail-outline">
+                        {sections.map((s, j) => (
+                          <button
+                            key={`${s}-${j}`}
+                            className={`rail-outline-item ${j === secIdx ? "rail-outline-current" : ""}`}
+                            onClick={() => { setContentsOpen(false); jumpToSection(j); }}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div className="rail-refs">
+                  {refLinks.map((r) => (
+                    <a key={r.href || r.label} className="rail-ref" href={r.href}
+                       target={/^https?:/.test(r.href || "") ? "_blank" : undefined} rel="noreferrer">
+                      {r.label}
+                    </a>
+                  ))}
+                  {/* The top bar's Dark/Light switch has no room in a 52px app
+                      bar, so on a phone it is the last row of the contents. */}
+                  <button className="rail-ref" onClick={toggleTheme}>
+                    {theme === "dark" ? "Light theme" : "Dark theme"}
+                  </button>
+                </div>
+              </div>
+            </nav>
+            <div className={`tutor-sheet ${place === "sheet" ? "sheet-open" : ""} ${sheetFull ? "tutor-sheet-full" : ""}`}
+                 ref={setSheetSlot} />
+          </>
+        )}
 
         <div ref={setWindowSlot} />
         {tutorEnabled && host && createPortal(tutor, host)}

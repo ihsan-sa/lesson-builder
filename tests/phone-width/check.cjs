@@ -28,9 +28,9 @@
 //   phone    390x844   the width the owner reported the overlap at
 //   desktop  1440x900  the rail open at 262px, the side rail absolutely
 //                      positioned in the gutter the block reserves for it
-// Each viewport gets its own browser context and its own page load: LessonShell
-// decides whether the contents rail starts open from the width at mount, so a
-// page resized after mounting is not the page a reader on a phone loads.
+// Each viewport gets its own browser context and its own page load, so each
+// is the page a reader at that width loads rather than one resized after it
+// mounted.
 //
 // Env: SHELL_URL, CLASSIC_URL, SQUEEZED_URL  (required; run.sh serves each
 //      built lesson)
@@ -48,8 +48,8 @@ const { EPS_AREA, readEquations, blankEquations } = require("./overlap.cjs");
 
 const BROWSER = process.env.PHONE_WIDTH_BROWSER || process.env.SAFE_RENDER_BROWSER || "";
 const PHONE = { width: 390, height: 844 };
-// The two widths ui/LessonShell.jsx gives the contents rail.
-const RAIL_W = 262, RAIL_W_COLLAPSED = 48;
+// The open contents rail's width (desktop; below 720px there is no rail).
+const RAIL_W = 262;
 const DESKTOP = { width: 1440, height: 900 };
 
 let failed = 0;
@@ -97,28 +97,30 @@ async function measure(browser, url, viewport) {
   return snap;
 }
 
-// The rail starts collapsed at 390px; pressing "Show contents" must still open
-// it, and it must stay open. Its own page load, so the press is read against a
-// rail the shell collapsed on its own rather than one an earlier case left in
-// some state. Both halves are asserted: the rail the reader did not ask for is
-// out of the way, and the rail the reader did ask for is there.
-async function probeRailToggle(browser, url) {
+// Below 720px the shell has no rail: the contents live in a bottom sheet the
+// app bar's list button opens. Its own page load, so the press is read against
+// a sheet nothing has touched. Both halves are asserted: before the press no
+// rail sits beside the article and the sheet is shut; after it the sheet is
+// open, spans the viewport, and lists the topics.
+async function probeContentsSheet(browser, url) {
   const ctx = await browser.newContext({ viewport: PHONE });
   const page = await ctx.newPage();
   await page.goto(url, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(".rail-toggle", { timeout: 30000 });
+  await page.waitForSelector(".appbar-btn", { timeout: 30000 });
   const read = () => page.evaluate(() => {
-    const rail = document.querySelector(".rail");
+    const sheet = document.querySelector(".contents-sheet");
+    const r = sheet ? sheet.getBoundingClientRect() : null;
     return {
-      collapsed: rail ? rail.classList.contains("rail-collapsed") : null,
-      width: rail ? rail.getBoundingClientRect().width : 0,
+      rail: !!document.querySelector(".rail"),
+      open: !!(sheet && sheet.classList.contains("sheet-open")),
+      width: r ? r.width : 0,
+      onScreen: !!(r && r.top < window.innerHeight && getComputedStyle(sheet).visibility === "visible"),
+      topics: sheet ? sheet.querySelectorAll(".rail-topic").length : 0,
     };
   });
   const before = await read();
-  await page.click(".rail-toggle");
-  // Long enough for React to commit and for any effect that would undo the
-  // press to have run: the bug this covers shut the rail again in the tick
-  // after it opened, so reading straight back would have seen it open.
+  await page.click(".appbar-btn");
+  // Longer than the sheet's 220ms entrance.
   await page.waitForTimeout(400);
   const after = await read();
   await ctx.close();
@@ -313,16 +315,16 @@ function excludedCases(snap) {
           desktop.equations.every((e) => e.blockPaddingRight === "92px"),
           `padding-right: ${[...new Set(desktop.equations.map((e) => e.blockPaddingRight))].join("/")}`);
 
-        const toggle = await probeRailToggle(browser, url);
-        console.log(`\n[shell rail toggle] before ${Math.round(toggle.before.width)}px` +
-          `${toggle.before.collapsed ? " (collapsed)" : " (open)"}  ` +
-          `after press ${Math.round(toggle.after.width)}px${toggle.after.collapsed ? " (collapsed)" : " (open)"}\n`);
-        check(`${name}: the contents rail starts collapsed at 390px`,
-          toggle.before.collapsed === true && Math.round(toggle.before.width) === RAIL_W_COLLAPSED,
-          `${Math.round(toggle.before.width)}px, collapsed=${toggle.before.collapsed}`);
-        check(`${name}: "Show contents" still opens the rail at 390px, and it stays open`,
-          toggle.after.collapsed === false && Math.round(toggle.after.width) === RAIL_W,
-          `${Math.round(toggle.after.width)}px, collapsed=${toggle.after.collapsed}`);
+        const sheet = await probeContentsSheet(browser, url);
+        console.log(`\n[shell contents sheet] before: rail=${sheet.before.rail} open=${sheet.before.open}  ` +
+          `after press: open=${sheet.after.open} ${Math.round(sheet.after.width)}px, ${sheet.after.topics} topics\n`);
+        check(`${name}: no contents rail beside the article at 390px, and the sheet starts shut`,
+          sheet.before.rail === false && sheet.before.open === false && sheet.before.onScreen === false,
+          JSON.stringify(sheet.before));
+        check(`${name}: the list button opens the contents sheet across the viewport at 390px`,
+          sheet.after.open === true && sheet.after.onScreen === true &&
+            Math.round(sheet.after.width) === PHONE.width && sheet.after.topics > 0,
+          JSON.stringify(sheet.after));
       }
     }
     // One page load, read by both: squeezedCases takes the parts that were
