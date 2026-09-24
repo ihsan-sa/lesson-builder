@@ -20,6 +20,7 @@ The presentation layer is the Claude Design **Lumen** shell (`@core/ui/LessonShe
 - `references/checklists.md` — KaTeX safety, template compliance, 18-test suite, splice checklists.
 - `references/graph-schema-guide.md` — `GRAPH_SCHEMA` derivation and update-mode backfill.
 - `references/desmos-schema.md` — Desmos state schema for `<DesmosGraph>` and `<<DESMOS>>`. Read before authoring either; covers the string-vs-number footgun that crashes `setState` silently.
+- `references/geogebra.md` — `<GeoGebraGraph>`: when a draggable or rotatable figure (geometric construction, 3D surface, vector field) teaches better than a static one or a Desmos curve, how to write one, and what it loads from geogebra.org (no key). Read before planning or authoring one.
 - `references/run-record.md` — the run record (`lesson-run/1`): schema, `run-manifest.cjs` commands, approval-gate outcomes.
 - `references/log-template.md` — `lesson_build.log.md` format, as rendered from the record.
 
@@ -184,11 +185,12 @@ Chat, UI primitives, styling, and proxy code live at `<workspace_root>/_lesson-c
                                 shell.css.js
     ui/                         Eq, M, P, Section, KeyConcept, CollapsibleBlock,
                                 RefImg, PracticeProblem, FormulaSheetBox, SummaryBox,
-                                DesmosGraph
+                                DesmosGraph, GeoGebraGraph
     constants/                  THEMES_G, MODELS, EFFORT_LEVELS, DEFAULT_MODEL,
                                 DEFAULT_EFFORT
     hooks/useKatex.js           KaTeX CDN loader
     hooks/useDesmos.js          Desmos CDN loader (gated on VITE_DESMOS_KEY)
+    hooks/useGeoGebra.js        GeoGebra loader (deployggb.js; no key)
     server/proxy.js             Canonical Express proxy (shim-imported by lessons;
                                 model name passed through unchanged; PROXY_PORT honored)
     package.json                Backend deps (express, cors)

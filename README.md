@@ -136,6 +136,7 @@ evals/teaching/                Calibration + benchmark assets: lesson-fragments/
   server-template.md           package.json, vite.config.js, proxy shim, test_lesson.cjs
   checklists.md                KaTeX safety, template compliance, splice + post-splice checks
   desmos-schema.md             Desmos state schema + string-vs-number footguns
+  geogebra.md                  GeoGebra figures: when, how, what loads from outside
   graph-schema-guide.md        GRAPH_SCHEMA derivation + update-mode backfill
   log-template.md              lesson_build.log.md format, as rendered from the run records
   run-record.md                Run record schema (lesson-run/1), run-manifest.cjs commands, gate outcomes

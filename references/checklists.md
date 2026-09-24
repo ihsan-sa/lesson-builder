@@ -1,6 +1,6 @@
 # Lesson Builder Checklists
 
-Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · Pedagogy · Exposition (discourse) · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 18-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
+Contents: KaTeX safety · Template compliance · Core structure · Theming · Graphs (+ scale design) · Desmos embeds · GeoGebra embeds · Pedagogy · Exposition (discourse) · Chat reinforcement awareness · Ctrl+Click gate · Every way to add context · Thread capabilities · Chatbot props · Automated checks T1-T3 · 18-test suite summary · Research quality gate · Practice problems · Physics consistency + spot-check · Content concision · Project CLAUDE.md · Update-mode pre-flight · Update-mode splice · Post-splice sanity.
 
 ## Purpose
 
@@ -48,7 +48,7 @@ Every lesson imports chat + UI from `@core`. Lessons inlining old chat code (loc
 - [ ] Lesson scaffolding was copied from `references/bootstrap/lesson-template/` — the copy includes the lesson-level `CLAUDE.md`, `.gitignore`, `test_lesson.cjs`, `index.html`, `package.json`, and `vite.config.js`. Do not hand-assemble the scaffold or omit the dotfiles.
 - [ ] `vite.config.js` sets `envDir` to the workspace root, so the root `.env.local` (`VITE_DESMOS_KEY`) loads for every lesson without per-lesson env files.
 - [ ] Imports `Chatbot` and UI primitives (`Eq`, `M`, `P`, `Section`, `KeyConcept`, `CollapsibleBlock`, `RefImg`) from `@core` rather than inlining them.
-- [ ] Uses the current `@core` export surface where the content calls for it: `PracticeProblem` (attributed practice problems), `FormulaSheetBox` / `SummaryBox` (exam formula-sheet and course-summary callouts), `DesmosGraph` + `useDesmos` (Desmos embeds), and `DEFAULT_MODEL` / `DEFAULT_EFFORT` (chat model defaults). No local reimplementations of any of these.
+- [ ] Uses the current `@core` export surface where the content calls for it: `PracticeProblem` (attributed practice problems), `FormulaSheetBox` / `SummaryBox` (exam formula-sheet and course-summary callouts), `DesmosGraph` + `useDesmos` (Desmos embeds), `GeoGebraGraph` (GeoGebra embeds), and `DEFAULT_MODEL` / `DEFAULT_EFFORT` (chat model defaults). No local reimplementations of any of these.
 - [ ] Chat panel is build-gated: `<Chatbot>` UI renders in dev, and in a build that sets `VITE_TUTOR=1` (`TUTOR_ENABLED` in `@core/constants/build.js`). A plain `vite build` sets nothing, so a static deploy — which has no proxy — ships no tutor. Do not "fix" its absence from a default production build, and do not remove the gate.
 - [ ] Context-capture + thread wiring is present at the LessonApp level (per the template skeleton): root-div `onMouseDown`/`onClick`/`onMouseUp`/`onContextMenu` handlers, the `ctxMenu` selection menu (Reply / Reply in thread / **Ask in a thread** / Reply in this thread), the Ctrl+Shift+F thread-context shortcut, the `?tab=` deep-link effect, and — critically — `threadTrigger`/`threadCtxTrigger` actually SET by the ctx-menu handlers. Trigger state that is passed to `<Chatbot>` but never set anywhere means the thread feature silently does nothing.
 - [ ] `addSnippet` calls `routeLessonContext(clean, source)` (imported from `@core`) and returns early when it returns true. Without it, a student replying in a side-thread has every Ctrl+Click land in the main composer instead of the thread they are typing in.
@@ -136,6 +136,20 @@ Applies to lessons that import `DesmosGraph` from `@core/ui/DesmosGraph` or that
 - [ ] `height` prop is set (default 400 px). Avoid `100%` unless the parent has a fixed height.
 - [ ] Cap at 3 Desmos embeds per visible topic. Subsequent embeds on the same page are free (CDN bundle already loaded) but visual density still matters.
 - [ ] For lessons NOT using Desmos: the key check does nothing; the hook is a no-op until a component calls it with `{ enabled: true }` (the chat path gates on the presence of a `.chat-desmos-block`).
+
+---
+
+## GeoGebra embed checklist
+
+Applies to lessons that use `GeoGebraGraph`. `references/geogebra.md` has the reasons.
+
+- [ ] Dragging or rotating the figure is the point. A plain 2D curve with sliders is a `DesmosGraph`; one static shape is an SVG.
+- [ ] At most two applets per visible topic.
+- [ ] `commands` is stable across renders (module-level or `useMemo`), or the applet rebuilds.
+- [ ] Every object the lesson creates is named (`tri = Polygon(A, B, C)`), so a rejected definition shows under the figure. No "GeoGebra rejected" note is left in the built lesson.
+- [ ] A point the student should drag is free: `P = Point(c)` then `SetCoords`, never `Point(c, t)`.
+- [ ] Geometry with a `ZoomIn` also has `SetAxesRatio(1, 1)`, and circles look round at 390 px.
+- [ ] The prose tells the student what to move and what to watch.
 
 ---
 

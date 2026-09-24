@@ -80,6 +80,7 @@ EXCLUDED=(
   "safe-render|needs a Chromium (the sanitiser is tested in a real DOM)|cd tests/safe-render && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && SAFE_RENDER_BROWSER=/usr/bin/google-chrome node run.cjs"
   "katex-fallback|needs a Chromium and a Vite dev server|cd tests/katex-fallback && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && KATEX_FALLBACK_BROWSER=/usr/bin/google-chrome ./run.sh"
   "resume-metadata|needs a Chromium and a Vite dev server|cd tests/resume-metadata && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && RESUME_METADATA_BROWSER=/usr/bin/google-chrome ./run.sh"
+  "geogebra|needs a Chromium, a vite build and www.geogebra.org|GEOGEBRA_BROWSER=/usr/bin/google-chrome tests/geogebra/run.sh"
   "phone-width|needs a Chromium, three vite builds and the KaTeX CDN|cd tests/phone-width && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && PHONE_WIDTH_BROWSER=/usr/bin/google-chrome ./run.sh"
   "phone-width --sweep|the fixture measures its own scaffolded lessons; this measures overlap and collapse over every lesson of a real built site|serve a build (bin/serve-dist.mjs, which is the LESSONS repo's script, not this repo's: --port 5301 --dist <site> --quiet), then PHONE_WIDTH_BROWSER=/usr/bin/google-chrome SITE_URL=http://127.0.0.1:5301/ node tests/phone-width/sweep.cjs"
   "phone-width --sweep-negative|the sweep's negative control: it needs a built site to copy lessons out of, and a Chromium|SITE=<a built site> PHONE_WIDTH_BROWSER=/usr/bin/google-chrome tests/phone-width/sweep-negative.sh"

@@ -104,6 +104,7 @@ Before compiling the plan, verify every capability the decider's selections assu
 
 - manim selected → `manim`, `ffmpeg`, `ffprobe` on PATH (the manim-runner `checkDependencies()` one-liner).
 - Desmos selected → `VITE_DESMOS_KEY` present in the workspace-root `.env.local`.
+- GeoGebra selected → `GeoGebraGraph` exported by `_lesson-core` (a workspace bootstrapped before it existed needs `_lesson-core` refreshed). No key.
 - Interactive demo selected → required primitives exported by `_lesson-core/ui/`.
 - Web image selected → Step 3 pre-flight below.
 - Companion PDF wanted → the `pdf-material-builder` skill reachable (vendored at `<workspace_root>/.claude/skills/pdf-material-builder/`, or installed at `~/.claude/skills/`) and a LaTeX toolchain (`pdflatex`) on PATH.
@@ -114,7 +115,7 @@ For any failed check, either substitute the decider's alternative for that item 
 
 Web images are the one medium with a pre-approval blocker: license compliance. For each proposed web image, spawn `web-image-agent` in pre-flight mode — search + license-verify ONLY, no downloads — returning candidates with stable `candidate_id`s, URLs (image + source page), license status, and the target path under `<lesson_root>/public/images/`. An image with unclear provenance does not enter the plan; the approved `candidate_id` rides in the Phase 3 fetch brief. If a request-changes revision adds a web image, re-run this pre-flight for it before re-presenting the gate — no web image reaches Phase 3 unvetted. All other media need no Phase 2 specialist work — their briefs carry enough for the gate, and rendering happens once, in Phase 3, after approval. (Manim entries carry a static note in the plan: a 5-10 s scene renders in roughly 1-3 minutes.)
 
-Inline prose, KaTeX blocks, key-concept bullets, and `<DesmosGraph>` embeds never spawn a specialist in any phase — main Claude authors them directly during Phase 3 assembly.
+Inline prose, KaTeX blocks, key-concept bullets, `<DesmosGraph>` and `<GeoGebraGraph>` embeds never spawn a specialist in any phase — main Claude authors them directly during Phase 3 assembly.
 
 ### Step 4: Main Claude compiles the Lesson Plan artifact
 
@@ -187,6 +188,7 @@ Canonical in `agents/medium-decider-agent.md` (medium-to-content matching, high/
 
 - **Myth guardrail**: the ranking and any plan copy must clear the `SKILL.md` "Do NOT build these" list — no learning-styles routing, no Dale's-cone "remember X%" justification for interactivity (justify via the testing/doer effect), no gamification as a motivation medium.
 - **Desmos authoring**: `<DesmosGraph>` embeds spawn no specialist — main Claude authors the `state` JSX during Phase 3 assembly (read `references/desmos-schema.md` first). First embed on a page costs ~1.3 MB; don't plan one where a static SVG with 1-3 curves tells the story.
+- **GeoGebra authoring**: `<GeoGebraGraph>` embeds spawn no specialist either — main Claude writes the `commands` during Phase 3 assembly (read `references/geogebra.md` first). Plan one only where dragging or rotating is the point; the first applet on a page costs several MB.
 
 ## Lesson Plan artifact formats
 
