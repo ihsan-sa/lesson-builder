@@ -139,9 +139,11 @@ const waitForInvocation = async (pred, ms = 8000) => {
   return null;
 };
 
+const PS_MAX_BUFFER = 64 * 1024 * 1024;
+
 // Live (non-zombie) pids of the tree under rootPid: descendants plus process-group members.
 function tree(rootPid) {
-  const rows = execFileSync("ps", ["-eo", "pid=,ppid=,pgid=,stat="], { encoding: "utf8" }).split("\n")
+  const rows = execFileSync("ps", ["-eo", "pid=,ppid=,pgid=,stat="], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER }).split("\n")
     .map((l) => l.trim().split(/\s+/)).filter((m) => m.length >= 4 && !m[3].startsWith("Z"))
     .map((m) => ({ pid: +m[0], ppid: +m[1], pgid: +m[2] }));
   const found = new Set(); const stack = [rootPid];
@@ -156,7 +158,10 @@ function tree(rootPid) {
 // check anyway: it is the real process, not the proxy's account of it.
 async function pidResuming(sid, timeoutMs = 10000) {
   for (const t = Date.now(); Date.now() - t < timeoutMs;) {
-    const rows = execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" }).split("\n").map((l) => l.trim());
+    // Every process's full argv: on the box that is ~0.8MB already (session
+    // prompts ride in argv), and past execFileSync's 1MB default maxBuffer the
+    // harness died with 'spawnSync ps ENOBUFS', which read as a red gate.
+    const rows = execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf8", maxBuffer: PS_MAX_BUFFER }).split("\n").map((l) => l.trim());
     const hit = rows.find((l) => l.includes("--resume " + sid) && l.includes("fake-claude"));
     if (hit) return +hit.split(/\s+/)[0];
     await sleep(200);
