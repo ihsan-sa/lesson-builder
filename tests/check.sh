@@ -73,6 +73,7 @@ FIXTURES=(
   "thread-actors|tests/thread-actors/run.sh"
   "tutor-confinement|tests/tutor-confinement/run.sh"
   "workspace-root|tests/workspace-root/run.sh"
+  "core-refresh|tests/core-refresh/run.sh"
 )
 
 # name|why it cannot run here|the exact command that runs it

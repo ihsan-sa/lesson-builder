@@ -81,7 +81,7 @@ Every gate in this skill was written for a user at a terminal. That is one of th
 4. **Messages arrive over a chat transport rather than the terminal** — the user's turns come in as channel messages and replies go back the same way (a chat app such as Slack bridged to the session, an issue thread, a bot DM) → `channel`.
 5. Otherwise → `interactive`.
 
-Detection needs no phase state, so resolve it at session start — before the bootstrap gate, whose core-refresh offer is itself a gate — and record it once as `session_mode: "interactive" | "channel" | "headless"` in the Phase 0 scoping artifact, logged as `Session mode: <value>`. Do not re-derive it per gate. **On ambiguity, never assume `interactive`** — an unseen dialog is a dead run, while a plan posted as a message or written to a journal is readable in every mode.
+Detection needs no phase state, so resolve it at session start — before the bootstrap check — and record it once as `session_mode: "interactive" | "channel" | "headless"` in the Phase 0 scoping artifact, logged as `Session mode: <value>`. Do not re-derive it per gate. **On ambiguity, never assume `interactive`** — an unseen dialog is a dead run, while a plan posted as a message or written to a journal is readable in every mode.
 
 **How each gate is delivered:**
 
@@ -100,7 +100,7 @@ Detection needs no phase state, so resolve it at session start — before the bo
 - **4** — no plan is recorded for this run, so the approval refers to nothing. **Not approval.** Re-run Phase 2, record the plan, emit the gate under its hash and block. Never let a bare `APPROVED PLAN` stand in for a plan nobody saw.
 - **5** — a person aborted this run. It stays aborted; the gate does not un-abort it.
 
-**This applies to every user gate the skill has**, not just Phase 2: the Phase 0 interview and mode confirmation, the working-tree report, the legacy-lesson opt-in, Phase 1's rough-sweep topic-list confirmation, Phase 2's approval and its request-changes loop, Phase 5's gitignore-override question, the bootstrap core-refresh offer, and `consolidate`'s single course-level gate.
+**This applies to every user gate the skill has**, not just Phase 2: the Phase 0 interview and mode confirmation, the working-tree report, the legacy-lesson opt-in, Phase 1's rough-sweep topic-list confirmation, Phase 2's approval and its request-changes loop, Phase 5's gitignore-override question, and `consolidate`'s single course-level gate.
 
 **Blocking is reserved for decisions that cannot be defaulted.** In `channel` and `headless` sessions:
 
@@ -118,7 +118,7 @@ A course built from small chunks over a term — outline first, then material ev
 
 Every run begins with one Glob: does `<workspace_root>/_lesson-core/index.js` exist? `_lesson-core/` is the shared chat + UI + proxy module every lesson imports via the `@core` Vite alias; without it nothing builds, nothing tests, and the chatbot will not start.
 
-- **Exists** → run the **core-version gate** (`references/bootstrap.md` § Core-version gate) — two of its three checks are summarized here; check 2, the agent-registry diff, runs from the reference. Grep `<workspace_root>/_lesson-core/chat/buildSystemPrompt.js` for `PEDAGOGY_POLICY`, and Glob `<workspace_root>/_lesson-core/server/viteLessonProxy.js`. Both present → continue to Phase 0. Plugin file missing → refresh `_lesson-core/` from the payload before Phase 3, no gate and no fallback: the lesson template's `vite.config.js` imports it, so a new lesson cannot even start against that core (that refresh also satisfies the `PEDAGOGY_POLICY` check — skip its offer and fallback). Otherwise, `PEDAGOGY_POLICY` missing → the workspace core predates the policy-in-core move — new-template lessons built against it would ship with NO tutoring policy anywhere. Offer a core refresh from the payload; if declined, Phase 3 must embed the legacy policy text into this lesson's `LESSON_CONTEXT` as a fallback.
+- **Exists** → run `"$SKILL/scripts/core-refresh.sh" refresh <workspace_root>` (`references/bootstrap.md` § Core-version check). No gate, in any session mode: a core that lags the skill — an older tutor model, a missing policy or plugin — is refreshed from the payload, and the script's smoke test is the check. Exit 0 → continue to Phase 0. Exit 3 → the refresh failed and the previous core was restored: tell the user in the first line of your next message, then follow the reference on whether the build can go on.
 - **Missing** → run the bootstrap procedure in `references/bootstrap.md` before Phase 0. This is mechanical (copy canonical payload, `npm install`, seed workspace-root files including `.claude/agents/`) and needs no approval gate — announce in one sentence and proceed.
 
 The skill ships the canonical payload at `references/bootstrap/`: the full `_lesson-core/` source tree, a placeholder lesson skeleton (`lesson-template/`, including per-lesson `CLAUDE.md` and `.gitignore`), and workspace-root templates (`.gitignore`, `.env.local` example, `build-all.sh`, `netlify.toml`, runtime tutor agents for `.claude/agents/`). Bootstrapping from this payload is the only supported way to stand up a fresh workspace; do **not** pull from the legacy `jsx-lesson` skill, whose copies predate the `@core` refactor.
