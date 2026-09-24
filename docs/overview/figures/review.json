@@ -1,0 +1,121 @@
+{
+ "type": "context",
+ "alt": "Every reviewer runs at once, and none of them can edit",
+ "canvas": 553,
+ "nodes": [
+  {
+   "title": "The lesson",
+   "sub": "as assembled",
+   "role": "io",
+   "id": "L",
+   "col": 0,
+   "row": 2.5
+  },
+  {
+   "title": "Code review",
+   "sub": "KaTeX, imports",
+   "role": "gate",
+   "id": "m0",
+   "col": 1,
+   "row": 0
+  },
+  {
+   "title": "Content review",
+   "sub": "accuracy, discourse",
+   "role": "gate",
+   "id": "m1",
+   "col": 1,
+   "row": 1
+  },
+  {
+   "title": "18 checks",
+   "sub": "no model needed",
+   "role": "gate",
+   "id": "m2",
+   "col": 1,
+   "row": 2
+  },
+  {
+   "title": "Visual QA",
+   "sub": "one per artifact",
+   "role": "gate",
+   "id": "m3",
+   "col": 1,
+   "row": 3
+  },
+  {
+   "title": "Science check",
+   "sub": "one per artifact",
+   "role": "gate",
+   "id": "m4",
+   "col": 1,
+   "row": 4
+  },
+  {
+   "title": "Interaction",
+   "sub": "drives each demo",
+   "role": "gate",
+   "id": "m5",
+   "col": 1,
+   "row": 5
+  },
+  {
+   "title": "Issue list",
+   "sub": "ranked by severity",
+   "role": "work",
+   "id": "R",
+   "col": 2,
+   "row": 2.5
+  }
+ ],
+ "edges": [
+  {
+   "from": "L",
+   "to": "m0"
+  },
+  {
+   "from": "m0",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m1"
+  },
+  {
+   "from": "m1",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m2"
+  },
+  {
+   "from": "m2",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m3"
+  },
+  {
+   "from": "m3",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m4"
+  },
+  {
+   "from": "m4",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m5"
+  },
+  {
+   "from": "m5",
+   "to": "R"
+  }
+ ]
+}

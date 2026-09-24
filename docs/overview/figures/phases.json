@@ -1,0 +1,101 @@
+{
+ "type": "context",
+ "alt": "Six phases, one person's yes, and a review that sends work back",
+ "canvas": 553,
+ "nodes": [
+  {
+   "id": "p0",
+   "title": "0  Scope",
+   "sub": "an interview",
+   "col": 0,
+   "row": 0
+  },
+  {
+   "id": "p1",
+   "title": "1  Read",
+   "sub": "sources, in parallel",
+   "role": "work",
+   "col": 1,
+   "row": 0
+  },
+  {
+   "id": "p2",
+   "title": "2  Plan",
+   "sub": "a person approves",
+   "role": "gate",
+   "hot": true,
+   "col": 2,
+   "row": 0
+  },
+  {
+   "id": "p3",
+   "title": "3  Build",
+   "sub": "media, in parallel",
+   "role": "work",
+   "col": 0,
+   "row": 1
+  },
+  {
+   "id": "p4",
+   "title": "4  Review",
+   "sub": "reviewers, in parallel",
+   "role": "gate",
+   "col": 1,
+   "row": 1
+  },
+  {
+   "id": "p5",
+   "title": "5  Ship",
+   "sub": "build, then commit",
+   "role": "io",
+   "col": 2,
+   "row": 1
+  },
+  {
+   "id": "fx",
+   "title": "Fix",
+   "sub": "at most 6 rounds",
+   "role": "work",
+   "col": 1,
+   "row": 2
+  }
+ ],
+ "edges": [
+  {
+   "from": "p0",
+   "to": "p1"
+  },
+  {
+   "from": "p1",
+   "to": "p2"
+  },
+  {
+   "from": "p2",
+   "to": "p3",
+   "route": "vhv",
+   "label": "approved plan"
+  },
+  {
+   "from": "p3",
+   "to": "p4"
+  },
+  {
+   "from": "p4",
+   "to": "p5",
+   "label": "pass"
+  },
+  {
+   "from": "p4",
+   "to": "fx",
+   "kind": "fail",
+   "label": "findings"
+  },
+  {
+   "from": "fx",
+   "to": "p3",
+   "kind": "dash",
+   "route": "hv",
+   "label": "back to its maker"
+  }
+ ]
+}

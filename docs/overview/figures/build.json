@@ -1,0 +1,101 @@
+{
+ "type": "context",
+ "alt": "One decision for the whole lesson, then one specialist per item",
+ "canvas": 553,
+ "nodes": [
+  {
+   "title": "Medium decider",
+   "sub": "once, all topics",
+   "role": "gate",
+   "id": "L",
+   "col": 0,
+   "row": 1.5
+  },
+  {
+   "title": "Graphics",
+   "sub": "SVG, matplotlib",
+   "role": "work",
+   "id": "m0",
+   "col": 1,
+   "row": 0
+  },
+  {
+   "title": "Manim",
+   "sub": "animations",
+   "role": "work",
+   "id": "m1",
+   "col": 1,
+   "row": 1
+  },
+  {
+   "title": "Demo",
+   "sub": "interactive",
+   "role": "work",
+   "id": "m2",
+   "col": 1,
+   "row": 2
+  },
+  {
+   "title": "Web image",
+   "sub": "licence checked",
+   "role": "work",
+   "id": "m3",
+   "col": 1,
+   "row": 3
+  },
+  {
+   "title": "Staging",
+   "sub": "checked, promoted",
+   "role": "io",
+   "id": "R",
+   "col": 2,
+   "row": 1.0
+  },
+  {
+   "title": "Main Claude",
+   "sub": "writes the prose",
+   "role": "actor",
+   "id": "X",
+   "col": 2,
+   "row": 2.0
+  }
+ ],
+ "edges": [
+  {
+   "from": "L",
+   "to": "m0"
+  },
+  {
+   "from": "m0",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m1"
+  },
+  {
+   "from": "m1",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m2"
+  },
+  {
+   "from": "m2",
+   "to": "R"
+  },
+  {
+   "from": "L",
+   "to": "m3"
+  },
+  {
+   "from": "m3",
+   "to": "R"
+  },
+  {
+   "from": "R",
+   "to": "X"
+  }
+ ]
+}

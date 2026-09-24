@@ -1,0 +1,20 @@
+{
+ "type": "context",
+ "alt": "The loop stops when it stops getting better",
+ "canvas": 553,
+ "nodes": [
+  {"id": "iss", "title": "Issue list", "sub": "tests first", "role": "work", "col": 0, "row": 0},
+  {"id": "fix", "title": "Fix", "sub": "by its maker", "role": "work", "col": 1, "row": 0},
+  {"id": "rr", "title": "Re-review", "sub": "what it touched", "role": "gate", "hot": true, "col": 2, "row": 0},
+  {"id": "un", "title": "Unresolved", "sub": "logged, left open", "col": 0, "row": 1},
+  {"id": "sh", "title": "Phase 5", "sub": "build, then ship", "role": "io", "col": 2, "row": 1}
+ ],
+ "edges": [
+  {"from": "iss", "to": "fix"},
+  {"from": "fix", "to": "rr"},
+  {"from": "rr", "to": "fix", "kind": "dash", "route": "loop-above", "label": "improving", "labelOn": true},
+  {"from": "rr", "to": "sh", "label": "clean", "fromAt": 0.7},
+  {"from": "rr", "to": "un", "kind": "fail", "route": "vhv", "fromAt": 0.3, "label": "stalled"},
+  {"from": "un", "to": "sh", "label": "in the log"}
+ ]
+}
