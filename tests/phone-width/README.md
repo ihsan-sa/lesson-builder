@@ -50,8 +50,8 @@ enough to need the whole width of a phone, one with a caption riding the border
 
 ## What it measures
 
-Two viewports, each on its own page load, because `LessonShell` decides whether
-the contents rail starts open from the width at mount:
+Two viewports, each on its own page load, so each is the page a reader at that
+width loads (below 720px `LessonShell` renders its phone layout instead):
 
 - **phone 390x844** — the width the overlap was reported at.
 - **desktop 1440x900** — the width that must not have moved.
@@ -74,10 +74,11 @@ inverted — the rail floats, and the shell's block still reserves its 92px gutt
 show up.
 
 One case is a press rather than a measurement, on a page load of its own: at
-390px the shell's contents rail must start collapsed to 48px **and** must still
-open to 262px when the reader presses "Show contents", and stay open. Collapsing
-it by default is the fix; an inert toggle would be a worse bug than the one
-being fixed, so both halves are asserted together.
+390px the shell has no contents rail beside the article and its contents sheet
+starts shut, **and** the app bar's list button opens that sheet across the
+viewport with the topics in it. Keeping the rail out of the way is the fix; an
+unreachable contents list would be a worse bug than the one being fixed, so both
+halves are asserted together.
 
 ## The collapse case, and why "no sideways scroll" could not stand in for it
 
@@ -196,6 +197,10 @@ turns this copy red and leaves the other four green.
 Fixed in `ui/LessonShell.jsx` (the rail starts collapsed below the width that
 can hold it) and `chat/shell.css.js` (below 520px the rail flows under the
 equation and the block stops reserving a gutter for it).
+
+Superseded on 2026-09-24 by the shell's phone layout: below 720px there is no
+rail at all (the contents are a bottom sheet), and the equation's number and
+Explain pill are a footer row under the math.
 
 ## What the sweep found (2026-09-06, collapse only)
 

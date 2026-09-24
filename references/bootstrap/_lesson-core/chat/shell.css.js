@@ -80,6 +80,8 @@ export const SHELL_STYLES = `
   --t-surface: 220ms;
 
   --shadow-window: 0 20px 48px -16px rgba(0, 0, 0, 0.66);
+  --shadow-sheet: 0 -8px 24px -8px rgba(0, 0, 0, 0.40);
+  --scrim: rgba(20, 19, 17, 0.6);
 
   /* ── Legacy aliases (do not remove; older rules resolve through these) ── */
   --bg-main: var(--canvas);
@@ -148,6 +150,9 @@ export const SHELL_STYLES = `
   --t-surface: 220ms;
 
   --shadow-window: 0 20px 48px -16px rgba(31, 30, 27, 0.28);
+  /* Phone bottom sheets, and Lumen's modal scrim behind them. */
+  --shadow-sheet: 0 -8px 24px -8px rgba(31, 30, 27, 0.10);
+  --scrim: rgba(250, 249, 246, 0.6);
 
   /* ── Legacy aliases (do not remove; older rules resolve through these) ── */
   --bg-main: var(--canvas);
@@ -547,27 +552,9 @@ html, body { margin: 0; padding: 0; background: var(--canvas); }
   display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
 }
 /* The 92px gutter above buys the floating rail its room out of the column's
-   width, which is affordable on a desktop and is a third of a phone's. At
-   390px the article column is 286px, so 24 + 92 of padding leaves the equation
-   168px -- and .eq-body is a scroll container, so it is the equation that gets
-   scrolled out of sight, never the pill. Below this width the rail stops
-   floating and flows under the equation instead, and the block goes back to
-   even padding: the equation gets 236px of the 286 and the block grows by the
-   height of one pill. The block is a flex row, so it has to become a column
-   for a static rail to land beneath rather than beside. 520px is the
-   breakpoint chat/chat.css.js already uses for the same rail; LessonShell
-   collapses its contents rail higher up still, at 551px, and between the two
-   the column is wide enough that the gutter costs the equation nothing. */
-@media (max-width: 520px) {
-  .eq-block { flex-direction: column; align-items: stretch; }
-  .eq-block[data-latex] { padding-right: 24px; }
-  .eq-side {
-    position: static;
-    transform: none;
-    flex-direction: row; justify-content: flex-end; align-items: center;
-    margin-top: 8px;
-  }
-}
+   width, which is affordable on a desktop and is a third of a phone's. Below
+   720px the rail stops floating and becomes a footer row under the math --
+   see the phone layout at the end of this sheet. */
 .eq-num {
   font-family: var(--font-mono);
   font-size: 0.72em;
@@ -1526,5 +1513,171 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
   padding: 7px 24px;
   font-size: 12px;
   border-bottom: 1px solid var(--border);
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Phone layout, below 720px (design handoff README-mobile.md).
+   LessonShell renders .appbar / .section-strip / .action-bar and the two
+   sheets only below the same width (PHONE_W), so the rules for those need no
+   media query; the rules here restyle what both layouts share.
+   ─────────────────────────────────────────────────────────────── */
+.appbar {
+  height: 52px; flex: none;
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 12px 0 4px;
+  padding-top: env(safe-area-inset-top);
+  box-sizing: content-box;
+  border-bottom: 1px solid var(--border);
+  background: var(--canvas);
+}
+.appbar-btn {
+  width: 44px; height: 44px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--ink-3);
+  border-radius: 8px; cursor: pointer; padding: 0;
+}
+.appbar-titles { flex: 1; min-width: 0; }
+.appbar-course { font-size: 11px; color: var(--ink-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.appbar-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16.5px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.25;
+  color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.appbar-position {
+  flex: none;
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-3);
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px;
+}
+.section-strip {
+  position: relative;
+  height: 40px; flex: none; width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px;
+  border: none; border-bottom: 1px solid var(--border);
+  background: var(--canvas); color: var(--ink-2);
+  font-family: inherit; text-align: left; cursor: pointer;
+}
+.section-strip-num { font-family: var(--font-mono); font-size: 10.5px; color: var(--accent); flex: none; }
+.section-strip-title { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.section-strip-chev { color: var(--ink-4); display: flex; flex: none; }
+.section-strip-progress {
+  position: absolute; left: 0; bottom: -1px; height: 2px;
+  background: var(--accent);
+  transition: width var(--t-micro) var(--ease);
+}
+.action-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: var(--canvas);
+  border-top: 1px solid var(--border);
+}
+.action-step {
+  width: 44px; height: 44px; flex: none; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: var(--canvas); color: var(--ink-2);
+  cursor: pointer; padding: 0;
+}
+.action-step:disabled { opacity: 0.4; cursor: default; }
+.action-ask, .action-gap { flex: 1; }
+.action-ask {
+  height: 44px; border-radius: 999px; border: none;
+  background: var(--accent); color: var(--canvas);
+  font-family: inherit; font-size: 15px; font-weight: 500; cursor: pointer;
+}
+.action-ask:active { background: var(--accent-hover); }
+.sheet-scrim {
+  position: absolute; inset: 0; z-index: 30;
+  background: var(--scrim);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--t-surface) var(--ease);
+}
+.sheet-scrim-on { opacity: 1; pointer-events: auto; }
+.contents-sheet, .tutor-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: flex; flex-direction: column; min-height: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+  box-shadow: var(--shadow-sheet);
+  overflow: hidden;
+  transform: translateY(105%);
+  visibility: hidden;
+  transition: transform var(--t-surface) var(--ease), top var(--t-surface) var(--ease), visibility 0s linear var(--t-surface);
+}
+.sheet-open { transform: none; visibility: visible; transition: transform var(--t-surface) var(--ease), top var(--t-surface) var(--ease); }
+.contents-sheet { height: 76%; background: var(--canvas); }
+.sheet-grabber, .chat-sheet-grab {
+  flex: none; height: 20px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: none;
+}
+.sheet-grabber span, .chat-sheet-grab span { width: 36px; height: 5px; border-radius: 999px; background: var(--border); }
+.chat-sheet-grab { background: var(--surface-2); }
+.contents-sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 22px; flex: none; }
+.contents-sheet-head .rail-label { padding: 0; }
+.contents-sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 12px calc(16px + env(safe-area-inset-bottom)); }
+.contents-sheet .rail-topic { min-height: 48px; padding: 13px 12px; gap: 12px; }
+.contents-sheet .rail-topic-title { font-size: 15px; }
+.contents-sheet .rail-outline { padding: 2px 12px 8px 34px; }
+.contents-sheet .rail-outline-item { min-height: 40px; font-size: 13.5px; display: flex; align-items: center; }
+.contents-sheet .rail-ref {
+  display: flex; align-items: center; min-height: 44px; width: 100%;
+  border: none; background: transparent; font-family: inherit; text-align: left; cursor: pointer; padding: 0 10px;
+}
+/* Two heights: half (top at 34% of the screen) and full (top at the
+   safe-area top). Animates top. */
+.tutor-sheet { top: 34%; background: var(--surface); }
+.tutor-sheet-full { top: env(safe-area-inset-top); }
+.tutor-sheet .chat-panel-sheet { flex: 1; width: 100%; min-height: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .sheet-scrim, .contents-sheet, .tutor-sheet, .sheet-open { transition: none; }
+}
+
+@media (max-width: 719.98px) {
+  /* clip, not hidden: a hidden box still scrolls when something focuses an
+     input inside a sheet that is sliding in, which dragged the whole shell up
+     by the sheet's offset. clip cannot be scrolled at all. */
+  .lesson-shell { position: relative; overflow: clip; }
+  .article { padding: 26px 20px 132px; }
+  .article-col { font-size: 16px; }
+  .article-kicker { font-size: 11px; }
+  .article-title { font-size: 30px; text-wrap: balance; }
+  .article-blurb { font-size: 16px; margin-top: 12px; }
+  .article-rule { margin: 22px 0 4px; }
+  .section-title { font-size: 22px; margin: 32px 0 12px; }
+  .key-concept { padding: 16px 18px; font-size: 15px; }
+
+  /* Equation: the number + Explain stack becomes a footer row under the math,
+     and wide math scrolls sideways instead of shrinking. */
+  .eq-block { flex-direction: column; align-items: stretch; padding: 0; margin: 24px 0 22px; min-height: 0; }
+  .eq-block[data-latex] { padding-right: 0; }
+  .eq-block .eq-body { padding: 22px 14px 16px; font-size: 17px; overflow-x: auto; }
+  .eq-block:not([data-latex]) { padding: 14px 8px; }
+  .eq-side {
+    position: static; transform: none;
+    flex-direction: row; justify-content: space-between; align-items: center;
+    min-height: 44px;
+    border-top: 1px solid var(--border);
+    padding: 4px 4px 4px 14px;
+  }
+  .eq-num { font-size: 11.5px; }
+  .eq-explain { height: 36px; padding: 0 14px; font-size: 13px; }
+  .eq-explain:active { background: var(--accent-soft); color: var(--accent); }
+  .eq-label { left: 14px; font-size: 10.5px; }
+  .article[data-eq-nums="off"][data-eq-explain="off"] .eq-side { display: none; }
+
+  /* Tutor internals at touch size. */
+  .chat-panel-sheet .chat-tab { min-height: 38px; max-width: 170px; }
+  .chat-panel-sheet .chat-tab-x { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; }
+  .chat-panel-sheet .chat-tab-add { width: 36px; height: 36px; }
+  .chat-panel-sheet .chat-header { padding: 10px 6px 10px 18px; }
+  .chat-panel-sheet .chat-icon-btn { width: 40px; height: 40px; }
+  .chat-panel-sheet .chat-segment { min-height: 36px; font-size: 13px; }
+  .chat-panel-sheet .chat-composer { padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); }
+  /* 16px stops iOS zooming in on focus. */
+  .chat-panel-sheet .chat-input { min-height: 44px; font-size: 16px; }
+  .chat-panel-sheet .chat-send { width: 44px; height: 44px; }
 }
 `;
