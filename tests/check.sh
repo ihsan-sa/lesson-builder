@@ -40,12 +40,17 @@
 #
 # RED ONCE UNDER LOAD IS NOT RED FOR THE DIFF — iiks1's core/tests/check.sh rule (its #527), here too.
 # A fixture that goes red is run ONCE more, alone, after the rest are done. It passes as LOAD-BOUND
-# only when its first run was red on nothing but `FAIL [timing] …` assertions (exit 1), the 1-minute
-# load average is at or above twice the cores, and the rerun is either green or red again on timing
-# assertions only, every one of which was red the first time too. A fixture marks an assertion about
-# the clock (cancellation's "answered in <= 3000ms") by starting its message with [timing]. Any other
-# first red — a behaviour FAIL, a crash, a timeout, a proxy that died — stays red even when the rerun
-# is green, because an intermittent regression is still a regression; a red prints both runs.
+# only when the 1-minute load average is at or above twice the cores and one of these holds:
+#   - its first run was red on nothing but `FAIL [timing] …` assertions (exit 1), and the rerun is
+#     either green or red again on timing assertions only, every one of which was red the first time too;
+#   - its first run was killed by the CHECK_TIMEOUT watchdog (exit 124) having printed no FAIL but
+#     [timing] ones, and the rerun is green. `attestation` needs about 145s alone and was killed at
+#     600s beside the other fixtures at load 45 on 6 cores; a fixture that hangs for a reason of its
+#     own hangs alone too and stays red, and one killed twice stays red.
+# A fixture marks an assertion about the clock (cancellation's "answered in <= 3000ms") by starting its
+# message with [timing]. Any other first red — a behaviour FAIL, a crash, a proxy that died, a
+# watchdog kill after a behaviour FAIL — stays red even when the rerun is green, because an
+# intermittent regression is still a regression; a red prints both runs.
 # The LOAD-BOUND line carries no red shape (no "<n> failed", ✗ or FAIL), because cc-land calls a gate red on any non-zero "(\d+) failed" in its output whatever
 # it exits with. A control at the start of every run holds that rule to both sides.
 #
@@ -171,14 +176,24 @@ echo "gate: ${#selected[@]} deterministic fixtures, node $(node -v), $(git --ver
 unred(){ sed -e 's/\([1-9][0-9]*\) failed/\1 red/g' -e 's/✗/·/g' -e 's/✘/·/g' -e 's/FAIL/red/g'; }
 fails_of(){ grep -E '^FAIL ' "$1" | awk '{ i = index($0, ": "); h = i ? substr($0, 1, i + 1) : ""; t = substr($0, length(h) + 1); gsub(/[0-9][0-9.]*/, "N", t); print h t }' | sort -u; }
 timing_only(){ local f; f=$(grep -E '^FAIL ' "$1") && ! grep -qvE '^FAIL \[timing\] ' <<<"$f"; }
+no_behaviour_fail(){ ! grep -E '^FAIL ' "$1" | grep -qvE '^FAIL \[timing\] '; }
 high_load(){ awk -v l="$1" -v n="$2" 'BEGIN { exit !(l >= 2 * n) }'; }
 # judge_rerun <name> <first log> <first rc> <rerun log> <rerun rc> <load1> <cores>
 #   -> 0 and the LOAD-BOUND line on stdout, or 1: red.
 judge_rerun() {
   local n=$1 l1=$2 rc1=$3 l2=$4 rc2=$5 load=$6 cores=$7 why
+  high_load "$load" "$cores" || return 1
+  # Brief: "a watchdog kill that passes alone counts as load-bound … Keep #55's rule that a real
+  # assertion failure stays red" — so the kill must come before any behaviour FAIL, and the rerun be green.
+  if [ "$rc1" -eq 124 ]; then
+    no_behaviour_fail "$l1" && [ "$rc2" -eq 0 ] || return 1
+    { echo "  $n: LOAD-BOUND — killed by the watchdog beside the other fixtures (exit 124) before any behaviour assertion"
+      echo "    went red, then green alone at load $load on $cores cores"; } | unred
+    return 0
+  fi
   # "Never turn a real failure green: a gate counts as load-bound only when the rerun fails the same
   # timing assertion at high load" — so the first red must be timing-only at high load, whatever the rerun did.
-  [ "$rc1" -eq 1 ] && timing_only "$l1" && high_load "$load" "$cores" || return 1
+  [ "$rc1" -eq 1 ] && timing_only "$l1" || return 1
   if [ "$rc2" -eq 0 ]; then why="green alone at load $load on $cores cores"
   elif [ "$rc2" -eq 1 ] && timing_only "$l2" && [ -z "$(comm -13 <(fails_of "$l1") <(fails_of "$l2"))" ]; then
     why="red alone too, on the same timing assertions only, at load $load on $cores cores"
@@ -186,9 +201,12 @@ judge_rerun() {
   { echo "  $n: LOAD-BOUND — red beside the other fixtures (exit $rc1), $why; the cases that flipped:"
     grep -E '^FAIL ' "$l1" | head -5 | sed 's/^/    /'; } | unred
 }
-# CONTROL, on fixtures of its own: kept — a timing red then green alone, and timing-only twice, both at
-# high load. Suppressed — each of those at low load; a behaviour FAIL then green; a timeout then green;
-# a behaviour FAIL twice; timing plus behaviour; a different timing assertion alone; a timeout twice. And the kept report is read the way a landing reads it.
+# CONTROL, on fixtures of its own: kept — a timing red then green alone, timing-only twice, and a
+# watchdog kill (with or without a timing red before it) then green alone, all at high load.
+# Suppressed — each of those at low load; a behaviour FAIL then green; a behaviour FAIL twice; timing
+# plus behaviour; a different timing assertion alone; a kill after a behaviour FAIL then green; a kill
+# then a timing red or a behaviour red alone; a kill twice. And the kept report is read the way a
+# landing reads it.
 C="$RUN_TMP/control"; mkdir -p "$C"
 printf 'FAIL [timing] 1: cancel answered in 4200ms (<= 3000)\n1 FAILED\n' >"$C/t1"
 printf 'FAIL [timing] 1: cancel answered in 3300ms (<= 3000)\n1 FAILED\n' >"$C/t2"
@@ -204,7 +222,13 @@ ctl() { # <want 0|1> <label> <judge args after name…>
 ctl 0 green-alone      "$C/t1" 1 "$C/ok" 0 120 6
 ctl 1 green-alone-low  "$C/t1" 1 "$C/ok" 0 3 6
 ctl 1 behaviour-green  "$C/b" 1 "$C/ok" 0 120 6
-ctl 1 timeout-green    "$C/none" 124 "$C/ok" 0 120 6
+ctl 0 timeout-green    "$C/none" 124 "$C/ok" 0 120 6
+ctl 0 timeout-t-green  "$C/t1" 124 "$C/ok" 0 120 6
+ctl 1 timeout-green-low "$C/none" 124 "$C/ok" 0 3 6
+ctl 1 timeout-b-green  "$C/b" 124 "$C/ok" 0 120 6
+ctl 1 timeout-mix-green "$C/mix" 124 "$C/ok" 0 120 6
+ctl 1 timeout-timing   "$C/none" 124 "$C/t1" 1 120 6
+ctl 1 timeout-behaviour "$C/none" 124 "$C/b" 1 120 6
 ctl 0 timing-high      "$C/t1" 1 "$C/t2" 1 120 6
 ctl 1 timing-low       "$C/t1" 1 "$C/t2" 1 3 6
 ctl 1 behaviour-twice  "$C/b" 1 "$C/b" 1 120 6
