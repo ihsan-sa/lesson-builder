@@ -25,8 +25,12 @@
 //                reply is held back 3s: a real CLI takes seconds to answer,
 //                and the proxy kills this turn the moment the init line names
 //                the parent, so the reply must never reach the transcript
-//   DELAY<ms>    hold the result for <ms>, so another session's turn can
-//                start and finish inside this one (case 12)
+//   HOLD<tag>    hold the result until $FAKE_STATE/release-<tag> exists, so
+//                another session's turn can start and finish inside this one
+//                (case 12). A release rather than a fixed delay: on a loaded
+//                box the other turn's CLI can take longer to spawn than any
+//                delay chosen on a quiet one. Two minutes at most, so a check
+//                that never releases fails its assertion instead of hanging.
 //
 // Env switches:
 //   FAKE_INIT_HOLD_MS  hold the init line (the one that names the session)
@@ -122,8 +126,11 @@ async function main() {
     }, NOFORK_ANSWER_MS);
     return;
   }
-  const delay = /DELAY(\d+)/.exec(stdin);
-  if (delay) await new Promise((r) => setTimeout(r, Number(delay[1])));
+  const held = /HOLD(\w+)/.exec(stdin);
+  if (held) {
+    const release = path.join(STATE, "release-" + held[1]);
+    for (const until = Date.now() + 120000; !fs.existsSync(release) && Date.now() < until;) await new Promise((r) => setTimeout(r, 50));
+  }
   if (!recall) append(text);
   emit({ type: "result", session_id: sid, result: text, usage, total_cost_usd: 0 });
 }

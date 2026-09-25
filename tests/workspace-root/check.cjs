@@ -7,7 +7,13 @@ const { pathToFileURL } = require("url");
 const { PROXY_URL, REAL, LINK, WS, SKILL } = process.env;
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
-const post = async (route, body) => { const r = await fetch(PROXY_URL + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, text: await r.text() }; };
+// One connection per request (Connection: close). fetch keeps idle sockets and
+// the proxy closes one after 5s of keep-alive; under box load a request went
+// out on a socket the live proxy had just closed and failed "other side
+// closed" with no response. fetch does not retry that, so this suite must not
+// reuse sockets at all (see tests/thread-actors/check.cjs proxyFetch).
+const proxyFetch = (route, init) => fetch(PROXY_URL + route, { ...init, headers: { ...(init && init.headers), Connection: "close" } });
+const post = async (route, body) => { const r = await proxyFetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, text: await r.text() }; };
 const spawns = () => fs.readFileSync(path.join(WS, "record.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 const count = (s, sub) => s.split(sub).length - 1;
 const addDirs = (args) => args.flatMap((a, i) => (a === "--add-dir" ? [args[i + 1]] : []));

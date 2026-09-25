@@ -91,7 +91,13 @@ async function proxyDeath(where) {
 // Every request to the proxy goes through here, so a connection that fails at
 // the network layer becomes ProxyGone at the point it happens rather than a
 // bare "fetch failed" three assertions later.
+// One connection per request (Connection: close). fetch keeps idle sockets and
+// the proxy closes one after 5s of keep-alive; under box load (2026-09-25, load
+// 80 on 6 cores) a POST went out on a socket the live proxy had just closed and
+// failed "other side closed" with no response. A browser retries that; fetch
+// does not retry a POST, so this suite must not reuse sockets at all.
 async function proxyFetch(route, init) {
+  init = { ...init, headers: { ...(init && init.headers), Connection: "close" } };
   try { return await fetch(BASE + route, init); }
   catch (err) {
     const method = (init && init.method) || "GET";
@@ -734,13 +740,16 @@ async function forkLeakEvidence(mainId, logAt, seen) {
   // whichever is there. Brief: "every per-turn log line carries threadId where
   // the turn is a thread's, CHAT_OK first; fixture: a parent turn and a thread
   // turn interleaved with the same msg number close their own entries."
-  // Fake CLI only: DELAY is what holds the parent open around the thread turn.
+  // Fake CLI only: HOLD is what holds the parent open around the thread turn —
+  // released once the thread turn has ended, not after a fixed delay, which a
+  // loaded box outran (the thread's CLI took longer to start than the delay).
   if (!REAL && runs(12)) {
     const main = await newChat();
     const handle = (await post("/thread/open", { sessionId: main, threadId: "t12" })).body.threadSessionId;
     const logAt = chatLog().length;
-    const parent = await startTurn(main, "DELAY2500 PARENT-12", (ev) => ev === "text");
+    const parent = await startTurn(main, "HOLDp12 PARENT-12", (ev) => ev === "text");
     await turn(handle, threadMsg("t12", "THREAD-12"));
+    fs.writeFileSync(path.join(FAKE_STATE, "release-p12"), "");
     await parent.ended;
     const lines = chatLog().slice(logAt).split("\n")
       .map((l) => /^\[[^\]]+\] \[(CHAT_START|CHAT_OK)\] chatNum=(\d+) msg=(\d+)(?: threadId=(\S+))?/.exec(l))
