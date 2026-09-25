@@ -67,7 +67,9 @@ async function cancelAndVerify(label, sessionId, turnStream, expectRepeatOk = tr
   const r = await post("/chat/cancel", { sessionId });
   const ms = Date.now() - t0;
   ok(r.status === 200 && r.body.cancelled === true && !r.body.repeat, `${label}: cancel -> 200 cancelled (${JSON.stringify(r.body)})`);
-  ok(ms <= 3000, `${label}: cancel answered in ${ms}ms (<= 3000)`);
+  // [timing] marks the one assertion here that is about the clock, not the
+  // behaviour: tests/check.sh may call a red on it alone load-bound (see there).
+  ok(ms <= 3000, `[timing] ${label}: cancel answered in ${ms}ms (<= 3000)`);
   const left = pids.filter((p) => tree(p).includes(p));
   ok(left.length === 0, `${label}: whole tree gone after cancel (survivors: ${left.join(",") || "none"})`);
   const events = await Promise.race([turnStream.ended, sleep(3000).then(() => null)]);

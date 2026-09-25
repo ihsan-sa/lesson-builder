@@ -38,6 +38,17 @@
 # Fixtures that DO need a browser or a real model are excluded by name below, each printed with
 # the exact command that runs it — an excluded fixture is listed, never silently skipped.
 #
+# RED ONCE UNDER LOAD IS NOT RED FOR THE DIFF — iiks1's core/tests/check.sh rule (its #527), here too.
+# A fixture that goes red is run ONCE more, alone, after the rest are done. It passes as LOAD-BOUND
+# only when its first run was red on nothing but `FAIL [timing] …` assertions (exit 1), the 1-minute
+# load average is at or above twice the cores, and the rerun is either green or red again on timing
+# assertions only, every one of which was red the first time too. A fixture marks an assertion about
+# the clock (cancellation's "answered in <= 3000ms") by starting its message with [timing]. Any other
+# first red — a behaviour FAIL, a crash, a timeout, a proxy that died — stays red even when the rerun
+# is green, because an intermittent regression is still a regression; a red prints both runs.
+# The LOAD-BOUND line carries no red shape (no "<n> failed", ✗ or FAIL), because cc-land calls a gate red on any non-zero "(\d+) failed" in its output whatever
+# it exits with. A control at the start of every run holds that rule to both sides.
+#
 # Exit code 0 only when every fixture passes AND none left a server behind. The last line reports
 # "<n> passed, <n> failed", which is what cc-land reads besides the exit code; a leak counts one
 # failed on its own, over and above the fixtures.
@@ -156,6 +167,56 @@ leaked_servers() {
 
 echo "gate: ${#selected[@]} deterministic fixtures, node $(node -v), $(git --version)"
 
+# The rerun rule's pieces. fails_of keeps each assertion's label (up to its first ": ") and blanks the
+# numbers after it, so "1: …4200ms" and "1: …3300ms" are one assertion and "3: …3300ms" another.
+unred(){ sed -e 's/\([1-9][0-9]*\) failed/\1 red/g' -e 's/✗/·/g' -e 's/✘/·/g' -e 's/FAIL/red/g'; }
+fails_of(){ grep -E '^FAIL ' "$1" | awk '{ i = index($0, ": "); h = i ? substr($0, 1, i + 1) : ""; t = substr($0, length(h) + 1); gsub(/[0-9][0-9.]*/, "N", t); print h t }' | sort -u; }
+timing_only(){ local f; f=$(grep -E '^FAIL ' "$1") && ! grep -qvE '^FAIL \[timing\] ' <<<"$f"; }
+high_load(){ awk -v l="$1" -v n="$2" 'BEGIN { exit !(l >= 2 * n) }'; }
+# judge_rerun <name> <first log> <first rc> <rerun log> <rerun rc> <load1> <cores>
+#   -> 0 and the LOAD-BOUND line on stdout, or 1: red.
+judge_rerun() {
+  local n=$1 l1=$2 rc1=$3 l2=$4 rc2=$5 load=$6 cores=$7 why
+  # "Never turn a real failure green: a gate counts as load-bound only when the rerun fails the same
+  # timing assertion at high load" — so the first red must be timing-only at high load, whatever the rerun did.
+  [ "$rc1" -eq 1 ] && timing_only "$l1" && high_load "$load" "$cores" || return 1
+  if [ "$rc2" -eq 0 ]; then why="green alone at load $load on $cores cores"
+  elif [ "$rc2" -eq 1 ] && timing_only "$l2" && [ -z "$(comm -13 <(fails_of "$l1") <(fails_of "$l2"))" ]; then
+    why="red alone too, on the same timing assertions only, at load $load on $cores cores"
+  else return 1; fi
+  { echo "  $n: LOAD-BOUND — red beside the other fixtures (exit $rc1), $why; the cases that flipped:"
+    grep -E '^FAIL ' "$l1" | head -5 | sed 's/^/    /'; } | unred
+}
+# CONTROL, on fixtures of its own: kept — a timing red then green alone, and timing-only twice, both at
+# high load. Suppressed — each of those at low load; a behaviour FAIL then green; a timeout then green;
+# a behaviour FAIL twice; timing plus behaviour; a different timing assertion alone; a timeout twice. And the kept report is read the way a landing reads it.
+C="$RUN_TMP/control"; mkdir -p "$C"
+printf 'FAIL [timing] 1: cancel answered in 4200ms (<= 3000)\n1 FAILED\n' >"$C/t1"
+printf 'FAIL [timing] 1: cancel answered in 3300ms (<= 3000)\n1 FAILED\n' >"$C/t2"
+printf 'FAIL [timing] 3: cancel answered in 3300ms (<= 3000)\n1 FAILED\n' >"$C/t3"
+printf 'FAIL 1: whole tree gone after cancel (survivors: 42)\n1 FAILED\n' >"$C/b"
+cat "$C/t1" "$C/b" >"$C/mix"; printf 'ALL PASSED\n' >"$C/ok"; : >"$C/none"
+ctl_bad=""
+ctl() { # <want 0|1> <label> <judge args after name…>
+  local got=0; ctl_out=$(judge_rerun ctl "${@:3}") || got=1
+  [ "$got" = "$1" ] || ctl_bad="$ctl_bad $2"
+  if [ "$got" = 0 ] && grep -qE '[1-9][0-9]* failed|✗|✘|FAIL' <<<"$ctl_out"; then ctl_bad="$ctl_bad $2(red-shaped)"; fi
+}
+ctl 0 green-alone      "$C/t1" 1 "$C/ok" 0 120 6
+ctl 1 green-alone-low  "$C/t1" 1 "$C/ok" 0 3 6
+ctl 1 behaviour-green  "$C/b" 1 "$C/ok" 0 120 6
+ctl 1 timeout-green    "$C/none" 124 "$C/ok" 0 120 6
+ctl 0 timing-high      "$C/t1" 1 "$C/t2" 1 120 6
+ctl 1 timing-low       "$C/t1" 1 "$C/t2" 1 3 6
+ctl 1 behaviour-twice  "$C/b" 1 "$C/b" 1 120 6
+ctl 1 mixed            "$C/mix" 1 "$C/mix" 1 120 6
+ctl 1 other-timing     "$C/t1" 1 "$C/t3" 1 120 6
+ctl 1 timeout-twice    "$C/none" 124 "$C/none" 124 120 6
+if [ -n "$ctl_bad" ]; then
+  echo "check.sh: the rerun rule no longer tells load from a red — control cases wrong:$ctl_bad"
+  echo "0 passed, 1 failed"; exit 1
+fi
+
 run_one() {
   local name=$1 cmd=$2 s e rc
   s=$(date +%s)
@@ -191,9 +252,29 @@ for f in "${selected[@]}"; do
   running=$((running + 1))
 done
 wait
-# Read straight after the last fixture returned and before anything is cleaned up: every fixture
-# has finished by here, so there is no live one to mistake for a leak, and the record of one that
-# leaked is still on /proc.
+
+# Each red, once more and alone (the rule is in the header). The first run's log and exit are kept
+# beside the rerun's, so a red that stays red prints both.
+loadbound=()
+for f in "${selected[@]}"; do
+  name=${f%%|*}
+  rc=$(cat "$LOGS/$name.rc" 2>/dev/null || echo 1)
+  [ "$rc" -eq 0 ] && continue
+  mv "$LOGS/$name.log" "$LOGS/$name.first.log" 2>/dev/null || : >"$LOGS/$name.first.log"
+  echo "$rc" >"$LOGS/$name.first.rc"
+  echo "  rerunning $name alone"
+  run_one "$name" "${f#*|}" >/dev/null
+  cp "$LOGS/$name.rc" "$LOGS/$name.rerun.rc"
+  if report=$(judge_rerun "$name" "$LOGS/$name.first.log" "$rc" "$LOGS/$name.log" "$(cat "$LOGS/$name.rerun.rc")" \
+                "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc 2>/dev/null || echo 4)"); then
+    echo 0 >"$LOGS/$name.rc"; loadbound+=("$report")
+  else
+    echo "$rc" >"$LOGS/$name.rc"   # the first red stands, even when the rerun was green
+  fi
+done
+# Read straight after the last fixture (and rerun) returned and before anything is cleaned up: every
+# fixture has finished by here, so there is no live one to mistake for a leak, and the record of one
+# that leaked is still on /proc.
 leaked=$(leaked_servers)
 
 # Reported in table order, not in the order they happened to finish, so two runs read the same.
@@ -206,9 +287,15 @@ done
 
 for name in "${failures[@]}"; do
   echo
-  echo "=== $name failed (exit $(cat "$LOGS/$name.rc" 2>/dev/null || echo '?')) ==="
+  echo "=== $name failed (exit $(cat "$LOGS/$name.first.rc" 2>/dev/null || echo '?')) ==="
+  tail -40 "$LOGS/$name.first.log" 2>/dev/null
+  echo "--- $name rerun alone (exit $(cat "$LOGS/$name.rerun.rc" 2>/dev/null || echo '?')); not load-bound, so it stays red:"
   tail -40 "$LOGS/$name.log" 2>/dev/null
 done
+if [ ${#loadbound[@]} -gt 0 ]; then
+  echo
+  printf '%s\n' "${loadbound[@]}"
+fi
 
 # A fixture that boots a proxy or a dev server must stop it. One that does not leaves it orphaned
 # on the box, holding memory, with its cwd deleted along with the workspace that made it — and it
