@@ -13,8 +13,14 @@ const LOG = process.env.LESSON_DIR ? path.join(process.env.LESSON_DIR, "server",
 const CORE_DIR = process.env.CORE_DIR;
 let failures = 0;
 const ok = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if (!cond) failures++; };
-const post = async (route, body) => { const r = await fetch(BASE + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
-const sessionsList = async () => (await (await fetch(BASE + "/sessions")).json()).sessions;
+// One connection per request (Connection: close). fetch keeps idle sockets and
+// the proxy closes one after 5s of keep-alive; under box load a request went
+// out on a socket the live proxy had just closed and failed "other side
+// closed" with no response. fetch does not retry that, so this suite must not
+// reuse sockets at all (see tests/thread-actors/check.cjs proxyFetch).
+const proxyFetch = (route, init) => fetch(BASE + route, { ...init, headers: { ...(init && init.headers), Connection: "close" } });
+const post = async (route, body) => { const r = await proxyFetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+const sessionsList = async () => (await (await proxyFetch("/sessions")).json()).sessions;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Live (non-zombie) pids of the tree under rootPid: descendants plus process-group members.
@@ -33,7 +39,7 @@ function startTurn(sessionId, message, until) {
   return new Promise(async (resolve, reject) => {
     const events = [];
     let started = false;
-    const res = await fetch(BASE + "/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
+    const res = await proxyFetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, message }) });
     if (!res.ok) return reject(new Error(`/chat ${res.status}`));
     let endTurn; const turn = { events, ended: new Promise((r) => (endTurn = r)) };
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ""; let ev = null;
