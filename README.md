@@ -162,7 +162,12 @@ tests/check.sh                 The release gate: one command that runs every fix
                                model call, no browser and no network, in parallel, and prints the
                                excluded ones with the command that runs each. Non-zero if any fails,
                                or if a fixture left a proxy or dev server of its own still running
+.github/workflows/checks.yml   Runs tests/check.sh on GitHub Actions for every PR and push to main
 ```
+
+## Checks on GitHub Actions
+
+Every PR and every push to `main` runs `tests/check.sh` on GitHub's standard runners, split into four jobs that run at once: `serial` (the four fixtures check.sh chains), `babel`, `builds` and `rest` (every other fixture, read from check.sh at run time). To read a run, open the PR's **Checks** tab or the repo's **Actions** tab and pick the `checks` run: each job's `tests/check.sh` step ends with the same `<n> passed, <n> failed` line a local run prints, and the tail of a red fixture's log is printed under it. A job goes red too when the workflow names a fixture check.sh no longer has. The browser and real-model fixtures check.sh excludes are not run there either; it lists each with the command that runs it.
 
 ## Installation
 

@@ -1,0 +1,78 @@
+# Runs tests/check.sh on GitHub's standard runners for every PR and every push to main, so the
+# checks stop loading the box. Four jobs run at once, each one `tests/check.sh <names…>`:
+#   serial  the four fixtures check.sh chains one after another (its SERIAL list), kept together
+#   babel   the fixtures that install @babel/parser
+#   builds  the two that scaffold a lesson and run a real vite build
+#   rest    every other fixture check.sh knows, listed at run time from its own "known:" line,
+#           so a fixture added to check.sh runs here without editing this file
+# No secrets, no deploy, nothing reaches the box. README.md, "Checks on GitHub Actions", says how
+# to read a run.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: serial
+            fixtures: cancellation thread-actors tutor-confinement workspace-root
+          - group: babel
+            fixtures: ast-inventory attestation lesson-prompt-ceiling shell-theme
+          - group: builds
+            fixtures: hosted-build shell-reach
+          - group: rest
+            fixtures: ""
+    env:
+      # Every named group above; `rest` runs whatever check.sh knows beyond these.
+      NAMED: >-
+        cancellation thread-actors tutor-confinement workspace-root
+        ast-inventory attestation lesson-prompt-ceiling shell-theme
+        hosted-build shell-reach
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ matrix.group }}-${{ hashFiles('**/package.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ matrix.group }}-
+      - name: git identity for the fixtures' temp repos
+        run: |
+          git config --global user.name "checks"
+          git config --global user.email "checks@example.invalid"
+          git config --global init.defaultBranch main
+      - name: tests/check.sh (${{ matrix.group }})
+        env:
+          FIXTURES: ${{ matrix.fixtures }}
+        run: |
+          # check.sh has no list flag: an unknown name makes it print "known: <every fixture>".
+          known=" $(tests/check.sh --print-known | sed -n 's/^known: //p') "
+          [ -n "${known// /}" ] || { echo "could not read the fixture list from tests/check.sh"; exit 1; }
+          # check.sh drops a name it does not know when another name matches, so check them here.
+          for n in $NAMED; do
+            case "$known" in *" $n "*) ;; *) echo "$n is named in this workflow but tests/check.sh has no such fixture"; exit 1 ;; esac
+          done
+          if [ -z "$FIXTURES" ]; then
+            FIXTURES=$(for n in $known; do case " $(echo $NAMED) " in *" $n "*) ;; *) printf '%s ' "$n" ;; esac; done)
+          fi
+          echo "fixtures: $FIXTURES"
+          tests/check.sh $FIXTURES
