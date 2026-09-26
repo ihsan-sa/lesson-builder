@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Asserts on the four bundles run.sh built (WS=<workspace>, dist-default,
-// dist-hosted, dist-dev-mode, dist-no-slash). Every claim is read out of the BUILT
+// Asserts on the six bundles run.sh built (WS=<workspace>, dist-default,
+// dist-hosted, dist-dev-mode, dist-no-slash, dist-library, dist-bad-href). Every claim is read out of the BUILT
 // JavaScript, not out of the source: the point of putting the gate in
 // `_lesson-core/constants/build.js` is that Vite decides it at build time, and
 // only the built output shows whether it did.
@@ -133,6 +133,47 @@ function check(caseName, claim, ok) {
   // never fire: it is a runtime check on a value the minifier does not fold.
   check("hosted", "the diagnostic survives minification in a correct build",
     bundleJs("hosted").includes("which has no trailing slash"));
+}
+
+// ── Cases 5 and 6: where the companion link points ─────────────────────────
+// companionHref() in constants/build.js takes VITE_COMPANION_HREF when the
+// build sets it to a link, and otherwise the copy build-all.sh publishes beside
+// the lesson. Vite bakes the value in but the choice runs at runtime (the
+// minifier does not fold startsWith), so the bundles can show only what went
+// in; the choice itself is run below against the same source, with
+// import.meta.env replaced the way Vite replaces it.
+{
+  const LIB = "https://library.ihsan.cc/l/tok-demo123";
+  check("library", `set, the library link ${LIB} is baked into the bundle`, bundleJs("library").includes(LIB));
+  check("hosted", "unset, no library link is in the bundle", !bundleJs("hosted").includes(LIB));
+  check("hosted", "the demo lesson's rail links its companion by name",
+    bundleJs("hosted").includes('href:') && bundleJs("hosted").includes('"demo101_hosted-demo_companion.pdf"'));
+  check("bad-href", "a javascript: value carries its diagnostic into the bundle",
+    bundleJs("bad-href").includes("javascript:alert(1)") && bundleJs("bad-href").includes("is not an https:// or"));
+
+  const src = fs.readFileSync(path.join(WS, "_lesson-core", "constants", "build.js"), "utf8")
+    .replace(/import\.meta\.env\./g, "ENV.").replace(/^export /gm, "");
+  const hrefWith = (value) => {
+    const ENV = { BASE_URL: "/demo101/hosted-demo/", VITE_COMPANION_HREF: value };
+    const errors = [];
+    const fn = new Function("ENV", "console", `${src}\nreturn companionHref;`)(ENV, { error: (m) => errors.push(m) });
+    return { href: fn("demo101_hosted-demo_companion.pdf"), errors };
+  };
+  const local = "/demo101/hosted-demo/demo101_hosted-demo_companion.pdf";
+  const cases = [
+    ["unset", undefined, local, 0],
+    ["empty", "", local, 0],
+    ["library link", LIB, LIB, 0],
+    ["site-absolute", "/l/tok-demo123", "/l/tok-demo123", 0],
+    ["javascript:", "javascript:alert(1)", local, 1],
+    ["protocol-relative", "//evil.example/x.pdf", local, 1],
+    ["plain http", "http://library.ihsan.cc/l/t", local, 1],
+  ];
+  for (const [name, value, want, nErr] of cases) {
+    const { href, errors } = hrefWith(value);
+    check("companionHref", `${name} -> ${want}`, href === want);
+    check("companionHref", `${name} ${nErr ? "is" : "is not"} named in the console`, errors.length === nErr);
+  }
 }
 
 console.log(failed === 0 ? "\nhosted-build: all cases passed" : `\nhosted-build: ${failed} failed`);

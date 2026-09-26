@@ -4,7 +4,7 @@
 // <LessonShell> and <Chatbot> for real, since the shipped placeholder renders
 // nothing and a bundle with no tutor in it proves nothing.
 import { useState } from "react";
-import { LessonShell, Chatbot, P, Section, routeLessonContext } from "@core";
+import { LessonShell, Chatbot, P, Section, routeLessonContext, companionHref } from "@core";
 
 const TOPICS = [
   {
@@ -45,6 +45,7 @@ function LessonApp() {
       topics={TOPICS}
       activeIdx={activeIdx}
       onSelectTopic={setActiveIdx}
+      refs={[{ label: "Printable companion", href: companionHref("demo101_hosted-demo_companion.pdf") }]}
       chatOpen={chatOpen}
       setChatOpen={setChatOpen}
       tutor={

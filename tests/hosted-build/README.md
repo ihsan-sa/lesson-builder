@@ -1,6 +1,6 @@
 # Hosted-build evidence
 
-Proof that one lesson source builds four ways, and that each build's BUNDLE — not its source —
+Proof that one lesson source builds six ways, and that each build's BUNDLE — not its source —
 carries what it should:
 
 - a plain `vite build` still ships no tutor (what the lessons repo's `docs/publishing.md` promises
@@ -8,7 +8,9 @@ carries what it should:
 - `VITE_TUTOR=1 vite build --base=/<course>/<slug>/` ships the tutor with every chat call under
   that lesson's own prefix, which is what a lesson hosted at `lessons.ihsan.cc/<course>/<slug>/`
   needs to reach its own backend rather than the site root;
-- the dev path is unmoved: tutor on, calls at the root, nothing extra set.
+- the dev path is unmoved: tutor on, calls at the root, nothing extra set;
+- the lesson's link to its printable companion follows `VITE_COMPANION_HREF` when the build sets
+  it to a link, and otherwise points at the copy published beside the lesson.
 
 The gate lives in `references/bootstrap/_lesson-core/constants/build.js` (`TUTOR_ENABLED`, `API`)
 and is applied in `chat/Chatbot.jsx` and `ui/LessonShell.jsx`. It replaced an
@@ -17,13 +19,14 @@ production build that legitimately has a tutor.
 
 ```
 tests/hosted-build/run.sh          # part of tests/check.sh
-KEEP=1 tests/hosted-build/run.sh   # keep the workspace and its four dist trees
+KEEP=1 tests/hosted-build/run.sh   # keep the workspace and its six dist trees
 ```
 
 `run.sh` bootstraps a throwaway workspace per `references/bootstrap.md`, scaffolds the template
 lesson with `lesson/hosted_demo.jsx` (the shipped placeholder renders `null`, so a real
-`LessonShell` + `Chatbot` body is needed to exercise anything), builds it four times into
-`dist-default/`, `dist-hosted/`, `dist-dev-mode/` and `dist-no-slash/`, and runs `check.cjs` over
+`LessonShell` + `Chatbot` body is needed to exercise anything), builds it six times into
+`dist-default/`, `dist-hosted/`, `dist-dev-mode/`, `dist-no-slash/`, `dist-library/` and
+`dist-bad-href/`, and runs `check.cjs` over
 them. No browser, no proxy, no model — the whole check is a read of the emitted JavaScript. Exit code 0 only when
 every case passes.
 
@@ -37,6 +40,16 @@ Each case reads its own dist tree; none depends on another's.
 | 2 | `VITE_TUTOR=1 vite build --base=/demo101/hosted-demo/` | all eleven endpoints appear as `/demo101/hosted-demo/<path>`, AND none of them appears in its root-absolute form — both halves, because a bundle that emitted both would still reach the site root; the tutor UI is present; the banner is not |
 | 3 | `NODE_ENV=development vite build --mode development` | tutor UI present, banner absent, every endpoint root-absolute — the dev server's compilation of the same sources, with no `VITE_TUTOR` and no `--base` |
 | 4 | `VITE_TUTOR=1 vite build --base=/demo101/no-slash` | the endpoints really do come out as `/demo101/no-slashchat`, and the bundle carries the `console.error` that names the base and prints the rebuild — asserted in the correct bundle too, since a diagnostic the minifier folded away could never fire |
+
+| 5 | `VITE_TUTOR=1 VITE_COMPANION_HREF=https://library.ihsan.cc/l/tok-demo123 vite build --base=/demo101/hosted-demo/` | the library link is baked into the bundle, and the hosted build (unset) carries none; the demo's rail entry names its companion |
+| 6 | the same with `VITE_COMPANION_HREF=javascript:alert(1)` | the bundle carries the diagnostic that refuses it |
+
+Cases 5 and 6 can only show what went into the bundle: `companionHref()` chooses at runtime, since
+the minifier does not fold `startsWith`. So `check.cjs` also runs `constants/build.js` itself with
+`import.meta.env` replaced as Vite replaces it, over seven values: unset and empty fall back to
+`/demo101/hosted-demo/<name>.pdf` silently; an `https://` link and a site-absolute `/l/…` path are
+taken; a `javascript:` URL, a protocol-relative `//host/…` and plain `http://` fall back and are
+named in the console.
 
 Case 2's negative half is the one that matters: the prefixed URL being present proves little on its
 own, since a bundle that emitted `/chat` as well would still call the site root at runtime.
@@ -69,7 +82,9 @@ authoring routes — is a separate milestone. This change is the client only.
 
 ## Sync to the lessons workspace
 
-`lessons/_lesson-core` must stay byte-identical to `references/bootstrap/_lesson-core`. This change
+`lessons/_lesson-core` must stay byte-identical to `references/bootstrap/_lesson-core`. The
+companion link adds `companionHref` to `constants/build.js` and its export to `index.js`; sync both
+before a lesson calls it. The change before it
 adds `constants/build.js` and touches `chat/Chatbot.jsx`, `ui/LessonShell.jsx` and one comment in
 `chat/chat.css.js` — sync all four, or the lessons-side hosted build ships no tutor and the dev
 build calls a `/chat` that a hosted lesson's URL prefix never reaches.
