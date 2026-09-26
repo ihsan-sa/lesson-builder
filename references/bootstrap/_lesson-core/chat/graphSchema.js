@@ -1,3 +1,41 @@
+const SCHEMA_TYPES = ["int", "float", "bool", "enum", "string"];
+
+/**
+ * What is wrong with one GRAPH_SCHEMA field spec, or null when it keeps the contract
+ * (references/graph-schema-guide.md): an object whose `type` is one of SCHEMA_TYPES, and for
+ * an enum a non-empty `values` array. `options:` is not an alias for `values:`; a field that
+ * uses it is malformed, so the chat skips it rather than guessing.
+ * @returns {string|null}
+ */
+export function schemaFieldProblem(spec) {
+  if (!spec || typeof spec !== "object") return "spec is not an object";
+  if (!SCHEMA_TYPES.includes(spec.type)) return `unknown type '${spec.type}' (expected ${SCHEMA_TYPES.join(" | ")})`;
+  if (spec.type === "enum" && (!Array.isArray(spec.values) || spec.values.length === 0)) {
+    return "enum" + (spec.options !== undefined ? " uses options:, but the key is values:" : " has no non-empty values array");
+  }
+  return null;
+}
+
+/**
+ * Every field of a GRAPH_SCHEMA that breaks the contract. test_lesson.cjs fails a lesson on any.
+ * @returns {Array<{graphKey: string|null, param: string|null, reason: string}>}
+ */
+export function schemaProblems(schema) {
+  if (!schema || typeof schema !== "object") return [{ graphKey: null, param: null, reason: "GRAPH_SCHEMA is not an object" }];
+  const problems = [];
+  for (const [graphKey, params] of Object.entries(schema)) {
+    if (!params || typeof params !== "object") {
+      problems.push({ graphKey, param: null, reason: "entry is not an object of param specs" });
+      continue;
+    }
+    for (const [param, spec] of Object.entries(params)) {
+      const reason = schemaFieldProblem(spec);
+      if (reason) problems.push({ graphKey, param, reason });
+    }
+  }
+  return problems;
+}
+
 /**
  * Validate an EDIT_GRAPH payload against a lesson's GRAPH_SCHEMA.
  * @param {object} edits  - e.g. { graphKey: { param: value } }
@@ -30,6 +68,11 @@ export function validateEdit(edits, schema) {
       const spec = keySchema[param];
       if (!spec) {
         errors.push({ graphKey, param, reason: `unknown parameter '${param}'. Valid params for ${graphKey}: ${Object.keys(keySchema).join(", ")}` });
+        continue;
+      }
+      const problem = schemaFieldProblem(spec);
+      if (problem) {
+        errors.push({ graphKey, param, reason: `the lesson's schema for this field is malformed (${problem}); it cannot be edited` });
         continue;
       }
       const res = _validateValue(value, spec);

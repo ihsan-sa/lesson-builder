@@ -9,6 +9,10 @@
  * `lesson-template/test_lesson.cjs` T18 now assembles `buildSystemPrompt` over the lesson's
  * LESSON_CONTEXT, in both memory modes, and fails on the larger.
  *
+ * Case 6 rides along because this fixture already scaffolds a lesson beside a real core: T19
+ * fails a GRAPH_SCHEMA enum written with options: instead of values:, and the core's
+ * buildActiveContext skips such a field instead of throwing on every send (2026-09-26).
+ *
  * Each case scaffolds a workspace of its own (the real `_lesson-core` chat/ and constants/,
  * the real `test_lesson.cjs`, a fixture lesson) and runs the gate in it. What each asserts is
  * in README.md. Node and one `npm install --prefer-offline` of @babel/parser (served from the
@@ -59,12 +63,12 @@ const INSTITUTION = 'Fixture University';
  * A workspace of this case's own and one lesson in it. `context` is the LESSON_CONTEXT text
  * (a plain string, written into a template literal); `withCore: false` leaves the core out.
  */
-function workspace(name, { context, withCore = true, withContext = true }) {
+function workspace(name, { context, withCore = true, withContext = true, schema = null }) {
   const ws = path.join(tmpRoot, name);
   const root = path.join(ws, 'PHYS201', 'claude_lessons', 'sample-lesson');
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   if (withCore) {
-    for (const sub of ['chat/buildSystemPrompt.js', 'constants/promptBudget.js']) {
+    for (const sub of ['chat/buildSystemPrompt.js', 'constants/promptBudget.js', 'chat/graphSchema.js']) {
       fs.mkdirSync(path.dirname(path.join(ws, '_lesson-core', sub)), { recursive: true });
       fs.copyFileSync(path.join(CORE, sub), path.join(ws, '_lesson-core', sub));
     }
@@ -74,6 +78,7 @@ function workspace(name, { context, withCore = true, withContext = true }) {
   fs.writeFileSync(path.join(root, 'src', 'sample_lesson.jsx'), [
     'import { Chatbot } from "@core";',
     withContext ? `const LESSON_CONTEXT = \`${context}\`;` : '',
+    schema ? `export const GRAPH_SCHEMA = ${schema};` : '',
     'export default function LessonApp() {',
     '  return <Chatbot courseCode="PHYS 201" courseName="' + COURSE_NAME + '" institution="' + INSTITUTION + '"',
     '    lessonContext={LESSON_CONTEXT} lessonFile="src/sample_lesson.jsx" />;',
@@ -92,7 +97,13 @@ function gate(root) {
   // T18 prints its detail lines before its PASS/FAIL line, after T17's.
   let start = i;
   while (start > 0 && !/^\s+(PASS|FAIL): T17/.test(lines[start - 1])) start--;
-  return { code: r.status, out, t18: i < 0 ? '' : lines.slice(start, i + 1).join('\n'), verdict: i < 0 ? null : lines[i].trim().split(':')[0] };
+  // T19 runs after T18, so its detail lines sit between the two verdicts.
+  const j = lines.findIndex((l) => /^\s+(PASS|FAIL): T19/.test(l));
+  return {
+    code: r.status, out,
+    t18: i < 0 ? '' : lines.slice(start, i + 1).join('\n'), verdict: i < 0 ? null : lines[i].trim().split(':')[0],
+    t19: j < 0 ? '' : lines.slice(i + 1, j + 1).join('\n'), verdict19: j < 0 ? null : lines[j].trim().split(':')[0],
+  };
 }
 
 (async () => {
@@ -160,6 +171,39 @@ function gate(root) {
     }
     check(`server/proxy.js's argv threshold is the constant (${CEILING})`,
       read('references', 'bootstrap', '_lesson-core', 'server', 'proxy.js').includes(`system.length <= ${CEILING}`));
+  }
+
+  heading('6', 'a GRAPH_SCHEMA enum with options: instead of values: fails T19, and the chat survives it');
+  {
+    const bad = '{ g: { mode: { type: "enum", options: ["a", "b"] }, n: { type: "int", min: 0, max: 5 } } }';
+    const good = '{ g: { mode: { type: "enum", values: ["a", "b"] }, n: { type: "int", min: 0, max: 5 } } }';
+    const b = gate(workspace('enum-options', { context: 'PHYS 201.', schema: bad }));
+    check('options: fails T19 and names the field and the key', b.verdict19 === 'FAIL' && /g\.mode: enum uses options:, but the key is values:/.test(b.t19), b.t19 || b.out);
+    check('…and the gate exits non-zero', b.code === 1, `exit ${b.code}`);
+    check('…and the int field beside it is not named', !/g\.n:/.test(b.t19), b.t19);
+    const g = gate(workspace('enum-values', { context: 'PHYS 201.', schema: good }));
+    check('values: passes T19', g.verdict19 === 'PASS', g.t19 || g.out);
+    const none = gate(workspace('no-schema', { context: 'PHYS 201.' }));
+    check('no GRAPH_SCHEMA passes T19', none.verdict19 === 'PASS', none.t19 || none.out);
+    const unreadable = gate(workspace('enum-const', { context: 'PHYS 201.', schema: '{ g: { mode: { type: "enum", values: modes() } } }' }));
+    check('a value T19 cannot read fails rather than passing unchecked', unreadable.verdict19 === 'FAIL' && /g\.mode: .*cannot be checked/.test(unreadable.t19), unreadable.t19 || unreadable.out);
+
+    const { buildActiveContext } = await import(pathToFileURL(path.join(CORE, 'chat', 'buildActiveContext.js')).href);
+    const { validateEdit } = await import(pathToFileURL(path.join(CORE, 'chat', 'graphSchema.js')).href);
+    const warns = [];
+    const origWarn = console.warn;
+    console.warn = (...a) => warns.push(a.join(' '));
+    const turn = (graphSchema) => buildActiveContext({ tabId: 't', graphParams: { g: { mode: 'a', n: 1 } }, graphSchema });
+    let first = null, second = null, threw = null;
+    try { first = turn(eval(`(${bad})`)); second = turn(eval(`(${bad})`)); } catch (e) { threw = e; }
+    console.warn = origWarn;
+    check('buildActiveContext does not throw on the options: schema', !threw, threw && threw.message);
+    check('…leaves the bad field out and keeps the good one', first && !/mode in/.test(first) && /g: n in \[0, 5\]/.test(first), first);
+    check('…and warns once, not every turn', warns.length === 1 && /g\.mode skipped/.test(warns[0]) && first === second, JSON.stringify(warns));
+    check('the good schema still lists the enum', /g: mode in \{a, b\}, n in \[0, 5\]/.test(turn(eval(`(${good})`))));
+    const ve = validateEdit({ g: { mode: 'a', n: 2 } }, eval(`(${bad})`));
+    check('an edit to the bad field is refused with the reason, the good field still applies',
+      ve.errors.length === 1 && /malformed \(enum uses options:/.test(ve.errors[0].reason) && ve.validValue.g && ve.validValue.g.n === 2 && !('mode' in ve.validValue.g), JSON.stringify(ve));
   }
 
   console.log('');

@@ -93,7 +93,7 @@ In update mode that `npm install` is a no-op — § Prerequisites warmed the wor
 
 #### The 18-test suite
 
-The canonical executable ships at `references/bootstrap/lesson-template/test_lesson.cjs` and is copied into each lesson root at scaffold time. The test-by-test summary (T1 Babel parse … T18 prompt fits the ceiling) lives in `references/checklists.md` § "18-test suite summary" — the code is the source of truth; do not re-derive test semantics from prose.
+The canonical executable ships at `references/bootstrap/lesson-template/test_lesson.cjs` and is copied into each lesson root at scaffold time. The test-by-test summary (T1 Babel parse … T18 prompt fits the ceiling, T19 GRAPH_SCHEMA keeps the contract) lives in `references/checklists.md` § "18-test suite summary" — the code is the source of truth; do not re-derive test semantics from prose.
 
 ### 4. Visual-QA per artifact
 
