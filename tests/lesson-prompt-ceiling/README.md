@@ -20,6 +20,11 @@ workspace: the real core files, the real `test_lesson.cjs`, a one-file fixture l
 4. **Unmeasurable:** no LESSON_CONTEXT, or no `_lesson-core` beside the lesson, fails instead of passing.
 5. **One number:** `test_lesson.cjs`, `tutor-policy/check.cjs` and `sweep.mjs` carry no 28000 literal, and
    `server/proxy.js`'s threshold equals the constant.
+6. **A malformed enum schema** (`test_lesson.cjs` T19, 2026-09-26): an enum with `options:` in place of
+   `values:` fails T19 naming the field, while `values:` and a lesson with no GRAPH_SCHEMA pass, and a
+   value T19 cannot read fails. Over the same schema the core's `buildActiveContext` does not throw: it
+   leaves the field out, keeps the rest and warns once; `validateEdit` refuses edits to that field only.
+   It sits here because this fixture already scaffolds a lesson beside a real core.
 
-Each case fails without T18. Measured once against the 48 lessons of a real lessons checkout
+Cases 1-5 fail without T18, and case 6 fails against the core and template from before T19. Measured once against the 48 lessons of a real lessons checkout
 (2026-09-21): 48/48 pass, smallest headroom 249 chars (`RF/directional-couplers`).

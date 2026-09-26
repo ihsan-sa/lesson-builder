@@ -55,8 +55,10 @@ Notes on what the validator actually checks:
   integer coercion.
 - `bool`: `typeof value === "boolean"`.
 - `enum`: membership in `spec.values`. The key is literally `values` (not
-  `enum`) — using `enum` silently fails because the helper treats the
-  spec as having no allowed values.
+  `enum`, not `options`). An enum without a non-empty `values` array is
+  malformed: the chat leaves it out of the ranges it tells the tutor,
+  refuses edits to it, and warns once in the console, and `test_lesson.cjs`
+  T19 fails the lesson.
 - `string`: `typeof value === "string"` only, no pattern matching.
 - `min` and `max` are both optional. Omit them only when the parameter is
   truly unbounded (rare in practice).
@@ -70,7 +72,9 @@ corpus and diff reviews stay readable.
 > single source of truth for the type vocabulary. It accepts only
 > `int | float | bool | enum | string`. Anything else (e.g. `"number"`,
 > `"boolean"`, `"number[]"`) fails at runtime with `"unknown schema type"`.
-> Enum specs use `values: [...]`, not `enum: [...]`.
+> Enum specs use `values: [...]`, not `enum: [...]` or `options: [...]`.
+> `schemaFieldProblem` there is the contract rule; `test_lesson.cjs` T19
+> applies it to the lesson's source.
 
 ### Worked example — a standing-waves lesson
 
@@ -237,9 +241,9 @@ ignores `description`.
 
 After writing `GRAPH_SCHEMA`, main Claude runs the following checks.
 All are part of the Phase 3 post-splice sanity pass
-(`references/phase-3-execution.md` section 4.6). The 18-test suite does
-NOT currently enforce schema-key alignment; the sanity pass is the
-backstop.
+(`references/phase-3-execution.md` section 4.6). `test_lesson.cjs` T19
+enforces checks 3 and 4; nothing enforces schema-key alignment (1 and 2),
+so the sanity pass is the backstop for those.
 
 1. **Top-level key count**:
    `Object.keys(GRAPH_SCHEMA).length === Object.keys(DEFAULT_GRAPH_PARAMS).length`.

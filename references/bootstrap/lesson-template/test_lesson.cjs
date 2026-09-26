@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-// T1-T18, run against one lesson source. T18 measures the tutor prompt the lesson assembles
-// against the proxy's argv ceiling (see the test).
+// T1-T19, run against one lesson source. T18 measures the tutor prompt the lesson assembles
+// against the proxy's argv ceiling; T19 holds GRAPH_SCHEMA to the core's contract (see the tests).
 const file = process.argv[2];
 if (!file) { console.log('Usage: node test_lesson.cjs <file.jsx>'); process.exit(1); }
 
@@ -282,6 +282,88 @@ testAsync('T18 — Assembled tutor prompt fits under the argv ceiling', async ()
   }
   console.log(`    tutor prompt ${worst.size} chars (${worst.mode} mode, LESSON_CONTEXT ${lessonContext.length}), ceiling ${SYSTEM_ARGV_CEILING}, headroom ${-over}`);
   return true;
+});
+
+// T19: every GRAPH_SCHEMA field keeps the contract the chat reads it by
+//
+// An enum declared with options: instead of values: made buildActiveContext throw on every
+// send (2026-09-26, seven ECE250 lessons); the core now skips such a field, so the only place
+// it can still be caught is here. The rule is the core's own schemaFieldProblem, applied to the
+// schema read statically from the source. A lesson with no GRAPH_SCHEMA passes (graph edits
+// are off for it); a field whose value is not a literal (or a top-level const of one) fails,
+// because it cannot be checked.
+testAsync('T19 — GRAPH_SCHEMA fields keep the core schema contract', async () => {
+  const { pathToFileURL } = require('url');
+  const parser = require('@babel/parser');
+  const ast = parser.parse(code, { sourceType: 'module', plugins: ['jsx'] });
+  const schemaJs = path.resolve(__dirname, '..', '..', '..', '_lesson-core', 'chat', 'graphSchema.js');
+  if (!fs.existsSync(schemaJs)) {
+    console.log(`    ${schemaJs} not found: sync the skill's _lesson-core into the workspace`);
+    return false;
+  }
+  const { schemaProblems } = await import(pathToFileURL(schemaJs).href);
+
+  const consts = {};
+  for (const st of ast.program.body) {
+    const decl = st.type === 'ExportNamedDeclaration' ? st.declaration : st;
+    if (decl && decl.type === 'VariableDeclaration') {
+      for (const d of decl.declarations) if (d.id && d.id.type === 'Identifier' && d.init) consts[d.id.name] = d.init;
+    }
+  }
+  if (!consts.GRAPH_SCHEMA) return true;
+
+  const UNREADABLE = Symbol('unreadable');
+  const seen = new Set();
+  const valueOf = (n) => {
+    if (!n) return UNREADABLE;
+    switch (n.type) {
+      case 'StringLiteral': case 'NumericLiteral': case 'BooleanLiteral': return n.value;
+      case 'NullLiteral': return null;
+      case 'TemplateLiteral': return n.expressions.length === 0 ? n.quasis[0].value.cooked : UNREADABLE;
+      case 'UnaryExpression': {
+        const v = valueOf(n.argument);
+        return n.operator === '-' && typeof v === 'number' ? -v : UNREADABLE;
+      }
+      case 'Identifier': {
+        if (n.name === 'undefined') return undefined;
+        if (!consts[n.name] || seen.has(n.name)) return UNREADABLE;
+        seen.add(n.name);
+        const v = valueOf(consts[n.name]);
+        seen.delete(n.name);
+        return v;
+      }
+      case 'ArrayExpression': return n.elements.map(valueOf);
+      case 'ObjectExpression': {
+        const o = {};
+        for (const p of n.properties) {
+          if (p.type !== 'ObjectProperty' || p.computed) return UNREADABLE;
+          const k = p.key.type === 'Identifier' ? p.key.name : p.key.value;
+          o[k] = valueOf(p.value);
+        }
+        return o;
+      }
+      default: return UNREADABLE;
+    }
+  };
+  const schema = valueOf(consts.GRAPH_SCHEMA);
+  const problems = [];
+  if (schema === UNREADABLE) problems.push('GRAPH_SCHEMA: not an object literal, so it cannot be checked');
+  else {
+    for (const [key, params] of Object.entries(schema || {})) {
+      for (const [param, spec] of Object.entries(params && typeof params === 'object' ? params : {})) {
+        const bad = spec === UNREADABLE ? 'not a literal, so it cannot be checked'
+          : Object.entries(spec || {}).some(([, v]) => v === UNREADABLE || (Array.isArray(v) && v.includes(UNREADABLE))) ? 'holds a value that is not a literal, so it cannot be checked'
+          : null;
+        if (bad) problems.push(`${key}.${param}: ${bad}`);
+      }
+    }
+    for (const p of schemaProblems(schema)) {
+      if (!problems.some((q) => q.startsWith(`${p.graphKey}.${p.param}:`))) problems.push(`${p.graphKey}${p.param ? '.' + p.param : ''}: ${p.reason}`);
+    }
+  }
+  for (const p of problems) console.log(`    ${p}`);
+  if (problems.length) console.log('    see references/graph-schema-guide.md; the chat skips each field named here');
+  return problems.length === 0;
 });
 
 (async () => {

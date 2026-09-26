@@ -4,7 +4,14 @@
  * isolation mode, and the session-accumulated REINFORCED BEHAVIORS list
  * (media/approaches that produced positive signals earlier in the chat).
  * Keeps the standing system prompt lean.
+ *
+ * A malformed schema field (schemaFieldProblem) is left out of the ranges and warned about
+ * once, so one bad field in a lesson cannot throw here and fail every send.
  */
+import { schemaFieldProblem } from "./graphSchema.js";
+
+const warned = new Set();
+
 export function buildActiveContext({ tabId, topicTitle, topicText, graphParams, graphSchema, isolated, reinforced = [], answerStyle = "hints" }) {
   const lines = ["[ACTIVE CONTEXT]"];
   if (tabId) lines.push(`Tab: ${tabId}`);
@@ -15,7 +22,16 @@ export function buildActiveContext({ tabId, topicTitle, topicText, graphParams, 
     if (graphSchema) {
       const ranges = [];
       for (const [key, params] of Object.entries(graphSchema)) {
-        const parts = Object.entries(params).map(([p, spec]) => {
+        if (!params || typeof params !== "object") continue;
+        const parts = Object.entries(params).flatMap(([p, spec]) => {
+          const problem = schemaFieldProblem(spec);
+          if (problem) {
+            if (!warned.has(`${key}.${p}`)) {
+              warned.add(`${key}.${p}`);
+              console.warn(`GRAPH_SCHEMA ${key}.${p} skipped: ${problem}`);
+            }
+            return [];
+          }
           if (spec.type === "int" || spec.type === "float") {
             return `${p} in [${spec.min}, ${spec.max}]`;
           } else if (spec.type === "bool") {
