@@ -34,6 +34,10 @@ export {
 } from "./ui/primitives-interactive.jsx";
 
 export { THEMES_G } from "./constants/themes.js";
+// The href of the lesson's printable companion: VITE_COMPANION_HREF when the
+// build sets it (the lessons build sets the library link), else the copy
+// published beside the lesson. See constants/build.js.
+export { companionHref } from "./constants/build.js";
 export { MODELS, EFFORT_LEVELS, DEFAULT_MODEL, DEFAULT_EFFORT } from "./constants/models.js";
 
 // `useKatex()` returns true once KaTeX has settled (loaded OR definitively

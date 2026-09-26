@@ -67,3 +67,33 @@ if (TUTOR_ENABLED && !import.meta.env.BASE_URL.endsWith("/")) {
     `which has no trailing slash. Rebuild with --base="${import.meta.env.BASE_URL}/".`
   );
 }
+
+// companionHref(name) -- where the lesson's link to its printable companion
+// points. `name` is the companion's file name as Phase 5 wrote it beside the
+// lesson (`<course>_<slug>_companion.pdf`); the lessons repo's build-all.sh
+// publishes that file beside the lesson's build, so with no build-time value
+// the link is `${BASE_URL}${name}` -- the copy next to the page.
+//
+// VITE_COMPANION_HREF, set per lesson on the build command, replaces that
+// copy. The lessons build sets it to the lesson's library link
+// (https://library.ihsan.cc/l/<token>) so the owner can repoint the PDF
+// without a rebuild. It is read at build time only, and only a value starting
+// "https://" or "/" is taken: anything else (a typo, a "javascript:" URL) is
+// named in the console and the link falls back to the copy beside the lesson.
+// Never set it in the workspace-root .env.local -- that would point every
+// lesson at one PDF.
+export function companionHref(name) {
+  // Brief: "take its href from a build-time value ... and keep the copy beside
+  // the lesson as the fallback when the value is unset."
+  const set = (import.meta.env.VITE_COMPANION_HREF || "").trim();
+  if (set.startsWith("https://") || (set.startsWith("/") && !set.startsWith("//"))) return set;
+  if (set) {
+    console.error(
+      `[lesson-core] VITE_COMPANION_HREF=${JSON.stringify(set)} is not an https:// or ` +
+      `site-absolute link, so the companion link falls back to the copy beside the lesson.`
+    );
+  }
+  // Concatenated, not a template literal: tests/thread-actors case 11 reads
+  // every BASE_URL template literal in this file as a chat endpoint.
+  return import.meta.env.BASE_URL + name;
+}

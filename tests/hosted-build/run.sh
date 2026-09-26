@@ -8,10 +8,12 @@
 #   dev-mode  NODE_ENV=development npx vite build --mode development
 #             (what `npm run dev` compiles: import.meta.env.DEV true, base "/")
 #   no-slash  the same hosted build with --base=/demo101/no-slash
+#   library   the hosted build with VITE_COMPANION_HREF set to a library link
+#   bad-href  the hosted build with VITE_COMPANION_HREF set to a javascript: URL
 #
 # No browser, no proxy, no model: the whole check is `grep` over dist/. See
 # README.md for the case table.
-#   KEEP=1  keep the temp workspace (and its four dist trees) for inspection
+#   KEEP=1  keep the temp workspace (and its dist trees) for inspection
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); SKILL=$(cd "$HERE/../.." && pwd); B="$SKILL/references/bootstrap"
 
@@ -28,6 +30,9 @@ cp "$B/workspace-root/gitignore.template" "$WS/.gitignore"
 cp "$B/workspace-root/env.local.example" "$WS/.env.local"
 if grep -q '^VITE_TUTOR=' "$WS/.env.local"; then
   echo "env.local.example sets VITE_TUTOR: the default case would no longer be a default"; exit 1
+fi
+if grep -q '^VITE_COMPANION_HREF=' "$WS/.env.local"; then
+  echo "env.local.example sets VITE_COMPANION_HREF: every lesson would link one PDF"; exit 1
 fi
 
 L="$WS/course/claude_lessons/hosted-demo"; mkdir -p "$L"; cp -r "$B/lesson-template/." "$L/"
@@ -61,5 +66,9 @@ build hosted   "VITE_TUTOR=1" --base=/demo101/hosted-demo/
 build dev-mode "NODE_ENV=development" --mode development
 # The trailing-slash edge, built so check.cjs can read what it actually does.
 build no-slash "VITE_TUTOR=1" --base=/demo101/no-slash
+# The companion link: a library link the lessons build sets replaces the copy
+# beside the lesson, and a value that is not a link is refused.
+build library  "VITE_TUTOR=1 VITE_COMPANION_HREF=https://library.ihsan.cc/l/tok-demo123" --base=/demo101/hosted-demo/
+build bad-href "VITE_TUTOR=1 VITE_COMPANION_HREF=javascript:alert(1)" --base=/demo101/hosted-demo/
 
 WS="$WS" node "$HERE/check.cjs"
