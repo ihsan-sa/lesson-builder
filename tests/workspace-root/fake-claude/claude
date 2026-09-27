@@ -3,7 +3,7 @@
 // a system prompt demoted into stdin is checked as well as one passed on argv.
 const fs = require("fs");
 const args = process.argv.slice(2);
-if (args.includes("--version")) { console.log("fake-claude 0.0.0"); process.exit(0); }
+if (args.includes("--version")) { console.log("2.1.283 (Claude Code)"); process.exit(0); } // the proxy refuses a CLI below its version floor
 if (args.includes("--help")) {
   console.log(["--add-dir <directories...>", "--restricted", "--tools <tools...>", "--settings <file-or-json>", "--setting-sources <sources>", "--permission-prompts <target>", "--plugin-dir <path>"].map((f) => `  ${f}`).join("\n"));
   process.exit(0);
