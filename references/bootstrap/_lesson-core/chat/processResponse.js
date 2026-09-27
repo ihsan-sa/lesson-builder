@@ -20,6 +20,9 @@
 // state-mutating tags are stripped and reported as 'thread-tag-deferred'
 // observations, because their approval UI (suggestion bar, commit chip, graph
 // dispatch) only exists on main-transcript messages.
+//
+// INERT TEXT: a tag inside a fenced code block, an inline code span or a `>`
+// quote line does nothing and renders as the text it is (see defuseInertTags).
 import { validateEdit } from "./graphSchema.js";
 
 // Recursively strip isPlaying:true so the bot can't autoplay sliders that
@@ -162,6 +165,27 @@ const MAIN_ONLY_TAGS = [
   { name: "COMMIT_SUGGEST", re: /<<COMMIT_SUGGEST>>[\s\S]*?<<END_COMMIT_SUGGEST>>/g },
 ];
 
+// Tags act only in the reply's own prose. Inside a fenced code block, an
+// inline code span or a `>` quote line the reply is SHOWING text — a syntax
+// example, or the student's own words quoted back — and a tag there must not
+// edit the graph, offer a commit, store a reinforced behaviour or render a
+// widget. Every "<<" in those spans is defused to DEFUSED before any tag is
+// parsed, and restored to "<<" in everything returned, so it still renders
+// (escaped, by chatMarkdown.js) as the text it was. The fence and inline-code
+// patterns and their order are chatMarkdown.js's, so what renders as code is
+// exactly what cannot act.
+const DEFUSED = "<\u0000<";
+const defuse = (span) => span.replace(/<</g, DEFUSED);
+const undefuse = (s) => s.split(DEFUSED).join("<<");
+function defuseInertTags(text) {
+  if (typeof text !== "string" || text.indexOf("<<") === -1) return text;
+  const fences = [];
+  let s = text.replace(/```\w*\n[\s\S]*?```/g, (m) => { fences.push(defuse(m)); return `\u0000F${fences.length - 1}\u0000`; });
+  s = s.replace(/`[^`]+`/g, defuse);
+  s = s.replace(/^[ \t]*>.*$/gm, defuse);
+  return s.replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[Number(i)]);
+}
+
 /**
  * @param {string} text
  * @param {object}  opts
@@ -171,7 +195,8 @@ const MAIN_ONLY_TAGS = [
  */
 export function processResponse(text, { onEditGraph, graphSchema, onError, scope = "main" } = {}) {
   const isThread = scope === "thread";
-  let display = text;
+  const source = defuseInertTags(String(text ?? ""));
+  let display = source;
   let match;
   let appliedEdit = false;
 
@@ -190,8 +215,8 @@ export function processResponse(text, { onEditGraph, graphSchema, onError, scope
   }
 
   const editRe = /<<EDIT_GRAPH>>([\s\S]*?)<<END_EDIT>>/g;
-  while (!isThread && (match = editRe.exec(text)) !== null) {
-    const raw = match[1].trim();
+  while (!isThread && (match = editRe.exec(source)) !== null) {
+    const raw = undefuse(match[1]).trim();
     let edits;
     try {
       edits = JSON.parse(raw);
@@ -248,8 +273,8 @@ export function processResponse(text, { onEditGraph, graphSchema, onError, scope
   const suggestRe = /<<SUGGEST\s+([^>]*)>>([\s\S]*?)<<END_SUGGEST>>/;
   const suggestMatch = isThread ? null : display.match(suggestRe);
   if (suggestMatch) {
-    const attrsStr = suggestMatch[1];
-    const content = suggestMatch[2].trim();
+    const attrsStr = undefuse(suggestMatch[1]);
+    const content = undefuse(suggestMatch[2]).trim();
     const getAttr = (name) => { const m = attrsStr.match(new RegExp(`${name}="([^"]*)"`)); return m ? m[1] : null; };
     const rawType = getAttr("type");
     const rawTitle = getAttr("title");
@@ -273,7 +298,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError, scope
   const commitRe = /<<COMMIT_SUGGEST>>([\s\S]*?)<<END_COMMIT_SUGGEST>>/;
   const commitMatch = isThread ? null : display.match(commitRe);
   if (commitMatch) {
-    const rawJson = commitMatch[1].trim();
+    const rawJson = undefuse(commitMatch[1]).trim();
     try {
       const parsed = JSON.parse(rawJson);
       if (typeof parsed?.message !== "string" || !parsed.message.trim()) {
@@ -300,7 +325,7 @@ export function processResponse(text, { onEditGraph, graphSchema, onError, scope
     }
     let parsed;
     try {
-      parsed = JSON.parse(body.trim());
+      parsed = JSON.parse(undefuse(body).trim());
     } catch (e) {
       onError?.("desmos-lint", { reason: "malformed JSON: " + e.message });
       return "";
@@ -320,11 +345,12 @@ export function processResponse(text, { onEditGraph, graphSchema, onError, scope
   // so the client can merge into per-tab reinforced-behaviors state.
   const reinforced = [];
   display = display.replace(/<<REINFORCE>>([\s\S]*?)<<END_REINFORCE>>/g, (_, content) => {
-    const txt = content.trim();
+    const txt = undefuse(content).trim();
     if (txt) reinforced.push(txt);
     return "";
   });
   // Fallback for tag-only replies with no prose: name what actually happened —
   // "Graph updated." only when a graph edit applied, else a neutral "Done."
+  display = undefuse(display);
   return { display: display.trim() || (appliedEdit ? "Graph updated." : "Done."), suggestion, commitSuggest, reinforced };
 }
