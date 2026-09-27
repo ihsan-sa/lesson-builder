@@ -1,0 +1,39 @@
+{
+ "type": "fan",
+ "alt": "GitHub Actions runs the gate in four jobs on every pull request",
+ "canvas": 553,
+ "chain": [
+  {
+   "title": "Pull request",
+   "sub": "to the skill",
+   "role": "actor"
+  }
+ ],
+ "branches": [
+  {
+   "title": "Serial",
+   "sub": "four live proxies",
+   "role": "gate"
+  },
+  {
+   "title": "Parser",
+   "sub": "four parse the source",
+   "role": "gate"
+  },
+  {
+   "title": "Builds",
+   "sub": "two Vite builds",
+   "role": "gate"
+  },
+  {
+   "title": "Rest",
+   "sub": "the other thirteen",
+   "role": "gate"
+  }
+ ],
+ "join": {
+  "title": "Result",
+  "sub": "on the pull request",
+  "role": "io"
+ }
+}
