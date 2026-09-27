@@ -7,8 +7,8 @@
 # attempt-first policy and its prompt ceiling, a lesson's own gate passing over that ceiling, a
 # tutor chat staying on the lesson it was born on, the tutor staying confined to its lesson, the
 # tutor's prompt naming the served checkout's real path as its workspace root, a
-# tutor reply surviving a lost stream, or chat.log rotating without deleting a generation nobody
-# marked done cannot land.
+# tutor reply surviving a lost stream, chat.log rotating without deleting a generation nobody
+# marked done, or a reply's action tags and markup being stripped before it renders cannot land.
 # `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
 # person runs it the same way.
 #
@@ -82,6 +82,7 @@ FIXTURES=(
   "chat-log-rotation|node tests/chat-log-rotation/check.cjs"
   "tutor-defaults|node tests/tutor-defaults/check.cjs"
   "thread-spend|node tests/thread-spend/check.cjs"
+  "render-strips|node tests/render-strips/check.cjs"
   "shell-theme|node tests/shell-theme/check.cjs"
   "hosted-build|tests/hosted-build/run.sh"
   "shell-reach|tests/shell-reach/run.sh"
