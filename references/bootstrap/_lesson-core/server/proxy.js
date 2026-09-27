@@ -117,11 +117,16 @@ const CLAUDE_BIN = resolveClaude();
 // shell, and a shell mangles argv — so those installs keep the shell and get
 // the system prompt through stdin instead.
 const CLAUDE_IS_SHIM = !!CLAUDE_BIN && /\.(cmd|bat|ps1)$/i.test(CLAUDE_BIN);
+// Its --version output is kept for the tutor's version floor below, so the
+// proxy spawns the CLI once for it rather than twice.
+let CLAUDE_VERSION_TEXT = null;
 const SHELL_FREE = (() => {
   if (!CLAUDE_BIN || CLAUDE_IS_SHIM) return false;
   try {
-    const r = spawnSync(CLAUDE_BIN, ["--version"], { shell: false, timeout: 20000 });
-    return !r.error && r.status === 0;
+    const r = spawnSync(CLAUDE_BIN, ["--version"], { encoding: "utf8", shell: false, timeout: 20000 });
+    const ok = !r.error && r.status === 0;
+    if (ok) CLAUDE_VERSION_TEXT = r.stdout || "";
+    return ok;
   } catch (_) {
     return false;
   }
@@ -456,7 +461,7 @@ const CONFINEMENT_MISSING = (() => {
   // never inside another option's prose, and whole: "--settings" is not
   // "--setting-sources".
   const missing = CONFINEMENT_FLAGS.filter((f) => !new RegExp(`^\\s*(?:-\\w,\\s*)?${f}(?=[\\s,=<]|$)`, "m").test(text));
-  const version = (run("--version").match(/(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
+  const version = ((CLAUDE_VERSION_TEXT ?? run("--version")).match(/(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
   const floor = TUTOR_MIN_CLI.split(".").map(Number);
   const cmp = version.length ? version.map((n, i) => n - floor[i]).find((d) => d !== 0) || 0 : -1;
   if (cmp < 0) missing.push(`version >= ${TUTOR_MIN_CLI} (has ${version.join(".") || "none"})`);
