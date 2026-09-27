@@ -42,6 +42,14 @@
    "role": "neutral",
    "col": 1.5,
    "row": 1
+  },
+  {
+   "id": "gg",
+   "title": "GeoGebra",
+   "sub": "applets, web",
+   "role": "neutral",
+   "col": 0,
+   "row": 1
   }
  ],
  "edges": [
@@ -72,6 +80,12 @@
    "kind": "dash",
    "route": "vh",
    "fromAt": 0.7
+  },
+  {
+   "from": "pg",
+   "to": "gg",
+   "kind": "dash",
+   "route": "vh"
   }
  ],
  "colGap": 24

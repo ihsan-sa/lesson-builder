@@ -53,7 +53,7 @@
   },
   {
    "title": "Main Claude",
-   "sub": "writes the prose",
+   "sub": "prose and embeds",
    "role": "actor",
    "id": "X",
    "col": 2,
