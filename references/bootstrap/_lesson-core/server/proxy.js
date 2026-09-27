@@ -117,11 +117,16 @@ const CLAUDE_BIN = resolveClaude();
 // shell, and a shell mangles argv — so those installs keep the shell and get
 // the system prompt through stdin instead.
 const CLAUDE_IS_SHIM = !!CLAUDE_BIN && /\.(cmd|bat|ps1)$/i.test(CLAUDE_BIN);
+// Its --version output is kept for the tutor's version floor below, so the
+// proxy spawns the CLI once for it rather than twice.
+let CLAUDE_VERSION_TEXT = null;
 const SHELL_FREE = (() => {
   if (!CLAUDE_BIN || CLAUDE_IS_SHIM) return false;
   try {
-    const r = spawnSync(CLAUDE_BIN, ["--version"], { shell: false, timeout: 20000 });
-    return !r.error && r.status === 0;
+    const r = spawnSync(CLAUDE_BIN, ["--version"], { encoding: "utf8", shell: false, timeout: 20000 });
+    const ok = !r.error && r.status === 0;
+    if (ok) CLAUDE_VERSION_TEXT = r.stdout || "";
+    return ok;
   } catch (_) {
     return false;
   }
@@ -231,7 +236,9 @@ let totalTokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cost: 0 }
 
 // No bare Edit or Write: a blanket grant let the tutor write anywhere the CLI
 // could reach. Writes are allowed only by the lesson-scoped rule in
-// writeTutorSettings(), and Bash only inside the sandbox it sets up.
+// writeTutorSettings(), and Bash only inside the sandbox it sets up. No MCP
+// server loads under --restricted, so the mcp__* entries below are dead for
+// the tutor and its agents (tests/tutor-confinement/README.md).
 const ALLOWED_TOOLS = [
   "Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch", "Agent",
   // Exa MCP via claude.ai account sync (used by research-agent)
@@ -401,7 +408,11 @@ function closeThreadsOf(parentId, reason) {
 }
 
 const PROJECT_DIR = process.cwd();
-const ISOLATED_CWD = path.join(PROJECT_DIR, "server", ".isolated");
+// Every tutor spawn runs here, in both memory modes: the tutor's scratch dir,
+// which nothing outside the sandbox ever runs. The sandbox lets Bash write its
+// cwd whatever the settings say, so a cwd of the lesson root would hand Bash
+// package.json, vite.config.js and server/proxy.js, all run later unsandboxed.
+const TUTOR_CWD = path.join(PROJECT_DIR, "server", ".isolated");
 
 // Tutor confinement. The tutor is student-facing: a student reads and steers
 // what it is told, so it must not carry any operator's instructions or reach.
@@ -412,48 +423,80 @@ const ISOLATED_CWD = path.join(PROJECT_DIR, "server", ".isolated");
 // journal outside the lesson (tests/tutor-confinement/README.md).
 // Every spawn therefore runs:
 //   --restricted         no user/project/local settings, so no CLAUDE.md, no
-//                        hooks, no user MCP servers; file tools confined to
+//                        hooks, no MCP servers at all; file tools confined to
 //                        cwd + --add-dir (reads of course files still work);
 //                        Bash and WebFetch only because --tools names them.
-//   --settings           Edit/Write allowed only under the lesson dir; Bash
-//                        only inside the sandbox, which may write only there,
-//                        and never unsandboxed. failIfUnavailable: where the
-//                        sandbox cannot start, Bash is refused, not run bare.
+//   --settings           Edit/Write allowed only on the lesson's src/*.jsx and
+//                        the scratch cwd: never on a file the proxy, its
+//                        routes or the dev tooling run (package.json,
+//                        vite.config.js, test_lesson.cjs, server/). Bash only
+//                        inside the sandbox, which may write only the scratch
+//                        dir, and never unsandboxed. failIfUnavailable: where
+//                        the sandbox cannot start, Bash is refused, not run
+//                        bare. Reads: no CLAUDE.md, CLAUDE.local.md or
+//                        AGENTS.md anywhere in the workspace, and the read
+//                        block reaches sandboxed commands too.
 //   --permission-prompts none   anything not allowed above is denied.
 //   --plugin-dir         the workspace's .claude/agents (the tutor team), which
 //                        --restricted no longer discovers. Their names show up
 //                        namespaced as tutor-team:<agent>.
-// A CLI without these options is not run at all: TUTOR_UNCONFINED is logged
-// at startup and every route that would spawn it answers 503.
+// A CLI without these options, or older than TUTOR_MIN_CLI, is not run at all:
+// TUTOR_UNCONFINED is logged at startup and every route that would spawn it
+// answers 503.
 const TUTOR_TOOLS = "Read,Edit,Write,Grep,Glob,Bash,WebSearch,WebFetch,Agent";
+// The oldest CLI this confinement was checked on. The read block
+// (permissions.blockReadsOutsideWorkingDirectories) is a settings key, which an
+// older CLI would ignore without a word, so an older CLI is refused instead.
+const TUTOR_MIN_CLI = "2.1.283";
 const CONFINEMENT_FLAGS = ["--restricted", "--tools", "--settings", "--permission-prompts", "--plugin-dir", "--add-dir"];
 const CONFINEMENT_MISSING = (() => {
-  let text = "";
-  try {
-    const r = spawnSync(CLAUDE_CMD, ["--help"], { encoding: "utf8", shell: !SHELL_FREE, timeout: 20000 });
-    text = `${r.stdout || ""}\n${r.stderr || ""}`;
-  } catch (_) {}
-  // Whole-flag match: "--settings" must not be found inside "--setting-sources".
-  const missing = CONFINEMENT_FLAGS.filter((f) => !new RegExp(`(^|[\\s,])${f}(?=[\\s,=<]|$)`, "m").test(text));
+  const run = (flag) => {
+    try {
+      const r = spawnSync(CLAUDE_CMD, [flag], { encoding: "utf8", shell: !SHELL_FREE, timeout: 20000 });
+      return `${r.stdout || ""}\n${r.stderr || ""}`;
+    } catch (_) { return ""; }
+  };
+  const text = run("--help");
+  // An option counts only where it starts a line of --help ("  -p, --print"),
+  // never inside another option's prose, and whole: "--settings" is not
+  // "--setting-sources".
+  const missing = CONFINEMENT_FLAGS.filter((f) => !new RegExp(`^\\s*(?:-\\w,\\s*)?${f}(?=[\\s,=<]|$)`, "m").test(text));
+  const version = ((CLAUDE_VERSION_TEXT ?? run("--version")).match(/(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
+  const floor = TUTOR_MIN_CLI.split(".").map(Number);
+  const cmp = version.length ? version.map((n, i) => n - floor[i]).find((d) => d !== 0) || 0 : -1;
+  if (cmp < 0) missing.push(`version >= ${TUTOR_MIN_CLI} (has ${version.join(".") || "none"})`);
   if (missing.length) log("TUTOR_UNCONFINED", { claude: CLAUDE_CMD, missing, action: "every tutor route answers 503" });
   return missing;
 })();
-const LESSON_WRITE_DIRS = [...new Set([LESSON_DIR, path.resolve(PROJECT_DIR)])];
+const LESSON_ROOTS = [...new Set([LESSON_DIR, path.resolve(PROJECT_DIR)])];
+// What a tutor turn may write: the lesson source it augments on an approved
+// <<SUGGEST>> (served to the browser by Vite, parsed but never run by
+// test_lesson.cjs) and its scratch dir. Nothing else in the lesson root.
+const TUTOR_WRITES = LESSON_ROOTS.flatMap((d) => [path.join(d, "src", "*.jsx"), path.join(d, "server", ".isolated", "**")]);
+const TUTOR_SCRATCH = [...new Set([TUTOR_CWD, path.join(LESSON_DIR, "server", ".isolated")])];
+// Operator manuals the tutor must not read on request either: --restricted
+// stops the auto-load, but --add-dir keeps the workspace readable.
+const MANUALS = ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"];
+const MANUAL_ROOTS = [...new Set([WORKSPACE_ROOT, path.resolve(REPO_DIR), ...LESSON_ROOTS])];
 // Per-proxy files the CLI reads, outside the lesson dir so the tutor cannot
 // rewrite its own confinement or team. Settings go by path, not as a JSON
 // argument, because a shim install spawns through a shell that splits it.
 const TUTOR_DIR = fs.mkdtempSync(path.join(realpathOf(os.tmpdir()), "lesson-tutor-"));
 const TUTOR_SETTINGS = path.join(TUTOR_DIR, "settings.json");
 const TEAM_PLUGIN_DIR = path.join(TUTOR_DIR, "team");
-// Allow rules take the "//abs/path" form for an absolute path, and an Edit
-// rule covers Write too.
+// Rules take the "//abs/path" form for an absolute path, an Edit rule covers
+// Write too, and a Read deny covers Grep and Glob.
 function writeTutorSettings() {
   fs.mkdirSync(TUTOR_DIR, { recursive: true });
   fs.writeFileSync(TUTOR_SETTINGS, JSON.stringify({
-    permissions: { allow: LESSON_WRITE_DIRS.map((d) => `Edit(/${d}/**)`) },
+    permissions: {
+      allow: TUTOR_WRITES.map((p) => `Edit(/${p})`),
+      deny: MANUAL_ROOTS.flatMap((d) => MANUALS.map((m) => `Read(/${path.join(d, "**", m)})`)),
+      blockReadsOutsideWorkingDirectories: true,
+    },
     sandbox: {
       enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, autoAllowBashIfSandboxed: true,
-      filesystem: { allowWrite: LESSON_WRITE_DIRS },
+      filesystem: { allowWrite: TUTOR_SCRATCH },
     },
   }, null, 2) + "\n");
 }
@@ -495,14 +538,17 @@ app.use(["/session/init", "/session/transfer", "/thread/fold", "/chat"], (req, r
   res.status(503).json({ error: { message: `The tutor is off: this claude CLI lacks ${CONFINEMENT_MISSING.join(", ")}, which keep it confined to the lesson. Update Claude Code and restart the proxy.` } });
 });
 
-function runClaude(args, stdinContent, isolated = false) {
+// Both memory modes run in TUTOR_CWD with the lesson and the workspace added
+// for reads; the modes differ only in the prompt (chat/buildSystemPrompt.js).
+function tutorDirs(args) {
+  try { fs.mkdirSync(TUTOR_CWD, { recursive: true }); } catch (_) {}
+  args.push("--add-dir", PROJECT_DIR, "--add-dir", REPO_DIR);
+  return TUTOR_CWD;
+}
+
+function runClaude(args, stdinContent) {
   return new Promise((resolve, reject) => {
-    const cwd = isolated ? ISOLATED_CWD : PROJECT_DIR;
-    if (isolated) {
-      try { fs.mkdirSync(cwd, { recursive: true }); } catch (_) {}
-      args.push("--add-dir", PROJECT_DIR);
-    }
-    args.push("--add-dir", REPO_DIR);
+    const cwd = tutorDirs(args);
     const env = confine(args);
     const proc = spawn(CLAUDE_CMD, args, { shell: !SHELL_FREE, timeout: 1800000, cwd, env });
     let stdout = "";
@@ -543,13 +589,8 @@ function parseCliJson(raw) {
   throw new Error(`no JSON object in CLI output: ${text.slice(0, 300)}`);
 }
 
-function runClaudeStreaming(args, stdinContent, isolated, onEvent, onDone, onError) {
-  const cwd = isolated ? ISOLATED_CWD : PROJECT_DIR;
-  if (isolated) {
-    try { fs.mkdirSync(cwd, { recursive: true }); } catch (_) {}
-    args.push("--add-dir", PROJECT_DIR);
-  }
-  args.push("--add-dir", REPO_DIR);
+function runClaudeStreaming(args, stdinContent, onEvent, onDone, onError) {
+  const cwd = tutorDirs(args);
   const env = confine(args);
   // detached: the CLI leads its own process group so /chat/cancel can take
   // the whole tree down with one signal (see killTree).
@@ -607,7 +648,7 @@ app.post("/session/init", async (req, res) => {
   const stdinContent = withSystemPrompt(args, system, initPrompt);
 
   try {
-    const raw = await runClaude(args, stdinContent, !!isolated);
+    const raw = await runClaude(args, stdinContent);
     const parsed = parseCliJson(raw);
     const sessionId = parsed.session_id;
     if (!sessionId) throw new Error("No session_id in response");
@@ -663,7 +704,7 @@ app.post("/session/transfer", async (req, res) => {
     const dumpArgs = ["--resume", sessionId, "-p", "--print", "--output-format", "json", "--model", "haiku", "--effort", "low"];
     const dumpPrompt = "SYSTEM TASK: This session is being transferred. Output a concise summary of everything discussed so far, including any key facts, decisions, secret words, or context the user shared. Format as plain text. Be brief.";
     const dumpRaw = await Promise.race([
-      runClaude(dumpArgs, dumpPrompt, oldSession.isolated),
+      runClaude(dumpArgs, dumpPrompt),
       new Promise((_, reject) => setTimeout(() => reject(new Error("Dump timed out after 30s")), 30000)),
     ]);
     const dumpParsed = parseCliJson(dumpRaw);
@@ -682,7 +723,7 @@ app.post("/session/transfer", async (req, res) => {
   initPrompt = withSystemPrompt(newArgs, system, initPrompt);
 
   try {
-    const raw = await runClaude(newArgs, initPrompt, newIsolated);
+    const raw = await runClaude(newArgs, initPrompt);
     const parsed = parseCliJson(raw);
     const newSessionId = parsed.session_id;
     if (!newSessionId) throw new Error("No session_id in response");
@@ -783,7 +824,7 @@ app.post("/thread/fold", async (req, res) => {
   // at once lose one of the two turns.
   await enqueueForSession(handle, async () => {
     try {
-      const parsed = parseCliJson(await runClaude(args, prompt, session.isolated));
+      const parsed = parseCliJson(await runClaude(args, prompt));
       const tok = extractTokens(parsed);
       accumulateTokens(tok);
       const summary = (parsed.result || "").trim();
@@ -936,7 +977,7 @@ app.post("/chat", async (req, res) => {
       if (pid) killTree(pid).then((left) => log("THREAD_FORK_KILLED", { chatNum: session.chatNum, threadId: session.threadId, msg: msgNum, survivors: left }));
     };
 
-    const proc = runClaudeStreaming(args, message, session.isolated,
+    const proc = runClaudeStreaming(args, message,
       (parsed) => {
         try {
           // The forked id, taken from the first event that carries one. It
@@ -1119,7 +1160,8 @@ app.post("/commit", async (req, res) => {
       log("COMMIT_TEST_WARN", { note: "multiple .jsx candidates", candidates: jsxFiles });
     }
     const lessonFile = `src/${jsxFiles[0]}`;
-    const testCmd = spawn("node", ["test_lesson.cjs", lessonFile], { cwd: PROJECT_DIR, shell: true });
+    // No shell: lessonFile is a file name the tutor may have chosen.
+    const testCmd = spawn(process.execPath, ["test_lesson.cjs", lessonFile], { cwd: PROJECT_DIR, shell: false });
     let testOutput = "";
     testCmd.stdout.on("data", (d) => (testOutput += d.toString()));
     testCmd.stderr.on("data", (d) => (testOutput += d.toString()));
