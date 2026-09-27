@@ -33,7 +33,8 @@ and it builds a lesson: a small web app with the topics in order, the equations 
 the reader can move, animations, demos, and a tutor panel down the side that knows what the
 page says. It works in six phases, and agents it spawns do most of the work. Every number here
 was read off the skill's repo, or the project that uses it, on 27 September 2026, and the grey
-line at the foot of each page says where.
+line at the foot of each page says where. This second edition adds a phone layout, GeoGebra
+figures, rendered animations, a linked companion and tests on GitHub Actions.
 
 \begin{hsfigure}{Figure 1 / six phases, and one of them waits for a person}%
 {Sage is agents at work, rust a check that can say no, slate what ships. The heavy box is the
@@ -41,12 +42,8 @@ one place a person decides.}
 \hsdiagram{figures/phases}
 \end{hsfigure}
 
-New since the first edition: lessons read as well on a phone as at a desk, a figure can be a
-GeoGebra applet, animations render where the builds run, the printed companion is linked from the
-page, and the skill's tests also run on GitHub Actions.
-
 \hsprovenance{The phases, the gate and the six-round cap: \texttt{SKILL.md}, \emph{Pipeline (6 phases)}
-and \emph{Execution guidance}. What is new: pull requests \#53 to \#61.}
+and \emph{Execution guidance}.}
 \newpage
 
 % ---------------------------------------------------------------- page 2
@@ -88,8 +85,7 @@ the gate: \texttt{SKILL.md}, \emph{Session modes and gates}.}
 lesson until it has been checked.}
 
 \begin{hsfigure}{Figure 3 / one decision, then one specialist per item}%
-{Rust is the decider, sage the four specialists, slate the staging area and ochre the session
-that assembles the lesson. The decider ran in phase 2; its plan is what phase 3 builds.}
+{Rust is the decider, sage the specialists, slate the staging area, ochre the session.}
 \hsdiagram{figures/build}
 \end{hsfigure}
 
@@ -98,15 +94,13 @@ item's brief and the facts its topic needs. None of them writes into the lesson.
 lesson serves, such as a rendered animation or an image, go into a staging area, and one script
 moves each into place only after checking that this run made it, so a killed or broken
 production leaves the old file untouched. Code is pasted in by main Claude, which also writes
-the prose itself, topic by topic, against the arc the plan approved, and the Desmos and GeoGebra
-figures, which are a few lines of settings. Manim is now installed where the builds run, so an
-animation the plan asks for is rendered and checked in the same run. An update to an existing
+the prose and the Desmos and GeoGebra figures itself, against the arc the plan approved. Manim
+now runs where the builds do, so animations render in the run. An update to an existing
 lesson builds on a branch in a git worktree of its own, so the author's checkout is never
 stashed or switched while a run is going.
 
 \hsprovenance{Phase 3: \texttt{references/phase-3-execution.md}, \emph{The run staging area} and
-\emph{Parallel specialist spawning}. Who authors the embeds: \texttt{agents/medium-decider-agent.md}.
-Manim: \texttt{agents/manim-agent.md}. The worktree: \texttt{references/run-record.md}.}
+\emph{Parallel specialist spawning}. The worktree: \texttt{references/run-record.md}.}
 \newpage
 
 % ---------------------------------------------------------------- page 4
@@ -263,7 +257,8 @@ thread on a paragraph, which starts as a fork of the main conversation and is fo
 it as a summary when the student is done. Whatever the model writes is rendered through an
 allowlist of elements, never as raw HTML. A graph the tutor may change declares which settings it
 can touch, and a setting declared wrongly is now skipped rather than fatal: in September one such
-mistake stopped the chat outright in seven lessons.
+mistake stopped the chat outright in seven lessons. A new nineteenth check reads the settings
+the way the chat does, so the lesson that makes the mistake still fails its tests.
 
 \hsprovenance{Table 2: \texttt{SKILL.md}, the per-lesson file list. The tutor's tags, threads and renderer:
 \texttt{SKILL.md} and \texttt{\_lesson-core/chat/safeRender.js}. The graph settings:
@@ -318,13 +313,11 @@ confinement}, and its fixture \texttt{tests/tutor-confinement/}. The tutor's tea
 The first layer is inside each lesson. Its nineteen checks parse the file, confirm every topic
 has what the tutor needs, and build the tutor's whole prompt to see that it fits the CLI's
 argument list. Past 28,000 characters the proxy has to pass it on standard input instead, where it
-loses its priority as instructions, so that one is a test and not a guideline. The nineteenth is
-new: it reads each graph's declared settings the way the chat does, so the mistake the chat now
-skips still fails the lesson that makes it.
+loses its priority as instructions, so that one is a test and not a guideline.
 
 The second layer is the skill's own gate, a script every pull request must pass before it can
 merge. It runs 23 self-contained scenarios, mostly in parallel, with a fake \texttt{claude}
-where one needs the CLI. A scenario that leaves a server behind fails the gate. The runs that
+where one needs the CLI. The runs that
 need a browser, the real CLI or a model are not skipped in silence: the gate prints each one
 with the exact command that runs it.
 

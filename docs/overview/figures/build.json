@@ -53,7 +53,7 @@
   },
   {
    "title": "Main Claude",
-   "sub": "prose, Desmos, GeoGebra",
+   "sub": "prose and embeds",
    "role": "actor",
    "id": "X",
    "col": 2,
