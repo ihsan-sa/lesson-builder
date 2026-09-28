@@ -423,6 +423,7 @@ Phase 3 touches `CLAUDE.md` only for new course/slug. Update mode is typically n
 
 Update mode only. Run before scoping closes. Failures surface at mode confirmation; most require halt or opt-in bypass.
 
+- [ ] `scripts/core-refresh.sh refresh <workspace_root>` ran at session start and exited 0, or its rollback (exit 3) was told to the user and handled per `references/bootstrap.md` § Core-version check. It is never asked about.
 - [ ] Lesson root resolves to an existing directory. Canonical form: `<workspace_root>/<course>/claude_lessons/<slug>/`.
 - [ ] `src/<slug>.jsx` exists at the expected path and parses cleanly under Babel (`{ sourceType: "module", plugins: ["jsx"] }`). A parse failure means the baseline is already broken; halt and surface the parse error.
 - [ ] Either `CLAUDE.md` or the lesson JSX header identifies the course code unambiguously. Ambiguous course codes block scoping auto-fill.

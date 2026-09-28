@@ -29,6 +29,11 @@ __pycache__/
 # Lesson-builder scratch (Phase 3 specialist outputs before splice assembly)
 **/.build-scratch/
 
+# scripts/core-refresh.sh: the copy of _lesson-core it keeps while a refresh runs, and the
+# throwaway course its smoke test builds in. Both are removed when it finishes.
+.core-refresh-backup.*/
+.core-smoke.*/
+
 # Course materials (copyrighted lectures, textbooks, private notes)
 **/course_materials/
 **/materials/
