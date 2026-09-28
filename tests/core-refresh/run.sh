@@ -81,5 +81,36 @@ echo "export const = broken;" >>"$WS/_lesson-core/index.js"
 out=$("$SKILL/scripts/core-refresh.sh" smoke "$WS" 2>&1); rc=$?
 check "smoke fails (exit 1) once the core is broken" '[ "$rc" = 1 ]'
 
+echo "== 4. with no workspace named, a user-wide install never takes \$HOME for a workspace"
+# The skill installed the usual way, under ~/.claude/skills/, with a fake HOME that has no core.
+H="$T/home"; mkdir -p "$H/.claude/skills/lesson-builder"
+cp -r "$SKILL/scripts" "$SKILL/references" "$SKILL/agents" "$H/.claude/skills/lesson-builder/"
+HS="$H/.claude/skills/lesson-builder/scripts/core-refresh.sh"
+out=$(cd "$H" && env -u CLAUDE_PROJECT_DIR HOME="$H" "$HS" check --quiet 2>&1); rc=$?
+check "check --quiet exits 2 when no candidate holds a core" '[ "$rc" = 2 ] && grep -q "name the workspace root" <<<"$out"'
+out=$(cd "$H" && env -u CLAUDE_PROJECT_DIR HOME="$H" "$HS" refresh 2>&1); rc=$?
+check "refresh exits 2 there too" '[ "$rc" = 2 ]'
+check "\$HOME gets no _lesson-core, no agents and no scratch dirs" '[ ! -e "$H/_lesson-core" ] && [ ! -e "$H/.claude/agents" ] && [ "$(leftovers "$H")" = 0 ]'
+# The kept case: $CLAUDE_PROJECT_DIR names a workspace that holds a current core.
+P="$T/project"; mkdir -p "$P"; cp -r "$B/_lesson-core" "$P/_lesson-core"
+mkdir -p "$P/.claude/agents"; cp "$SKILL"/agents/*.md "$B"/workspace-root/.claude/agents/*.md "$P/.claude/agents/"
+out=$(cd "$H" && HOME="$H" CLAUDE_PROJECT_DIR="$P" "$HS" check 2>&1); rc=$?
+check "check falls back to \$CLAUDE_PROJECT_DIR when it holds a core (exit 0: that workspace is current)" '[ "$rc" = 0 ]'
+check "and reports on that workspace, not on \$HOME" '! grep -q "missing: _lesson-core/" <<<"$out" && [ ! -e "$H/_lesson-core" ]'
+
+echo "== 5. a backup that cannot be made leaves the core untouched"
+# A file the refresh cannot read makes `cp -a` fail part-way. Nothing may be removed then.
+WS="$T/nobackup"; mkdir -p "$WS/_lesson-core"; cp -r "$B/_lesson-core/." "$WS/_lesson-core/"
+sed -i 's/claude-opus-5-5/claude-opus-5-5-stale/' "$WS/_lesson-core/constants/models.js"
+mkdir -p "$WS/_lesson-core/local"; echo "export const MINE = 1;" >"$WS/_lesson-core/local/mine.js"
+echo "secret" >"$WS/_lesson-core/local/unreadable.js"
+cp -a "$WS/_lesson-core" "$T/nobackup-before"
+chmod 000 "$WS/_lesson-core/local/unreadable.js"
+out=$("$SKILL/scripts/core-refresh.sh" refresh "$WS" 2>&1); rc=$?
+chmod 644 "$WS/_lesson-core/local/unreadable.js" 2>/dev/null
+check "refresh exits 3 naming the failed copy" '[ "$rc" = 3 ] && grep -q "could not copy the current core aside" <<<"$out"'
+check "the core is exactly as it was, own files included" 'diff -r "$T/nobackup-before" "$WS/_lesson-core" >/dev/null'
+check "no backup dir is left" '[ "$(leftovers "$WS")" = 0 ]'
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

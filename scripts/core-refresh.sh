@@ -6,7 +6,9 @@
 #   core-refresh.sh smoke   [<workspace_root>]   run the smoke test against the core as it stands
 #   --quiet (after the subcommand) prints nothing when the core is already current
 #
-# <workspace_root> defaults to the workspace this skill is installed in (<ws>/.claude/skills/<name>).
+# With no <workspace_root>, the first of these that holds a _lesson-core/ is used: the directory the
+# skill is installed under (<ws>/.claude/skills/<name>), $CLAUDE_PROJECT_DIR, $PWD. None does → exit 2,
+# so a skill installed user-wide (~/.claude/skills/) never takes $HOME for a workspace.
 #
 # Drift is any file under references/bootstrap/_lesson-core/ that is missing from the workspace's
 # _lesson-core/ or differs from it byte for byte. Files the skill does not ship (a workspace's own
@@ -43,8 +45,11 @@ for a in "$@"; do
 done
 case "$cmd" in check|refresh|smoke) ;; *) usage ;; esac
 if [ -z "$WS" ]; then
-  case "$SKILL" in */.claude/skills/*) WS=${SKILL%/.claude/skills/*} ;;
-    *) echo "core-refresh: name the workspace root — this skill is not installed under one" >&2; exit 2 ;; esac
+  derived=""; case "$SKILL" in */.claude/skills/*) derived=${SKILL%/.claude/skills/*} ;; esac
+  for d in "$derived" "${CLAUDE_PROJECT_DIR:-}" "$PWD"; do
+    [ -n "$d" ] && [ -d "$d/_lesson-core" ] && { WS=$d; break; }
+  done
+  [ -n "$WS" ] || { echo "core-refresh: name the workspace root — none of the skill's install root, \$CLAUDE_PROJECT_DIR or \$PWD holds a _lesson-core/" >&2; exit 2; }
 fi
 [ -d "$WS" ] || { echo "core-refresh: no workspace at $WS" >&2; exit 2; }
 WS=$(cd "$WS" && pwd)
@@ -135,12 +140,17 @@ sync_agents() {
   [ "$QUIET" = 1 ] || agent_drift | grep '^not in the skill' | sed 's/^/  kept, /' >&2 || true
 }
 
-BACKUP=""; COMMITTED=0
+# TOUCHED is set just before the first write to $CORE and BACKED_UP only once the copy aside has
+# succeeded, so a copy that fails or is interrupted leaves $CORE exactly as it was: nothing is
+# removed that no complete backup can put back.
+BACKUP=""; COMMITTED=0; TOUCHED=0; BACKED_UP=0
 restore() {
   [ "$COMMITTED" = 1 ] && return
   [ -n "$BACKUP" ] || return
-  rm -rf "$CORE"
-  if [ -d "$BACKUP/_lesson-core" ]; then mv "$BACKUP/_lesson-core" "$CORE"; fi
+  if [ "$TOUCHED" = 1 ]; then
+    rm -rf "$CORE"
+    if [ "$BACKED_UP" = 1 ]; then mv "$BACKUP/_lesson-core" "$CORE"; fi
+  fi
   rm -rf "$BACKUP"; BACKUP=""
 }
 rolled_back() {
@@ -169,7 +179,9 @@ refresh() {
   trap 'rolled_back "interrupted"' INT TERM
   if [ -d "$CORE" ]; then
     cp -a "$CORE" "$BACKUP/_lesson-core" || rolled_back "could not copy the current core aside"
+    BACKED_UP=1
   fi
+  TOUCHED=1
   mkdir -p "$CORE" && cp -r "$PAY/_lesson-core/." "$CORE/" || rolled_back "could not copy the payload in"
   (cd "$CORE" && npm install --prefer-offline --no-audit --no-fund) >"$BACKUP/npm.log" 2>&1 \
     || { tail -20 "$BACKUP/npm.log" >&2; rolled_back "npm install in _lesson-core failed"; }

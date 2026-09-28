@@ -22,7 +22,7 @@ It is not a decision and never a question for the user, in any session mode: the
 - **Exit 2** — nothing to compare: no payload, or no such workspace. Report it and stop.
 - **Agent registry.** The same run copies every skill agent (`$SKILL/agents/` + `workspace-root/.claude/agents/`) that is missing from or differs in `<workspace_root>/.claude/agents/` — `.claude/` is gitignored, so clones start empty and stale registries survive. A registry file whose name the skill does not ship is listed, not deleted: delete it when it is a retired skill agent (a stale `geometry-agent.md` means the tutor delegates to a retired prompt), keep it when the workspace wrote it.
 
-`core-refresh.sh check <workspace_root>` reports drift and changes nothing (exit 1 on drift); `--quiet` prints only on drift, which is the form a workspace's SessionStart hook runs — any hand-made drift script a workspace carries is superseded by it. `core-refresh.sh smoke <workspace_root>` runs the smoke test alone. The script's header has the full contract; `tests/core-refresh/` is its fixture.
+`core-refresh.sh check <workspace_root>` reports drift and changes nothing (exit 1 on drift); `--quiet` prints only on drift, which is the form a workspace's SessionStart hook runs. With no root named, the script takes the first of the skill's install root, `$CLAUDE_PROJECT_DIR` and `$PWD` that holds a `_lesson-core/`, and exits 2 when none does, so a skill installed under `~/.claude/skills/` never treats `$HOME` as a workspace. Any hand-made drift script a workspace carries is superseded by it. `core-refresh.sh smoke <workspace_root>` runs the smoke test alone. The script's header has the full contract; `tests/core-refresh/` is its fixture.
 
 ## Detection (one Glob at session start)
 
