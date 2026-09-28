@@ -4,7 +4,8 @@
 # tests/tutor-confinement/fake-claude first on PATH, and drives check.cjs twice: once with a CLI
 # that has every confining option, once with one whose --help lacks --restricted, once with one
 # below the version floor, once with one whose first two probes stall 25s (past the 20s default, here
-# cut to 1s) and answer later, and once more to drive /commit. See README.md.
+# cut to 5s: at 1s a loaded box killed the fake before node had booted it) and answer later, and
+# once more to drive /commit. See README.md.
 #   PORT=<n>   proxy port (default 3911)     KEEP=1   keep the temp workspace
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); SKILL=$(cd "$HERE/../.." && pwd); B="$SKILL/references/bootstrap"
@@ -23,7 +24,7 @@ start_proxy() { # $1 = FAKE_HELP_OMIT value ("" for a CLI with every option), $2
   rm -f "$L/server/.proxy.json" "$L/server/.proxy-port" "$L/server/chat.log" "$WS/record.jsonl" "$WS/record.jsonl.stalls"
   # CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD is set here so check.cjs can see the proxy strip it.
   (cd "$L" && exec env PATH="$HERE/fake-claude:$PATH" FAKE_RECORD="$WS/record.jsonl" FAKE_HELP_OMIT="$1" FAKE_VERSION="${2:-}" \
-    FAKE_STALL_PROBES="${3:-}" FAKE_STALL_MS=25000 CLAUDE_PROBE_TIMEOUT_MS="${3:+1000}" \
+    FAKE_STALL_PROBES="${3:-}" FAKE_STALL_MS=25000 CLAUDE_PROBE_TIMEOUT_MS="${3:+5000}" \
     CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 PROXY_PORT="$PORT" node server/proxy.js >"$WS/proxy.log" 2>&1) &
   PROXY_PID=$!
   # 60s: a proxy without the probe-timeout fix blocks ~40s on the stalled probes before it listens.

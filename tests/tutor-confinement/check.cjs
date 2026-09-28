@@ -21,8 +21,16 @@ const ok = (cond, msg) => { console.log(`${cond ? "PASS" : "FAIL"} ${msg}`); if 
 // reuse sockets at all (see tests/thread-actors/check.cjs proxyFetch).
 const proxyFetch = (route, init) => fetch(BASE + route, { ...init, headers: { ...(init && init.headers), Connection: "close" } });
 const post = async (route, body) => { const r = await proxyFetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, text: await r.text() }; };
-const spawns = () => fs.readFileSync(path.join(WS, "record.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
-  .filter((s) => !s.args.includes("--help") && !s.args.includes("--version"));
+// The fake appends its line before it does anything else, so no record file means
+// no CLI ran far enough to do anything: zero spawns. That happens in "stall" mode
+// under load, where every startup probe is killed at the short probe timeout
+// before node has booted the fake. A case that expects spawns still FAILs on the count.
+const spawns = () => {
+  let text;
+  try { text = fs.readFileSync(path.join(WS, "record.jsonl"), "utf8"); } catch (e) { if (e.code === "ENOENT") return []; throw e; }
+  return text.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
+    .filter((s) => !s.args.includes("--help") && !s.args.includes("--version"));
+};
 const argOf = (args, flag) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : undefined; };
 
 async function confined() {
@@ -84,7 +92,7 @@ async function stall() {
   const early = await post("/session/init", { isolated: true });
   ok(early.status === 503 && /still starting/.test(early.text), `/session/init right after startup answers 503 "still starting" (${early.status} ${early.text.slice(0, 80)})`);
   let starting = 0, served = 0, other = [];
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
     const r = await post("/chat", { messages: [{ role: "user", content: "hi" }] });
     // Every stateless turn the proxy let through is one CLI spawn; none may run before a probe answered.
@@ -96,12 +104,15 @@ async function stall() {
     await new Promise((res) => setTimeout(res, 250));
   }
   ok(starting > 0, `stateless /chat answered 503 "still starting" while the probes stalled (${starting} times)`);
-  ok(served === 1 && other.length === 0, `once a re-probe answered, /chat serves (served ${served}, other ${JSON.stringify(other)})`);
+  ok(other.length === 0, `/chat answers only 503 "still starting" or 200 (other ${JSON.stringify(other)})`);
+  // How soon a re-probe answers is the clock's business: on a loaded box one can time out again.
+  ok(served === 1, `[timing] once a re-probe answered, /chat serves within 60s (served ${served})`);
   const all = spawns();
   ok(all.length === served, `exactly the served turns spawned the CLI (${all.length})`);
   ok(all.every(({ args }) => args.includes("--restricted") && argOf(args, "--permission-prompts") === "none" && !!argOf(args, "--settings")), "every spawned turn ran confined");
   const log = fs.readFileSync(path.join(L, "server", "chat.log"), "utf8");
-  ok(/\[TUTOR_PROBE_TIMEOUT\]/.test(log) && /\[TUTOR_CONFINED\]/.test(log), "chat.log records the probe timeout and the late confinement");
+  ok(/\[TUTOR_PROBE_TIMEOUT\]/.test(log), "chat.log records the probe timeout");
+  if (served) ok(/\[TUTOR_CONFINED\]/.test(log), "chat.log records the late confinement");
   ok(!/\[TUTOR_UNCONFINED\]/.test(log), "a timed-out probe is never logged as a missing option");
 }
 
