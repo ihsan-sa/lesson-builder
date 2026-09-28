@@ -47,9 +47,15 @@
 #     [timing] ones, and the rerun is green. `attestation` needs about 145s alone and was killed at
 #     600s beside the other fixtures at load 45 on 6 cores; a fixture that hangs for a reason of its
 #     own hangs alone too and stays red, and one killed twice stays red.
+#   - its first run stopped on its own proxy-startup wait (exit 1, last line "proxy did not start" or
+#     "proxy did not write .proxy.json + .proxy-port", so the proxy had printed nothing) having printed
+#     no FAIL but [timing] ones, and the rerun is green. The fixtures poll 15s for the port file; at
+#     load 140-170 on 6 cores the proxy took 45-75s to reach listen() and then served normally. A proxy
+#     that crashes on start prints its error after that line, and one that never starts fails alone too.
 # A fixture marks an assertion about the clock (cancellation's "answered in <= 3000ms") by starting its
-# message with [timing]. Any other first red — a behaviour FAIL, a crash, a proxy that died, a
-# watchdog kill after a behaviour FAIL — stays red even when the rerun is green, because an
+# message with [timing]. Any other first red — a behaviour FAIL, a crash, a proxy that died or said
+# anything before its startup wait ran out, a watchdog kill after a behaviour FAIL — stays red even
+# when the rerun is green, because an
 # intermittent regression is still a regression; a red prints both runs.
 # The LOAD-BOUND line carries no red shape (no "<n> failed", ✗ or FAIL), because cc-land calls a gate red on any non-zero "(\d+) failed" in its output whatever
 # it exits with. A control at the start of every run holds that rule to both sides.
@@ -179,6 +185,9 @@ unred(){ sed -e 's/\([1-9][0-9]*\) failed/\1 red/g' -e 's/✗/·/g' -e 's/✘/·
 fails_of(){ grep -E '^FAIL ' "$1" | awk '{ i = index($0, ": "); h = i ? substr($0, 1, i + 1) : ""; t = substr($0, length(h) + 1); gsub(/[0-9][0-9.]*/, "N", t); print h t }' | sort -u; }
 timing_only(){ local f; f=$(grep -E '^FAIL ' "$1") && ! grep -qvE '^FAIL \[timing\] ' <<<"$f"; }
 no_behaviour_fail(){ ! grep -E '^FAIL ' "$1" | grep -qvE '^FAIL \[timing\] '; }
+# The fixture's own startup wait ran out with the proxy silent: that line is the log's last non-blank one.
+startup_wait_out(){ [ "$(grep -v '^[[:space:]]*$' "$1" | tail -1)" = "proxy did not start" ] ||
+  [ "$(grep -v '^[[:space:]]*$' "$1" | tail -1)" = "proxy did not write .proxy.json + .proxy-port" ]; }
 high_load(){ awk -v l="$1" -v n="$2" 'BEGIN { exit !(l >= 2 * n) }'; }
 # judge_rerun <name> <first log> <first rc> <rerun log> <rerun rc> <load1> <cores>
 #   -> 0 and the LOAD-BOUND line on stdout, or 1: red.
@@ -193,6 +202,15 @@ judge_rerun() {
       echo "    went red, then green alone at load $load on $cores cores"; } | unred
     return 0
   fi
+  # Brief: "Only if it's the fixture's own harness timing out, widen check.sh's load-bound rule for that
+  # exact shape, and keep its rule that a real failure never turns green" — so the startup wait must be
+  # the last thing the first run said, after no behaviour FAIL, and the rerun be green.
+  if [ "$rc1" -eq 1 ] && startup_wait_out "$l1"; then
+    no_behaviour_fail "$l1" && [ "$rc2" -eq 0 ] || return 1
+    { echo "  $n: LOAD-BOUND — its proxy was not up within the fixture's 15s startup wait beside the other"
+      echo "    fixtures (exit 1), having printed nothing, then green alone at load $load on $cores cores"; } | unred
+    return 0
+  fi
   # "Never turn a real failure green: a gate counts as load-bound only when the rerun fails the same
   # timing assertion at high load" — so the first red must be timing-only at high load, whatever the rerun did.
   [ "$rc1" -eq 1 ] && timing_only "$l1" || return 1
@@ -203,18 +221,26 @@ judge_rerun() {
   { echo "  $n: LOAD-BOUND — red beside the other fixtures (exit $rc1), $why; the cases that flipped:"
     grep -E '^FAIL ' "$l1" | head -5 | sed 's/^/    /'; } | unred
 }
-# CONTROL, on fixtures of its own: kept — a timing red then green alone, timing-only twice, and a
+# CONTROL, on fixtures of its own: kept — a timing red then green alone, timing-only twice, a
 # watchdog kill (with or without a timing red before it) then green alone, all at high load.
 # Suppressed — each of those at low load; a behaviour FAIL then green; a behaviour FAIL twice; timing
 # plus behaviour; a different timing assertion alone; a kill after a behaviour FAIL then green; a kill
-# then a timing red or a behaviour red alone; a kill twice. And the kept report is read the way a
-# landing reads it.
+# then a timing red or a behaviour red alone; a kill twice. The proxy-startup wait running out, silent,
+# then green alone is kept (either wording, after a timing red too); suppressed at low load, after a
+# crash's output or a behaviour FAIL, or with the rerun red any way. And the kept report is read the
+# way a landing reads it.
 C="$RUN_TMP/control"; mkdir -p "$C"
 printf 'FAIL [timing] 1: cancel answered in 4200ms (<= 3000)\n1 FAILED\n' >"$C/t1"
 printf 'FAIL [timing] 1: cancel answered in 3300ms (<= 3000)\n1 FAILED\n' >"$C/t2"
 printf 'FAIL [timing] 3: cancel answered in 3300ms (<= 3000)\n1 FAILED\n' >"$C/t3"
 printf 'FAIL 1: whole tree gone after cancel (survivors: 42)\n1 FAILED\n' >"$C/b"
 cat "$C/t1" "$C/b" >"$C/mix"; printf 'ALL PASSED\n' >"$C/ok"; : >"$C/none"
+# The proxy-startup wait: silent (either wording, with earlier PASS or [timing] lines), then the same wait
+# followed by what a crashing proxy prints, and the wait after a behaviour FAIL.
+printf 'workspace: /tmp/ws\nproxy did not start\n\n' >"$C/s"
+printf 'PASS spawn 1: sandboxed\nproxy did not write .proxy.json + .proxy-port\n' >"$C/sj"
+cat "$C/t1" "$C/s" >"$C/st"; cat "$C/b" "$C/s" >"$C/sb"
+printf 'proxy did not start\nfile:///x/proxy.js:12\nSyntaxError: Unexpected token\n' >"$C/scrash"
 ctl_bad=""
 ctl() { # <want 0|1> <label> <judge args after name…>
   local got=0; ctl_out=$(judge_rerun ctl "${@:3}") || got=1
@@ -237,6 +263,15 @@ ctl 1 behaviour-twice  "$C/b" 1 "$C/b" 1 120 6
 ctl 1 mixed            "$C/mix" 1 "$C/mix" 1 120 6
 ctl 1 other-timing     "$C/t1" 1 "$C/t3" 1 120 6
 ctl 1 timeout-twice    "$C/none" 124 "$C/none" 124 120 6
+ctl 0 startup-green    "$C/s" 1 "$C/ok" 0 120 6
+ctl 0 startup-json-green "$C/sj" 1 "$C/ok" 0 120 6
+ctl 0 startup-t-green  "$C/st" 1 "$C/ok" 0 120 6
+ctl 1 startup-green-low "$C/s" 1 "$C/ok" 0 3 6
+ctl 1 startup-crash-green "$C/scrash" 1 "$C/ok" 0 120 6
+ctl 1 startup-b-green  "$C/sb" 1 "$C/ok" 0 120 6
+ctl 1 startup-twice    "$C/s" 1 "$C/s" 1 120 6
+ctl 1 startup-timing   "$C/s" 1 "$C/t1" 1 120 6
+ctl 1 startup-behaviour "$C/s" 1 "$C/b" 1 120 6
 if [ -n "$ctl_bad" ]; then
   echo "check.sh: the rerun rule no longer tells load from a red — control cases wrong:$ctl_bad"
   echo "0 passed, 1 failed"; exit 1
