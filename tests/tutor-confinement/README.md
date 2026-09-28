@@ -29,7 +29,11 @@ the `--help` probe accepted an option named anywhere, even inside another option
   and no `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`. A CLI whose `--help` names `--restricted`
   only inside another option's text, and a CLI older than the floor: every tutor route answers 503,
   nothing is spawned, `chat.log` says why. `/commit` against a lesson source whose file name would
-  run a command in a shell: nothing runs. Removing any of these protections turns it red.
+  run a command in a shell: nothing runs. A CLI whose first two probes stall past the probe
+  timeout (as at load ~260, 2026-09-28) and then answer: the tutor answers 503 "still starting"
+  and spawns nothing until a re-probe answers, then serves confined turns; the proxy before this
+  read the timeout as every option missing and refused for its whole life. Removing any of these
+  protections turns it red.
 - `probe-real.sh` (real CLI, spends tokens): plants an operator manual that orders a handoff
   write outside the lesson, then asks a student question, asks the tutor to quote its instructions
   and to Read the workspace's and the box's manual by path, and asks for writes outside the lesson,

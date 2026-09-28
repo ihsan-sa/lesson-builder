@@ -2,7 +2,10 @@
 // record. Mode "confined": every spawn carries the confinement. Mode
 // "unconfined": a CLI lacking --restricted (named only inside another option's
 // prose) is never run for a tutor turn. Mode "old": nor is one below the
-// version floor. Mode "commit": /commit runs the lesson tests without a shell.
+// version floor. Mode "stall": a CLI whose first probes stall past the probe
+// timeout is unknown, not unconfined: the tutor answers 503 "still starting",
+// then serves confined once a re-probe answers. Mode "commit": /commit runs
+// the lesson tests without a shell.
 const fs = require("fs");
 const path = require("path");
 const BASE = process.env.PROXY_URL;
@@ -75,6 +78,33 @@ async function unconfined(why) {
   ok(/\[TUTOR_REFUSED\]/.test(log), "chat.log records each refusal");
 }
 
+// Brief: "a probe that timed out is not the same as a CLI that lacks the option ... keep failing
+// closed with a 503 that says the tutor is still starting, so it never runs unconfined".
+async function stall() {
+  const early = await post("/session/init", { isolated: true });
+  ok(early.status === 503 && /still starting/.test(early.text), `/session/init right after startup answers 503 "still starting" (${early.status} ${early.text.slice(0, 80)})`);
+  let starting = 0, served = 0, other = [];
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const r = await post("/chat", { messages: [{ role: "user", content: "hi" }] });
+    // Every stateless turn the proxy let through is one CLI spawn; none may run before a probe answered.
+    if (r.status === 200) served++;
+    else if (r.status === 503 && /still starting/.test(r.text)) starting++;
+    else other.push(`${r.status} ${r.text.slice(0, 80)}`);
+    if (served || other.length) break;
+    ok(spawns().length === 0, `no tutor CLI spawned while still starting (turn ${starting})`);
+    await new Promise((res) => setTimeout(res, 250));
+  }
+  ok(starting > 0, `stateless /chat answered 503 "still starting" while the probes stalled (${starting} times)`);
+  ok(served === 1 && other.length === 0, `once a re-probe answered, /chat serves (served ${served}, other ${JSON.stringify(other)})`);
+  const all = spawns();
+  ok(all.length === served, `exactly the served turns spawned the CLI (${all.length})`);
+  ok(all.every(({ args }) => args.includes("--restricted") && argOf(args, "--permission-prompts") === "none" && !!argOf(args, "--settings")), "every spawned turn ran confined");
+  const log = fs.readFileSync(path.join(L, "server", "chat.log"), "utf8");
+  ok(/\[TUTOR_PROBE_TIMEOUT\]/.test(log) && /\[TUTOR_CONFINED\]/.test(log), "chat.log records the probe timeout and the late confinement");
+  ok(!/\[TUTOR_UNCONFINED\]/.test(log), "a timed-out probe is never logged as a missing option");
+}
+
 // Brief: "/commit spawns node test_lesson.cjs ... shell: true there also lets a crafted src/*.jsx
 // name inject". The only lesson source here is named to run a command if a shell ever sees it.
 async function commit() {
@@ -88,7 +118,7 @@ async function commit() {
 }
 
 const WSR = fs.realpathSync(WS);
-const modes = { confined, commit, unconfined: () => unconfined(/--restricted/), old: () => unconfined(/version >= 2\.1\.283 \(has 2\.0\.9\)/) };
+const modes = { confined, commit, stall, unconfined: () => unconfined(/--restricted/), old: () => unconfined(/version >= 2\.1\.283 \(has 2\.0\.9\)/) };
 modes[MODE]().then(() => {
   console.log(failures ? `${failures} FAILED` : "all passed");
   process.exit(failures ? 1 : 0);

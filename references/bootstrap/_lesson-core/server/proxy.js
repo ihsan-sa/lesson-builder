@@ -15,7 +15,9 @@
 //
 // Confinement. Every CLI spawn runs --restricted with a lesson-only write
 // scope and no CLAUDE.md, hooks or user MCP; a CLI too old for that is never
-// run, and the tutor routes answer 503 (§ "Tutor confinement" below).
+// run, and the tutor routes answer 503 (§ "Tutor confinement" below). A
+// startup probe that timed out is re-asked, and until one answers the routes
+// answer 503 "still starting".
 //
 // Thread sessions. A side thread does NOT share the main conversation's CLI
 // session: POST /thread/open returns a handle, and that handle's first /chat
@@ -120,10 +122,21 @@ const CLAUDE_IS_SHIM = !!CLAUDE_BIN && /\.(cmd|bat|ps1)$/i.test(CLAUDE_BIN);
 // Its --version output is kept for the tutor's version floor below, so the
 // proxy spawns the CLI once for it rather than twice.
 let CLAUDE_VERSION_TEXT = null;
-const SHELL_FREE = (() => {
+// How long one startup probe of the CLI (--version, --help) may take. On a
+// loaded machine it can run out: that says nothing about the CLI, so a probe
+// that timed out is recorded as unknown and asked again later (§ "Tutor
+// confinement", reprobe), never read as "shell needed" or "option
+// missing". CLAUDE_PROBE_TIMEOUT_MS overrides it; the tests set it short.
+const PROBE_TIMEOUT_MS = Number(process.env.CLAUDE_PROBE_TIMEOUT_MS) || 20000;
+const probeTimedOut = (r) => !!r && !!r.error && r.error.code === "ETIMEDOUT";
+// True while the shell-free --version probe has only ever timed out.
+let SHELL_FREE_UNKNOWN = false;
+// Settled at startup, or by the first re-probe that answers when it timed out.
+let SHELL_FREE = (() => {
   if (!CLAUDE_BIN || CLAUDE_IS_SHIM) return false;
   try {
-    const r = spawnSync(CLAUDE_BIN, ["--version"], { encoding: "utf8", shell: false, timeout: 20000 });
+    const r = spawnSync(CLAUDE_BIN, ["--version"], { encoding: "utf8", shell: false, timeout: PROBE_TIMEOUT_MS });
+    if (probeTimedOut(r)) SHELL_FREE_UNKNOWN = true;
     const ok = !r.error && r.status === 0;
     if (ok) CLAUDE_VERSION_TEXT = r.stdout || "";
     return ok;
@@ -443,30 +456,116 @@ const TUTOR_CWD = path.join(PROJECT_DIR, "server", ".isolated");
 // A CLI without these options, or older than TUTOR_MIN_CLI, is not run at all:
 // TUTOR_UNCONFINED is logged at startup and every route that would spawn it
 // answers 503.
+// A --version or --help probe that timed out (a loaded machine) settles
+// nothing: TUTOR_PROBE_TIMEOUT is logged, the routes answer 503 "still
+// starting", and the probes run again (reprobe) until one answers; then
+// TUTOR_CONFINED, or TUTOR_UNCONFINED as above.
 const TUTOR_TOOLS = "Read,Edit,Write,Grep,Glob,Bash,WebSearch,WebFetch,Agent";
 // The oldest CLI this confinement was checked on. The read block
 // (permissions.blockReadsOutsideWorkingDirectories) is a settings key, which an
 // older CLI would ignore without a word, so an older CLI is refused instead.
 const TUTOR_MIN_CLI = "2.1.283";
 const CONFINEMENT_FLAGS = ["--restricted", "--tools", "--settings", "--permission-prompts", "--plugin-dir", "--add-dir"];
-const CONFINEMENT_MISSING = (() => {
-  const run = (flag) => {
-    try {
-      const r = spawnSync(CLAUDE_CMD, [flag], { encoding: "utf8", shell: !SHELL_FREE, timeout: 20000 });
-      return `${r.stdout || ""}\n${r.stderr || ""}`;
-    } catch (_) { return ""; }
-  };
-  const text = run("--help");
+// What the CLI lacks of the above ([] = confined). Null while it is unknown
+// because a probe timed out (a loaded machine, not a missing option) and no
+// re-probe has answered yet: the tutor is "still starting", every tutor route
+// answers 503 saying so, and confine() refuses, so no turn runs unconfined in
+// between. A probe that answered and showed an option missing is final.
+let CONFINEMENT_MISSING = null;
+const probeText = (r) => `${r.stdout || ""}\n${r.stderr || ""}`;
+function assessConfinement(help, versionText) {
   // An option counts only where it starts a line of --help ("  -p, --print"),
   // never inside another option's prose, and whole: "--settings" is not
   // "--setting-sources".
-  const missing = CONFINEMENT_FLAGS.filter((f) => !new RegExp(`^\\s*(?:-\\w,\\s*)?${f}(?=[\\s,=<]|$)`, "m").test(text));
-  const version = ((CLAUDE_VERSION_TEXT ?? run("--version")).match(/(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
+  const missing = CONFINEMENT_FLAGS.filter((f) => !new RegExp(`^\\s*(?:-\\w,\\s*)?${f}(?=[\\s,=<]|$)`, "m").test(help));
+  const version = (versionText.match(/(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
   const floor = TUTOR_MIN_CLI.split(".").map(Number);
   const cmp = version.length ? version.map((n, i) => n - floor[i]).find((d) => d !== 0) || 0 : -1;
   if (cmp < 0) missing.push(`version >= ${TUTOR_MIN_CLI} (has ${version.join(".") || "none"})`);
-  if (missing.length) log("TUTOR_UNCONFINED", { claude: CLAUDE_CMD, missing, action: "every tutor route answers 503" });
   return missing;
+}
+function settleConfinement(missing, late) {
+  CONFINEMENT_MISSING = missing;
+  if (missing.length) log("TUTOR_UNCONFINED", { claude: CLAUDE_CMD, missing, action: "every tutor route answers 503" });
+  else if (late) log("TUTOR_CONFINED", { claude: CLAUDE_CMD, shellFree: SHELL_FREE, action: "a re-probe answered; tutor routes serve" });
+}
+// Re-probing after a timeout: asynchronously, so the proxy keeps serving; one
+// probe at a time; on the next tutor request or on a timer, whichever comes
+// first once the backoff (1s, doubling to 60s) has passed.
+let probeRunning = false, probeDelayMs = 1000, probeNextAt = 0, probeTimer = null, HELP_TEXT = null;
+function probeAsync(cmd, args, shell) {
+  return new Promise((resolve) => {
+    let stdout = "", stderr = "", timedOut = false, proc;
+    try { proc = spawn(cmd, args, { shell, stdio: ["ignore", "pipe", "pipe"] }); } catch (error) { return resolve({ error, stdout, stderr }); }
+    const timer = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch (_) {} }, PROBE_TIMEOUT_MS);
+    proc.stdout.on("data", (d) => (stdout += d));
+    proc.stderr.on("data", (d) => (stderr += d));
+    proc.on("error", (error) => { clearTimeout(timer); resolve({ error, stdout, stderr }); });
+    proc.on("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr, error: timedOut ? Object.assign(new Error("probe timed out"), { code: "ETIMEDOUT" }) : undefined });
+    });
+  });
+}
+// The startup probes again, in their order. Returns the verdict, or null when one timed out.
+async function reprobeOnce() {
+  if (SHELL_FREE_UNKNOWN) {
+    const r = await probeAsync(CLAUDE_BIN, ["--version"], false);
+    if (probeTimedOut(r)) return null;
+    SHELL_FREE_UNKNOWN = false;
+    SHELL_FREE = !r.error && r.status === 0;
+    if (SHELL_FREE) CLAUDE_VERSION_TEXT = r.stdout || "";
+  }
+  if (HELP_TEXT === null) {
+    const r = await probeAsync(CLAUDE_CMD, ["--help"], !SHELL_FREE);
+    if (probeTimedOut(r)) return null;
+    HELP_TEXT = probeText(r);
+  }
+  let versionText = CLAUDE_VERSION_TEXT;
+  if (versionText === null) {
+    const r = await probeAsync(CLAUDE_CMD, ["--version"], !SHELL_FREE);
+    if (probeTimedOut(r)) return null;
+    versionText = probeText(r);
+  }
+  return assessConfinement(HELP_TEXT, versionText);
+}
+function deferConfinement(probe) {
+  probeNextAt = Date.now() + probeDelayMs;
+  log("TUTOR_PROBE_TIMEOUT", { claude: CLAUDE_CMD, probe, timeoutMs: PROBE_TIMEOUT_MS, retryInMs: probeDelayMs, action: "tutor routes answer 503 (still starting) until a re-probe answers" });
+  probeDelayMs = Math.min(probeDelayMs * 2, 60000);
+  clearTimeout(probeTimer);
+  probeTimer = setTimeout(reprobe, Math.max(0, probeNextAt - Date.now()));
+  probeTimer.unref();
+}
+async function reprobe() {
+  if (CONFINEMENT_MISSING !== null || probeRunning || Date.now() < probeNextAt) return;
+  probeRunning = true;
+  try {
+    const missing = await reprobeOnce();
+    if (missing) settleConfinement(missing, true);
+    else deferConfinement("re-probe");
+  } catch (err) {
+    deferConfinement(`re-probe (${err.message})`);
+  } finally {
+    probeRunning = false;
+  }
+}
+// Startup: synchronous, so a proxy on an idle machine serves from its first request.
+(() => {
+  if (SHELL_FREE_UNKNOWN) return deferConfinement("--version");
+  const run = (flag) => {
+    try { return spawnSync(CLAUDE_CMD, [flag], { encoding: "utf8", shell: !SHELL_FREE, timeout: PROBE_TIMEOUT_MS }); } catch (error) { return { error }; }
+  };
+  const help = run("--help");
+  if (probeTimedOut(help)) return deferConfinement("--help");
+  HELP_TEXT = probeText(help);
+  let versionText = CLAUDE_VERSION_TEXT;
+  if (versionText === null) {
+    const v = run("--version");
+    if (probeTimedOut(v)) return deferConfinement("--version");
+    versionText = probeText(v);
+  }
+  settleConfinement(assessConfinement(HELP_TEXT, versionText), false);
 })();
 const LESSON_ROOTS = [...new Set([LESSON_DIR, path.resolve(PROJECT_DIR)])];
 // What a tutor turn may write: the lesson source it augments on an approved
@@ -520,6 +619,7 @@ process.on("exit", () => { try { fs.rmSync(TUTOR_DIR, { recursive: true, force: 
 // Appends the confinement to a spawn's args and returns its env. Throws when
 // the CLI lacks an option, so no spawn path can run an unconfined tutor.
 function confine(args) {
+  if (CONFINEMENT_MISSING === null) throw new Error("the claude CLI has not answered its startup probe yet; the tutor is not run unconfined");
   if (CONFINEMENT_MISSING.length) throw new Error(`claude CLI lacks ${CONFINEMENT_MISSING.join(", ")}; the tutor is not run unconfined`);
   writeTutorSettings();
   args.push("--restricted", "--tools", TUTOR_TOOLS, "--settings", TUTOR_SETTINGS, "--permission-prompts", "none");
@@ -533,7 +633,13 @@ function confine(args) {
 
 // Fail closed at the door as well: refuse before a session or a turn is set up.
 app.use(["/session/init", "/session/transfer", "/thread/fold", "/chat"], (req, res, next) => {
-  if (!CONFINEMENT_MISSING.length || req.path === "/cancel") return next();
+  if (req.path === "/cancel" || (CONFINEMENT_MISSING && !CONFINEMENT_MISSING.length)) return next();
+  if (CONFINEMENT_MISSING === null) {
+    reprobe();
+    log("TUTOR_REFUSED", { url: req.originalUrl, starting: true });
+    return res.status(503).set("Retry-After", String(Math.max(1, Math.ceil((probeNextAt - Date.now()) / 1000))))
+      .json({ error: { message: "The tutor is still starting: the claude CLI has not answered its startup check yet, which this busy machine slowed down. Try again in a few seconds." } });
+  }
   log("TUTOR_REFUSED", { url: req.originalUrl, missing: CONFINEMENT_MISSING });
   res.status(503).json({ error: { message: `The tutor is off: this claude CLI lacks ${CONFINEMENT_MISSING.join(", ")}, which keep it confined to the lesson. Update Claude Code and restart the proxy.` } });
 });
@@ -1250,9 +1356,9 @@ function startServer(port, attempt) {
   const server = app.listen(port, "127.0.0.1", () => {
     BOUND_PORT = port;
     writeIdentity(port);
-    log("SERVER_START", { port, cwd: process.cwd(), lessonDir: LESSON_DIR, pid: process.pid, claude: CLAUDE_CMD, shellFree: SHELL_FREE, tools: ALLOWED_TOOLS });
+    log("SERVER_START", { port, cwd: process.cwd(), lessonDir: LESSON_DIR, pid: process.pid, claude: CLAUDE_CMD, shellFree: SHELL_FREE_UNKNOWN ? "unknown" : SHELL_FREE, tools: ALLOWED_TOOLS });
     console.log(`[proxy] Claude CLI proxy on http://localhost:${port}`);
-    if (!SHELL_FREE) {
+    if (!SHELL_FREE && !SHELL_FREE_UNKNOWN) {
       console.warn(`[proxy] NOTE: ${CLAUDE_BIN ? `\`${CLAUDE_BIN}\`` : "`claude`"} must be launched through a shell, and a shell mangles multi-line arguments. The system prompt is therefore sent as a [System Instructions] preamble on the first user turn instead of via --system-prompt. It arrives intact, just at lower priority. A native CLI binary (not a .cmd/.bat shim) restores full-fidelity system prompts.`);
     }
   });
