@@ -727,4 +727,27 @@ body.ctx-ctrl-held .chat-msg-rendered [data-chat-block]:hover { outline: 1px das
 .chat-help-key { flex: none; min-width: 132px; font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); }
 .chat-help-close { position: absolute; top: 12px; right: 14px; background: none; border: 1px solid var(--border); border-radius: 999px; color: var(--ink-3); font-family: inherit; font-size: 11.5px; cursor: pointer; padding: 3px 10px; }
 .chat-help-close:hover { color: var(--accent); border-color: var(--accent); }
+/* ── Restored history, queued sends, leases, asks, downloads ── */
+.chat-divider-restored { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-4); }
+.chat-divider-restored::before, .chat-divider-restored::after { content: ""; flex: 1; border-top: 1px dashed var(--border); }
+.chat-queue { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px; }
+.chat-queued { display: flex; align-items: baseline; gap: 8px; opacity: .75; border: 1px dashed var(--border); border-radius: 8px; padding: 4px 8px; font-size: 12.5px; }
+.chat-queued-failed { border-color: var(--danger); opacity: 1; }
+.chat-queued-badge { flex: none; font-family: var(--font-mono); font-size: 10px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; }
+.chat-queued-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.chat-queued-error { flex: none; font-size: 11px; color: var(--danger); }
+.chat-queued-x { flex: none; background: none; border: none; color: var(--ink-4); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+.chat-queued-x:hover { color: var(--danger); }
+.chat-taken { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 10px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--ink-3); }
+.chat-takeover { flex: none; background: var(--accent); color: var(--bg-main); border: none; border-radius: 6px; padding: 4px 10px; font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.chat-ask-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 10px; }
+.chat-ask-chip { font-size: 10.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--ink-3); }
+.chat-ask-delivered { color: var(--accent); border-color: var(--accent); }
+.chat-ask-answered { color: var(--bg-main); background: var(--accent); border-color: var(--accent); }
+.chat-pick { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.chat-pick-title { color: var(--ink-2); font-family: inherit; font-size: 11.5px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-pick-when { color: var(--ink-4); font-size: 10px; }
+.chat-download-chip { display: inline-flex; align-items: center; gap: 6px; margin: 4px 4px 4px 0; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-eq); color: var(--accent); font-size: 12px; text-decoration: none; }
+.chat-download-chip:hover { border-color: var(--accent); }
+.chat-download-ext { font-family: var(--font-mono); font-size: 10px; color: var(--ink-4); }
 `;

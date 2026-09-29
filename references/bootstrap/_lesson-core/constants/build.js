@@ -51,6 +51,12 @@ export const API = {
   sessionOpen: `${import.meta.env.BASE_URL}session/open`,
   sessionClose: `${import.meta.env.BASE_URL}session/close`,
   sessionTransfer: `${import.meta.env.BASE_URL}session/transfer`,
+  // The four below are newer than the tutors some lessons are served by, so
+  // every call to them is feature-detected (chat/tutorApi.js).
+  sessionPing: `${import.meta.env.BASE_URL}session/ping`,
+  sessionDelete: `${import.meta.env.BASE_URL}session/delete`,
+  sessionHistory: `${import.meta.env.BASE_URL}session/history`,
+  chatUnqueue: `${import.meta.env.BASE_URL}chat/unqueue`,
   threadOpen: `${import.meta.env.BASE_URL}thread/open`,
   threadFold: `${import.meta.env.BASE_URL}thread/fold`,
   upload: `${import.meta.env.BASE_URL}upload`,

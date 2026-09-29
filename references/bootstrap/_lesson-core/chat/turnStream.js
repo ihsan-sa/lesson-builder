@@ -44,6 +44,10 @@ export async function readTurn(res, on = {}) {
           } else if (eventType === "text") {
             turn.finalText += data.text;
             on.text?.(turn.finalText);
+          } else if (eventType === "ask") {
+            // A course-session ask moving on (pending, delivered, answered):
+            // a chip in the chat, never part of the reply's text.
+            on.ask?.(data);
           } else if (eventType === "done") {
             turn.finalText = data.text || turn.finalText;
             if (typeof data.cost === "number") turn.cost = data.cost;

@@ -1,0 +1,24 @@
+#!/usr/bin/env node
+// Fake `claude` for tests/proxy-persist — first on PATH when the proxy under
+// test starts. Answers the startup probes the way tests/cancellation's does,
+// inits a session, and answers a turn by echoing its input: the result is
+// "ECHO[<stdin>]", so the fixture can read exactly what the proxy sent. A
+// message containing SLOW streams one text chunk and holds its result back
+// for SLOW_MS (2s), which is the running turn the queue cases post behind.
+const args = process.argv.slice(2);
+if (args.includes("--version")) { console.log("2.1.283 (Claude Code)"); process.exit(0); }
+if (args.includes("--help")) { console.log("  --add-dir <directories...>\n  --restricted\n  --tools <tools...>\n  --settings <file-or-json>\n  --permission-prompts <target>\n  --plugin-dir <path>"); process.exit(0); }
+let stdin = "";
+process.stdin.on("data", (d) => (stdin += d));
+process.stdin.on("end", () => {
+  const fmt = args[args.indexOf("--output-format") + 1];
+  const r = args.indexOf("--resume");
+  const sid = r >= 0 ? args[r + 1] : require("crypto").randomUUID();
+  const usage = { input_tokens: 1, output_tokens: 1 };
+  const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+  if (fmt === "json") { emit({ type: "result", session_id: sid, result: "Session ready.", usage, total_cost_usd: 0 }); return; }
+  const reply = `ECHO[${stdin}]`;
+  emit({ type: "system", subtype: "init", session_id: sid });
+  emit({ type: "assistant", message: { content: [{ type: "text", text: reply }] } });
+  setTimeout(() => emit({ type: "result", session_id: sid, result: reply, usage, total_cost_usd: 0 }), /SLOW/.test(stdin) ? 2000 : 0);
+});

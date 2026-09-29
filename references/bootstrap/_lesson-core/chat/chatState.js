@@ -45,6 +45,10 @@ export function makeTab(title) {
     // undefined until one actually carries a cost -- shows nothing, never
     // "$0.00" (Chatbot's applyReply, the chat header).
     spend: undefined,
+    // Sends typed while a turn runs, and the course-session asks' chips
+    // (chatHistory.js).
+    queue: [],
+    asks: [],
   };
 }
 

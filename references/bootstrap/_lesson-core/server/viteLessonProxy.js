@@ -32,7 +32,7 @@ import path from "path";
 import http from "http";
 
 // Every Express route the chat client calls, as a prefix: "/chat" also carries
-// /chat/cancel, "/session" the four /session/* calls, "/thread" the two the
+// /chat/cancel and /chat/unqueue, "/session" the seven /session/* calls, "/thread" the two the
 // thread panel makes (/thread/open, /thread/fold). A route missing here is
 // served Vite's index.html instead, which the client parses as a failed API
 // call — how opening or folding a thread failed in dev while every other

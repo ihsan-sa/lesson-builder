@@ -7,7 +7,7 @@
 # attempt-first policy and its prompt ceiling, a lesson's own gate passing over that ceiling, a
 # tutor chat staying on the lesson it was born on, the tutor staying confined to its lesson, the
 # tutor's prompt naming the served checkout's real path as its workspace root, a
-# tutor reply surviving a lost stream, chat.log rotating without deleting a generation nobody
+# tutor reply surviving a lost stream, a chat's history, queue and tab lease on the client, chat.log rotating without deleting a generation nobody
 # marked done, or a reply's action tags and markup being stripped before it renders cannot land.
 # `cc-land` runs this as a gate on every PR (it treats an executable tests/check.sh as one), and a
 # person runs it the same way.
@@ -19,16 +19,16 @@
 # seconds one fixture may take before it is killed and counted failed (default 600).
 #
 # Environment: node and git, from a clean checkout. Nothing here calls a model or opens a browser.
-# Ten fixtures do need packages: `ast-inventory`, `attestation`, `lesson-prompt-ceiling` and
+# Eleven fixtures do need packages: `ast-inventory`, `attestation`, `lesson-prompt-ceiling` and
 # `shell-theme` install `@babel/parser` (the last reads lesson bodies as syntax trees, not as text),
-# `cancellation`, `thread-actors`, `tutor-confinement` and `workspace-root` copy `_lesson-core` and install its
+# `cancellation`, `thread-actors`, `tutor-confinement`, `workspace-root` and `proxy-persist` copy `_lesson-core` and install its
 # express/cors, and
 # `hosted-build` and `shell-reach` each scaffold a lesson and install the template's own devDeps
 # (vite, react, the babel pair; Playwright's browser download is skipped) because they assert on
 # real `vite build` output.
-# All ten use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
+# All eleven use `npm install --prefer-offline`, so a WARM npm cache serves them without asking the
 # registry — that is the one dependency this gate has beyond node and git, and on a cold cache those
-# ten fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
+# eleven fetch and the rest still pass. `npm ci --prefer-offline` once on a new box is what warms it.
 # Every fixture builds its own temp state and cleans it up; the checkout is not written to.
 # The run points TMPDIR at one directory of its own, so after the last fixture finishes any
 # process still sitting in a directory under it is a proxy or dev server that fixture started
@@ -85,6 +85,7 @@ FIXTURES=(
   "lesson-prompt-ceiling|node tests/lesson-prompt-ceiling/check.cjs"
   "lesson-session-scope|node tests/lesson-session-scope/check.cjs"
   "chat-reattach|node tests/chat-reattach/check.cjs"
+  "chat-persist|node tests/chat-persist/check.cjs"
   "chat-log-rotation|node tests/chat-log-rotation/check.cjs"
   "tutor-defaults|node tests/tutor-defaults/check.cjs"
   "thread-spend|node tests/thread-spend/check.cjs"
@@ -96,6 +97,7 @@ FIXTURES=(
   "thread-actors|tests/thread-actors/run.sh"
   "tutor-confinement|tests/tutor-confinement/run.sh"
   "workspace-root|tests/workspace-root/run.sh"
+  "proxy-persist|tests/proxy-persist/run.sh"
   "core-refresh|tests/core-refresh/run.sh"
 )
 
@@ -116,7 +118,7 @@ EXCLUDED=(
   "teaching evals|graded by a model, per evals/teaching/rubric.md|see evals/teaching/README.md"
 )
 
-# The four fixtures that start real proxies run as one chain rather than side by side. They are the
+# The five fixtures that start real proxies run as one chain rather than side by side. They are the
 # only ones that boot servers, bind ports and kill process trees, and two of them are the ones whose
 # assertions are about how long a process lives — so they get the box to themselves in turn. This
 # is insurance, not the fix for anything: `thread-actors` really was dying here with its proxy gone
@@ -126,7 +128,7 @@ EXCLUDED=(
 # already ended, and a run whose proxy has gone now says so (exit 3) instead of blaming the
 # assertion that came next — `tests/thread-actors/README.md` has both. The chain costs
 # the gate nothing: it is shorter than `attestation`, which is the critical path on its own.
-SERIAL=(cancellation thread-actors tutor-confinement workspace-root)
+SERIAL=(cancellation thread-actors tutor-confinement workspace-root proxy-persist)
 
 # A free port from the kernel rather than a fixed one: cc-land gates several PRs at once
 # (CC_LAND_PREPARE), and two gates sharing 3901 would each kill the other's proxy.
