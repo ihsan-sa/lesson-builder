@@ -51,6 +51,15 @@ export function renderChatHtml(text, { katex } = {}) {
         : `<div class="chat-media-block"><img src="${src}" alt="${alt}" style="max-width:100%"/></div>`);
       return `\x00ME${mediaBlocks.length - 1}\x00`;
     });
+    // A file the tutor sent for download: a markdown link to chat/file/<name>
+    // with one of the types the hosted tutor serves as an attachment. It
+    // becomes a chip; any other link is left as the text it was. The name
+    // pattern is chat.py's SAFE_FILE, so nothing here can point elsewhere.
+    s = s.replace(/\[([^\]\n]{1,120})\]\(((?:\.?\/)?(?:[A-Za-z0-9._-]+\/)*chat\/file\/[A-Za-z0-9][A-Za-z0-9._-]{0,95}\.(pdf|csv|txt|md|zip))\)/gi, (_, label, src, ext) => {
+      const esc = (v) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      mediaBlocks.push(`<a class="chat-download-chip" href="${esc(src)}" target="_blank" rel="noopener">⤓ ${esc(label)} <span class="chat-download-ext">${ext.toUpperCase()}</span></a>`);
+      return `\x00ME${mediaBlocks.length - 1}\x00`;
+    });
     const inlineCode = [];
     s = s.replace(/`([^`]+)`/g, (_, code) => {
       inlineCode.push(`<code class="chat-code">${code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>`);

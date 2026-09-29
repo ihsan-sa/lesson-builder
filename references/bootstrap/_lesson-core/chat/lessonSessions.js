@@ -15,7 +15,8 @@
 // session was born on, lists only the requesting lesson's sessions on
 // /sessions and refuses session/open for another lesson's with a 404. Its
 // /sessions entries do NOT carry that base (ep_sessions: id, chatNum, model,
-// effort, isolated, created, messageCount, open, turn, lastTurn, resumable),
+// effort, isolated, created, messageCount, open, turn, lastTurn, resumable,
+// and on a newer tutor title, lastAt, queued, lease -- tutorApi.js),
 // so a listed session with no `base` is this lesson's -- the server already
 // filtered it. Only a session whose `base` is set and differs is another
 // lesson's (foreignSession): never offered in the picker, never restored.

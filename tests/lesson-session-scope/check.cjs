@@ -214,7 +214,8 @@ function hostedEntry(id, chatNum) {
       !src.includes('"chatMsgs_"') && !src.includes('"chatReinf_"'));
     check('the keys come from lessonSessions.js', src.includes('from "./lessonSessions.js"'));
     check('scoped by this bundle\'s own lesson', src.includes('const LESSON_BASE = import.meta.env.BASE_URL;'));
-    check('the auto-restore resumes silently', src.includes('resumeSessionIntoTab(tabId, sid, num, true)'));
+    // `silent` is the fourth argument; a fifth (the history check's session entry) may follow.
+    check('the auto-restore resumes silently', /resumeSessionIntoTab\(tabId, sid, num, true[,)]/.test(src));
     check('a refusal starts a fresh session instead of the picker',
       /if \(refused\) \{ await createSessionForTab\(firstTab\.id\); return; \}/.test(src));
     check('the picker labels entries with their lesson', src.includes('sessionLabel(s, LESSON_BASE)'));

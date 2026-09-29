@@ -5,8 +5,9 @@
 // via a shim from `<lesson>/server/proxy.js` and launched with
 // `cd <lesson> && node server/proxy.js`.
 //
-// Routes: /whoami, /session/init, /session/open, /session/transfer,
-// /session/close, /upload, /chat, /chat/cancel, /sessions, /thread/open,
+// Routes: /whoami, /session/init, /session/open, /session/ping,
+// /session/transfer, /session/close, /session/delete, /session/history,
+// /upload, /chat, /chat/cancel, /chat/unqueue, /sessions, /thread/open,
 // /thread/fold, /commit.
 //
 // Log. One line per event in server/chat.log, rotated by chatLog.js. Every
@@ -70,6 +71,30 @@
 // the session is open in a tab, has a turn in flight, or its latest turn was
 // cancelled. A completed turn (or a fresh session) makes it a candidate; a
 // cancelled turn never does — the next completed turn is what re-promotes it.
+// Nor is a chat another tab holds a live lease on (below).
+//
+// Chats that persist, queue and know their tab. The contract is written at
+// the top of chat/tutorApi.js; this is the dev proxy's half of it, all in
+// memory, so a restart forgets it as it forgets the sessions themselves.
+//   Leases. A client that sends a tabId holds a chat by lease {tabId, seen}:
+//   /session/open takes it (409 {leased:true} while another tab's lease is
+//   live, i.e. seen within LEASE_LIVE_MS, unless takeover is set — takeover
+//   always wins), /session/ping refreshes it (409 {takenOver:true} once
+//   another tab's lease is on it), /session/close {tabId} releases it and
+//   never discards. /session/delete is the one discard. A client that sends
+//   no tabId is a lesson built before this and keeps the `open` flag rules
+//   it was written against, keepContext:false discard included.
+//   Transcript. Every settled turn adds the user message as sent and the
+//   tutor's final text to the session; /session/history pages it backwards.
+//   Queue. A main chat's /chat that arrives while a turn is in flight is not
+//   run after it one by one (that was enqueueForSession, which threads still
+//   use): it waits, up to QUEUE_CAP, answering 202 {queued, position,
+//   queueId}, and everything waiting runs as ONE merged turn the moment the
+//   running one ends. That merged turn is started before the ending turn
+//   writes its last event, so a client that reads `done` and then asks
+//   POST /chat {attach:true} is handed the merged turn and not a replay of
+//   the one it just read. Attach replays the session's latest turn's events
+//   and follows it live; every turn keeps its events for that.
 import express from "express";
 import cors from "cors";
 import fs from "fs";
@@ -313,6 +338,69 @@ function enqueueForSession(sessionId, fn) {
   _sessionQueues[sessionId] = next;
   next.finally(() => { if (_sessionQueues[sessionId] === next) delete _sessionQueues[sessionId]; });
   return next;
+}
+
+// ── Leases, transcript, queue (§ "Chats that persist" at the top) ──
+// The client pings every 30 s, so three missed pings is a tab that is gone.
+const LEASE_LIVE_MS = 90000;
+const QUEUE_CAP = 5;
+const HISTORY_LIMIT = 50;
+const SAFE_TAB_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const safeTab = (t) => (typeof t === "string" && SAFE_TAB_RE.test(t) ? t : null);
+const liveLease = (s) => (s.lease && Date.now() - s.lease.seen < LEASE_LIVE_MS ? s.lease : null);
+// The fields every session record carries for the above. Spread into each
+// record where it is made, so no route meets a session without them.
+const persistFields = (tabId) => ({
+  lease: tabId ? { tabId, seen: Date.now() } : null,
+  transcript: [], title: null, lastAt: Date.now(), queue: [], stream: null,
+});
+
+// A chat's title is its first question. The client sends the lesson context
+// ahead of it ("…\n\nQuestion: <text>"), so the text after the last
+// "Question: " is the question; without that marker, leading [bracketed]
+// context lines are dropped and the rest is it.
+function titleOf(message) {
+  let t = String(message || "");
+  const q = t.lastIndexOf("Question: ");
+  if (q >= 0) t = t.slice(q + "Question: ".length);
+  else {
+    const lines = t.split("\n");
+    while (lines.length && (/^\s*\[/.test(lines[0]) || !lines[0].trim())) lines.shift();
+    t = lines.join("\n");
+  }
+  t = t.replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  return t.length > 60 ? t.slice(0, 59).trimEnd() + "…" : t;
+}
+
+// One turn's SSE output, kept on the session as its latest turn so POST /chat
+// {attach:true} can replay it and follow the rest live. The response that
+// asked for the turn is just its first client. Every write to a client still
+// goes through here and is dropped once the turn or that response has ended:
+// a write to an ended response kills the process (§ "Turn ownership").
+const SSE_HEADERS = { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" };
+const writeSse = (res, event, data) => { try { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) {} };
+function createTurnStream(msgNum) {
+  const s = { msgNum, events: [], ended: false, clients: new Set() };
+  s.write = (event, data) => {
+    if (s.ended) return;
+    s.events.push({ event, data });
+    for (const r of s.clients) writeSse(r, event, data);
+  };
+  s.end = () => {
+    if (s.ended) return;
+    s.ended = true;
+    for (const r of s.clients) { try { r.end(); } catch (_) {} }
+    s.clients.clear();
+  };
+  s.attach = (res) => {
+    res.writeHead(200, SSE_HEADERS);
+    for (const e of s.events) writeSse(res, e.event, e.data);
+    if (s.ended) return void res.end();
+    s.clients.add(res);
+    res.on("close", () => s.clients.delete(res));
+  };
+  return s;
 }
 
 // Process-tree ownership for a turn. The CLI is spawned as the leader of a
@@ -633,7 +721,7 @@ function confine(args) {
 
 // Fail closed at the door as well: refuse before a session or a turn is set up.
 app.use(["/session/init", "/session/transfer", "/thread/fold", "/chat"], (req, res, next) => {
-  if (req.path === "/cancel" || (CONFINEMENT_MISSING && !CONFINEMENT_MISSING.length)) return next();
+  if (req.path === "/cancel" || req.path === "/unqueue" || (CONFINEMENT_MISSING && !CONFINEMENT_MISSING.length)) return next();
   if (CONFINEMENT_MISSING === null) {
     reprobe();
     log("TUTOR_REFUSED", { url: req.originalUrl, starting: true });
@@ -735,6 +823,8 @@ function withSystemPrompt(args, system, basePrompt) {
 
 app.post("/session/init", async (req, res) => {
   const { model, effort, isolated, system } = req.body;
+  // A client that sends its tabId holds the new chat by lease from the start.
+  const tabId = safeTab(req.body?.tabId);
   const cliModel = modelAlias(safeModel(model, "sonnet"));
   const cliEffort = safeEffort(effort, "high");
   const chatNum = nextChatNum++;
@@ -766,7 +856,7 @@ app.post("/session/init", async (req, res) => {
       kind: "main", cliSessionId: sessionId,
       chatNum, model: cliModel, effort: cliEffort, isolated: !!isolated,
       created: Date.now(), lastSeen: Date.now(), messageCount: 0, open: true,
-      turn: null, lastTurn: null,
+      turn: null, lastTurn: null, ...persistFields(tabId),
     };
 
     log("INIT_OK", { chatNum, sessionId: sessionId.slice(0, 8), ...tok, totalCost: totalTokens.cost.toFixed(4) });
@@ -785,11 +875,58 @@ app.post("/session/open", (req, res) => {
   // A thread handle is not a chat to walk into, so it cannot be opened as one
   // — same rule /sessions applies by never listing it.
   if (!session || isThreadSession(session)) return res.status(404).json({ error: { message: "Session not found" } });
-  if (session.open) return res.status(409).json({ error: { message: `Chat #${session.chatNum} is already open in another tab` } });
+  const tabId = safeTab(req.body?.tabId);
+  if (tabId) {
+    // The lease path (§ "Chats that persist"). The `open` flag is not asked:
+    // it cannot say which tab set it, and a lease can.
+    const held = liveLease(session);
+    if (held && held.tabId !== tabId && !req.body?.takeover) {
+      log("SESSION_OPEN_LEASED", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8), tab: tabId, holder: held.tabId });
+      return res.status(409).json({ error: { message: `Chat #${session.chatNum} is open in another tab` }, leased: true });
+    }
+    if (held && held.tabId !== tabId) log("SESSION_TAKEOVER", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8), tab: tabId, from: held.tabId });
+    session.lease = { tabId, seen: Date.now() };
+  } else if (session.open) {
+    return res.status(409).json({ error: { message: `Chat #${session.chatNum} is already open in another tab` } });
+  }
   session.open = true;
   session.lastSeen = Date.now();
-  log("SESSION_OPEN", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8), model: session.model, effort: session.effort });
-  res.json({ ok: true, chatNum: session.chatNum, isolated: !!session.isolated, model: session.model, effort: session.effort });
+  log("SESSION_OPEN", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8), model: session.model, effort: session.effort, ...(tabId ? { tab: tabId } : {}) });
+  res.json({ ok: true, chatNum: session.chatNum, isolated: !!session.isolated, model: session.model, effort: session.effort, ...(tabId ? { lease: session.lease } : {}) });
+});
+
+// POST /session/ping {sessionId, tabId} — the holder's heartbeat. Takes a
+// lease nobody holds (a tab that inited before it pinged, or one whose own
+// lease lapsed while its machine slept), refuses once another tab's is on it.
+// This proxy has no course seat, so `asks` is always empty.
+app.post("/session/ping", (req, res) => {
+  const sessionId = safeSession(req.body?.sessionId);
+  const session = sessionId && sessions[sessionId];
+  if (!session || isThreadSession(session)) return res.status(404).json({ error: { message: "Session not found" } });
+  const tabId = safeTab(req.body?.tabId);
+  if (!tabId) return res.status(400).json({ error: { message: "tabId required" } });
+  if (session.lease && session.lease.tabId !== tabId) {
+    return res.status(409).json({ error: { message: `Chat #${session.chatNum} was taken over by another tab` }, takenOver: true });
+  }
+  session.lease = { tabId, seen: Date.now() };
+  session.open = true;
+  session.lastSeen = Date.now();
+  res.json({ held: true, asks: [] });
+});
+
+// POST /session/history {sessionId, before?, limit?} — the transcript, oldest
+// first, as a page ending just before index `before` (default: the end).
+// The answer's `before` is where the next page back ends; `more` says there is one.
+app.post("/session/history", (req, res) => {
+  const sessionId = safeSession(req.body?.sessionId);
+  const session = sessionId && sessions[sessionId];
+  if (!session) return res.status(404).json({ error: { message: "Session not found" } });
+  const all = session.transcript || [];
+  const b = Number(req.body?.before), l = Number(req.body?.limit);
+  const end = Number.isInteger(b) && b >= 0 ? Math.min(b, all.length) : all.length;
+  const limit = Number.isInteger(l) && l > 0 ? Math.min(l, 500) : HISTORY_LIMIT;
+  const start = Math.max(0, end - limit);
+  res.json({ turns: all.slice(start, end), more: start > 0, before: start });
 });
 
 app.post("/session/transfer", async (req, res) => {
@@ -842,7 +979,9 @@ app.post("/session/transfer", async (req, res) => {
     // one on their next turn.
     delete sessions[sessionId];
     closeThreadsOf(sessionId, "session-transfer");
-    sessions[newSessionId] = { kind: "main", cliSessionId: newSessionId, chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true, turn: null, lastTurn: null };
+    sessions[newSessionId] = { kind: "main", cliSessionId: newSessionId, chatNum, model: cliModel, effort: cliEffort, isolated: newIsolated, created: Date.now(), lastSeen: Date.now(), messageCount: oldSession.messageCount, open: true, turn: null, lastTurn: null,
+      // The same chat to the student: its transcript, title and holder carry over.
+      ...persistFields(null), lease: oldSession.lease, transcript: oldSession.transcript, title: oldSession.title };
     log("TRANSFER_OK", { chatNum, newSessionId: newSessionId.slice(0, 8), isolated: newIsolated, ...tok, totalCost: totalTokens.cost.toFixed(4) });
     res.json({ sessionId: newSessionId, chatNum, isolated: newIsolated, content: [{ type: "text", text: parsed.result || "Session transferred." }] });
   } catch (err) {
@@ -851,30 +990,57 @@ app.post("/session/transfer", async (req, res) => {
   }
 });
 
+// Discard a session outright: /session/delete, and /session/close without
+// keepContext from a client that sends no tabId.
+function discardSession(sessionId, session) {
+  const chatNum = session.chatNum;
+  // What waits in its queue goes with it, before the kill below settles the
+  // running turn: that settle must find nothing to merge.
+  session.queue = [];
+  // Discarding the session discards its running turn too: the client's
+  // KILL sends this right after /chat/cancel, and if this landed first the
+  // cancel would 404 while the CLI ran on. Not awaited — the reply is not
+  // what the tree's fate depends on.
+  if (session.turn && !session.turn.cancelled) {
+    const turn = session.turn;
+    turn.cancelled = true;
+    log("SESSION_DELETE_KILL", { chatNum, msg: turn.msgNum, ...threadTag(session), pid: turn.pid });
+    turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum, msg: turn.msgNum, ...threadTag(session), survivors: left }); return left; });
+  }
+  delete sessions[sessionId];
+  closeThreadsOf(sessionId, "session-delete");
+  log("SESSION_DELETE", { chatNum, sessionId: sessionId.slice(0, 8) });
+}
+
 app.post("/session/close", (req, res) => {
   const { keepContext } = req.body || {};
   const sessionId = safeSession(req.body?.sessionId);
   const session = sessionId && sessions[sessionId];
   if (!session) return res.json({ ok: true });
-  if (keepContext) {
+  const tabId = safeTab(req.body?.tabId);
+  if (tabId) {
+    // A lease client: close only ever releases, and only this tab's own
+    // lease. A tab that was taken over closing must not free the chat under
+    // the tab that has it now. Discarding is /session/delete's alone.
+    if (!session.lease || session.lease.tabId === tabId) {
+      session.lease = null;
+      session.open = false;
+      log("SESSION_RELEASE", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8), tab: tabId });
+    }
+  } else if (keepContext) {
     session.open = false;
     log("SESSION_RELEASE", { chatNum: session.chatNum, sessionId: sessionId.slice(0, 8) });
   } else {
-    const chatNum = session.chatNum;
-    // Discarding the session discards its running turn too: the client's
-    // KILL sends this right after /chat/cancel, and if this landed first the
-    // cancel would 404 while the CLI ran on. Not awaited — the reply is not
-    // what the tree's fate depends on.
-    if (session.turn && !session.turn.cancelled) {
-      const turn = session.turn;
-      turn.cancelled = true;
-      log("SESSION_DELETE_KILL", { chatNum, msg: turn.msgNum, ...threadTag(session), pid: turn.pid });
-      turn.killed = killTree(turn.pid).then((left) => { log("CANCEL_DONE", { chatNum, msg: turn.msgNum, ...threadTag(session), survivors: left }); return left; });
-    }
-    delete sessions[sessionId];
-    closeThreadsOf(sessionId, "session-delete");
-    log("SESSION_DELETE", { chatNum, sessionId: sessionId.slice(0, 8) });
+    discardSession(sessionId, session);
   }
+  res.json({ ok: true });
+});
+
+// POST /session/delete {sessionId} — the one discard for a lease client.
+app.post("/session/delete", (req, res) => {
+  const sessionId = safeSession(req.body?.sessionId);
+  const session = sessionId && sessions[sessionId];
+  if (session) discardSession(sessionId, session);
   res.json({ ok: true });
 });
 
@@ -904,7 +1070,7 @@ app.post("/thread/open", (req, res) => {
     created: Date.now(), lastSeen: Date.now(), messageCount: 0,
     // Never listed, never swept: `open` is what the stale-release sweep and
     // the resume rule read, and a thread is neither reclaimed nor resumed.
-    open: false, turn: null, lastTurn: null,
+    open: false, turn: null, lastTurn: null, ...persistFields(null),
   };
   parent.lastSeen = Date.now();
   log("THREAD_OPEN", { chatNum: parent.chatNum, threadId, handle: handle.slice(0, 8), parent: parentId.slice(0, 8) });
@@ -966,6 +1132,201 @@ app.post("/upload", (req, res) => {
   res.json({ paths });
 });
 
+// One /chat turn, from spawn to settle. `res` is the response that asked for
+// it, or null for a merged turn, which nobody asked for directly (its askers
+// attach). `onSettled` releases a thread's turn queue.
+function runTurn(safeId, session, { message, cliModel, cliEffort, msgNum }, res, onSettled) {
+  // A thread's FIRST turn forks: it resumes the MAIN session and asks the
+  // CLI for a new session id, so the main session's history is where this
+  // thread starts and nothing said from here on is written back to it.
+  // Later turns resume the fork. Decided here, inside the queue, not at
+  // request time: two thread turns sent back to back must not both see
+  // "no fork yet" and fork the parent twice.
+  const forkFrom = isThreadSession(session) && !session.cliSessionId
+    ? (sessions[session.parentId] || {}).cliSessionId || null
+    : null;
+  if (isThreadSession(session) && !session.cliSessionId && !forkFrom) {
+    // The conversation this thread hangs off is gone (killed or
+    // transferred): there is nothing to fork, and answering from a blank
+    // session would be a different tutor pretending to be this one.
+    log("CHAT_409_THREAD", { chatNum: session.chatNum, msg: msgNum, threadId: session.threadId });
+    session.lastTurn = { msg: msgNum, outcome: "error", at: Date.now() };
+    if (res) res.status(409).json({ error: { message: "The conversation this thread hangs off is gone. Open the thread again." } });
+    return onSettled && onSettled();
+  }
+  const args = [
+    "--resume", forkFrom || session.cliSessionId || safeId,
+    ...(forkFrom ? ["--fork-session"] : []),
+    "-p", "--print", "--output-format", "stream-json", "--verbose",
+    "--model", cliModel, "--effort", cliEffort, "--allowedTools", ALLOWED_TOOLS,
+  ];
+
+  // This turn is now the session's latest: the one POST /chat {attach:true} replays and follows.
+  const out = createTurnStream(msgNum);
+  session.stream = out;
+  if (res) out.attach(res);
+  const startedAt = Date.now();
+  session.lastAt = startedAt;
+  if (!isThreadSession(session) && !session.title) session.title = titleOf(message);
+  // What the tutor said, for the transcript: the result's text, or what
+  // streamed when there was no result (a cancel, an error).
+  let assistantText = "", resultText = null;
+
+  let resultSent = false;
+  // One settle per turn. Records the outcome the resume rule reads
+  // ("a cancelled turn never promotes its session to resume-candidate —
+  // promotion happens only on completion") and releases the turn slot.
+  let turn = null;
+  let settled = false;
+  let streamedChars = 0;
+  const settle = (outcome) => {
+    if (settled) return;
+    settled = true;
+    // A cancel accepted before the CLI exited wins over its exit code: a
+    // CLI that handles SIGTERM by exiting 0, or that printed its result as
+    // the kill landed, is still a turn the student stopped.
+    if (turn && turn.cancelled) outcome = "cancelled";
+    if (session.turn === turn) session.turn = null;
+    session.lastTurn = { msg: msgNum, outcome, at: Date.now() };
+    session.lastAt = Date.now();
+    session.transcript.push({ role: "user", text: String(message || ""), at: startedAt });
+    const said = resultText !== null ? resultText : assistantText;
+    if (said) session.transcript.push({ role: "assistant", text: said, at: Date.now() });
+    if (onSettled) onSettled();
+  };
+  // Called before each way this turn ends writes its last event: whatever
+  // waited for it starts now, as one turn, so it is already the session's
+  // latest when a client reads that last event and attaches.
+  const handOff = () => {
+    if (isThreadSession(session) || sessions[safeId] !== session || !session.queue.length) return;
+    try { startMerged(safeId, session); } catch (err) { log("CHAT_MERGE_ERROR", { chatNum: session.chatNum, error: err.message }); }
+  };
+  const sse = out.write;
+  // The CLI is gone after /chat/cancel (or a session delete) — killed, or
+  // exited on its own as the kill landed. Whatever its exit code, the log
+  // says cancelled, not error, and the stream ends with `cancelled`.
+  const cancelledExit = () => {
+    log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), streamed: streamedChars });
+    handOff();
+    sse("cancelled", { msg: msgNum });
+    out.end();
+    settle("cancelled");
+  };
+  // The fork did not happen: this turn is running IN the main conversation,
+  // so every character it writes from here lands in the history a thread
+  // must never touch. Kill it and fail the turn — a turn allowed to finish
+  // here IS the leak, and the student would be shown a normal-looking reply
+  // for it. The prompt is already gone (the CLI reads stdin before it says
+  // which session it is): the reply, and every later turn, is what this
+  // stops.
+  let forkFailed = false;
+  const failForkMissing = () => {
+    if (settled) return;
+    forkFailed = true;
+    sse("error", { message: "This thread could not get a session of its own. The turn was stopped before it could write into the main conversation." });
+    out.end();
+    // settle BEFORE the kill so the outcome recorded is this failure, not
+    // the cancellation that ends the process.
+    settle("error");
+    const pid = turn ? turn.pid : proc && proc.pid;
+    if (pid) killTree(pid).then((left) => log("THREAD_FORK_KILLED", { chatNum: session.chatNum, threadId: session.threadId, msg: msgNum, survivors: left }));
+  };
+
+  const proc = runClaudeStreaming(args, message,
+    (parsed) => {
+      try {
+        // The forked id, taken from the first event that carries one. It
+        // must differ from the session we forked FROM: an id equal to the
+        // parent's means the CLI did not fork, and recording it would make
+        // every later turn of this thread write into the main conversation —
+        // exactly the leak this route exists to prevent. Left unset, so the
+        // next turn forks again rather than resuming the main session.
+        if (forkFrom && !session.cliSessionId && typeof parsed.session_id === "string") {
+          if (parsed.session_id !== forkFrom) {
+            session.cliSessionId = parsed.session_id;
+            log("THREAD_FORK", { chatNum: session.chatNum, threadId: session.threadId, from: forkFrom.slice(0, 8), to: parsed.session_id.slice(0, 8) });
+          } else {
+            log("THREAD_FORK_MISSING", { chatNum: session.chatNum, threadId: session.threadId, sessionId: forkFrom.slice(0, 8) });
+            return failForkMissing();
+          }
+        }
+        // Through `sse`, never a raw res.write. failForkMissing and
+        // cancelledExit end the response while the CLI is still talking, and
+        // its next stdout chunk arrives here afterwards — where a raw write
+        // ends the whole process, not just this turn. Why, in § "Turn
+        // ownership" above. The catch below does not help: the error comes a
+        // tick later, on the response.
+        if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
+          for (const block of parsed.message.content) {
+            if (block.type === "tool_use") {
+              sse("status", { type: "tool", name: block.name, description: block.input?.description || block.input?.command || "" });
+            } else if (block.type === "text") {
+              sse("text", { text: block.text });
+              assistantText += block.text;
+            } else if (block.type === "thinking") {
+              sse("status", { type: "thinking" });
+            }
+          }
+        } else if (parsed.type === "result") {
+          const tok = extractTokens(parsed);
+          accumulateTokens(tok);
+          log("CHAT_OK", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), ...tok, totalCost: totalTokens.cost.toFixed(4), response: parsed.result || "" });
+          resultSent = true;
+          resultText = parsed.result || "";
+          // The result raced the kill: tokens are accounted (CHAT_OK), but
+          // the student stopped this turn, so it ends as stopped.
+          if (turn && turn.cancelled) return cancelledExit();
+          // The tokens above are accounted whatever happened to the response
+          // — a killed turn still spent them. Only the writing is skipped.
+          handOff();
+          sse("done", { text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd });
+          out.end();   // a second end() is a no-op; only write-after-end is fatal
+          settle("completed");
+        }
+      } catch (_) {}
+    },
+    () => {
+      if (forkFailed) return;   // already answered and settled as an error
+      if (turn && turn.cancelled) return cancelledExit();
+      if (!resultSent) { handOff(); sse("done", { text: "" }); out.end(); }
+      settle("completed");
+    },
+    (err) => {
+      if (forkFailed) return;
+      if (turn && turn.cancelled) return cancelledExit();
+      log("CHAT_ERROR", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), error: err.message });
+      handOff();
+      sse("error", { message: err.message });
+      out.end();
+      settle("error");
+    }
+  );
+  proc.stdout.on("data", (d) => { streamedChars += d.length; });
+  turn = { msgNum, pid: proc.pid, proc, startedAt: Date.now(), cancelled: false, killed: null };
+  if (!settled) session.turn = turn;   // a turn that already settled (fork-missing) is not in flight
+
+  if (res) res.on("close", () => {
+    log("CHAT_DISCONNECT", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), resultSent });
+    // A disconnect is not a cancel: let the CLI finish (an HMR reload must
+    // not lose a turn — the session keeps the result for the next message).
+    // Stopping is explicit: the client's Stop calls POST /chat/cancel.
+  });
+}
+
+// Everything waiting in a main chat's queue, as ONE turn: the messages in the
+// order they came, joined by a rule, run with the model and effort the last of
+// them asked for. One turn, so it counts one toward messageCount.
+function startMerged(safeId, session) {
+  const waiting = session.queue.splice(0);
+  const last = waiting[waiting.length - 1];
+  const message = waiting.map((w) => w.message).join("\n\n---\n\n");
+  session.messageCount++;
+  const msgNum = session.messageCount;
+  log("CHAT_MERGED", { chatNum: session.chatNum, msg: msgNum, merged: waiting.length, queueIds: waiting.map((w) => w.queueId.slice(0, 8)) });
+  log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, model: last.cliModel, effort: last.cliEffort, message });
+  runTurn(safeId, session, { message, cliModel: last.cliModel, cliEffort: last.cliEffort, msgNum }, null, null);
+}
+
 app.post("/chat", async (req, res) => {
   const { sessionId, message, model, effort, system, messages } = req.body;
 
@@ -999,166 +1360,41 @@ app.post("/chat", async (req, res) => {
     return res.status(404).json({ error: { message: "Session not found. Create a new one." } });
   }
 
-  session.messageCount++;
+  // POST /chat {sessionId, attach: true}: replay the session's latest turn and
+  // follow it live — a reloaded tab, or a client whose message was queued and
+  // merged into a turn it did not ask for itself (§ "Chats that persist").
+  if (req.body?.attach) {
+    const stream = session.stream;
+    if (!stream) return res.status(409).json({ error: { message: "This chat has not run a turn to attach to." } });
+    session.lastSeen = Date.now();
+    log("CHAT_ATTACH", { chatNum: session.chatNum, msg: stream.msgNum, ...threadTag(session), replayed: stream.events.length, live: !stream.ended });
+    return stream.attach(res);
+  }
+  // One queue at a time per session: enqueueForSession for a thread, and for a main chat the
+  // turn slot itself (a /chat that finds it taken waits in session.queue instead).
   session.lastSeen = Date.now();
   const cliModel = modelAlias(safeModel(model, session.model));
   const cliEffort = safeEffort(effort, session.effort);
+
+  if (!isThreadSession(session) && session.turn) {
+    if (session.queue.length >= QUEUE_CAP) {
+      log("CHAT_QUEUE_FULL", { chatNum: session.chatNum, queued: session.queue.length });
+      return res.status(429).json({ error: { message: `${QUEUE_CAP} messages are already waiting for the tutor. Wait for its reply, or take one back.` } });
+    }
+    const queueId = randomUUID();
+    session.queue.push({ queueId, message: message || "", cliModel, cliEffort, at: Date.now() });
+    log("CHAT_QUEUED", { chatNum: session.chatNum, behind: session.turn.msgNum, position: session.queue.length, queueId: queueId.slice(0, 8), message: message || "" });
+    return res.status(202).json({ queued: true, position: session.queue.length, queueId });
+  }
+
+  session.messageCount++;
   const msgNum = session.messageCount;
 
   log("CHAT_START", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), model: cliModel, effort: cliEffort, message: message || "" });
 
-  enqueueForSession(safeId, () => new Promise((resolve) => {
-    // A thread's FIRST turn forks: it resumes the MAIN session and asks the
-    // CLI for a new session id, so the main session's history is where this
-    // thread starts and nothing said from here on is written back to it.
-    // Later turns resume the fork. Decided here, inside the queue, not at
-    // request time: two thread turns sent back to back must not both see
-    // "no fork yet" and fork the parent twice.
-    const forkFrom = isThreadSession(session) && !session.cliSessionId
-      ? (sessions[session.parentId] || {}).cliSessionId || null
-      : null;
-    if (isThreadSession(session) && !session.cliSessionId && !forkFrom) {
-      // The conversation this thread hangs off is gone (killed or
-      // transferred): there is nothing to fork, and answering from a blank
-      // session would be a different tutor pretending to be this one.
-      log("CHAT_409_THREAD", { chatNum: session.chatNum, msg: msgNum, threadId: session.threadId });
-      session.lastTurn = { msg: msgNum, outcome: "error", at: Date.now() };
-      res.status(409).json({ error: { message: "The conversation this thread hangs off is gone. Open the thread again." } });
-      return resolve();
-    }
-    const args = [
-      "--resume", forkFrom || session.cliSessionId || safeId,
-      ...(forkFrom ? ["--fork-session"] : []),
-      "-p", "--print", "--output-format", "stream-json", "--verbose",
-      "--model", cliModel, "--effort", cliEffort, "--allowedTools", ALLOWED_TOOLS,
-    ];
-
-    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
-
-    let resultSent = false;
-    // One settle per turn. Records the outcome the resume rule reads
-    // ("a cancelled turn never promotes its session to resume-candidate —
-    // promotion happens only on completion") and releases the turn slot.
-    let turn = null;
-    let settled = false;
-    let streamedChars = 0;
-    const settle = (outcome) => {
-      if (settled) return;
-      settled = true;
-      // A cancel accepted before the CLI exited wins over its exit code: a
-      // CLI that handles SIGTERM by exiting 0, or that printed its result as
-      // the kill landed, is still a turn the student stopped.
-      if (turn && turn.cancelled) outcome = "cancelled";
-      if (session.turn === turn) session.turn = null;
-      session.lastTurn = { msg: msgNum, outcome, at: Date.now() };
-      resolve();
-    };
-    const sse = (event, data) => { try { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) {} };
-    // The CLI is gone after /chat/cancel (or a session delete) — killed, or
-    // exited on its own as the kill landed. Whatever its exit code, the log
-    // says cancelled, not error, and the stream ends with `cancelled`.
-    const cancelledExit = () => {
-      log("CHAT_CANCELLED", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), streamed: streamedChars });
-      sse("cancelled", { msg: msgNum });
-      res.end();
-      settle("cancelled");
-    };
-    // The fork did not happen: this turn is running IN the main conversation,
-    // so every character it writes from here lands in the history a thread
-    // must never touch. Kill it and fail the turn — a turn allowed to finish
-    // here IS the leak, and the student would be shown a normal-looking reply
-    // for it. The prompt is already gone (the CLI reads stdin before it says
-    // which session it is): the reply, and every later turn, is what this
-    // stops.
-    let forkFailed = false;
-    const failForkMissing = () => {
-      if (settled) return;
-      forkFailed = true;
-      sse("error", { message: "This thread could not get a session of its own. The turn was stopped before it could write into the main conversation." });
-      res.end();
-      // settle BEFORE the kill so the outcome recorded is this failure, not
-      // the cancellation that ends the process.
-      settle("error");
-      const pid = turn ? turn.pid : proc && proc.pid;
-      if (pid) killTree(pid).then((left) => log("THREAD_FORK_KILLED", { chatNum: session.chatNum, threadId: session.threadId, msg: msgNum, survivors: left }));
-    };
-
-    const proc = runClaudeStreaming(args, message,
-      (parsed) => {
-        try {
-          // The forked id, taken from the first event that carries one. It
-          // must differ from the session we forked FROM: an id equal to the
-          // parent's means the CLI did not fork, and recording it would make
-          // every later turn of this thread write into the main conversation —
-          // exactly the leak this route exists to prevent. Left unset, so the
-          // next turn forks again rather than resuming the main session.
-          if (forkFrom && !session.cliSessionId && typeof parsed.session_id === "string") {
-            if (parsed.session_id !== forkFrom) {
-              session.cliSessionId = parsed.session_id;
-              log("THREAD_FORK", { chatNum: session.chatNum, threadId: session.threadId, from: forkFrom.slice(0, 8), to: parsed.session_id.slice(0, 8) });
-            } else {
-              log("THREAD_FORK_MISSING", { chatNum: session.chatNum, threadId: session.threadId, sessionId: forkFrom.slice(0, 8) });
-              return failForkMissing();
-            }
-          }
-          // Through `sse`, never a raw res.write. failForkMissing and
-          // cancelledExit end the response while the CLI is still talking, and
-          // its next stdout chunk arrives here afterwards — where a raw write
-          // ends the whole process, not just this turn. Why, in § "Turn
-          // ownership" above. The catch below does not help: the error comes a
-          // tick later, on the response.
-          if (parsed.type === "assistant" && Array.isArray(parsed.message?.content)) {
-            for (const block of parsed.message.content) {
-              if (block.type === "tool_use") {
-                sse("status", { type: "tool", name: block.name, description: block.input?.description || block.input?.command || "" });
-              } else if (block.type === "text") {
-                sse("text", { text: block.text });
-              } else if (block.type === "thinking") {
-                sse("status", { type: "thinking" });
-              }
-            }
-          } else if (parsed.type === "result") {
-            const tok = extractTokens(parsed);
-            accumulateTokens(tok);
-            log("CHAT_OK", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), ...tok, totalCost: totalTokens.cost.toFixed(4), response: parsed.result || "" });
-            resultSent = true;
-            // The result raced the kill: tokens are accounted (CHAT_OK), but
-            // the student stopped this turn, so it ends as stopped.
-            if (turn && turn.cancelled) return cancelledExit();
-            // The tokens above are accounted whatever happened to the response
-            // — a killed turn still spent them. Only the writing is skipped.
-            sse("done", { text: parsed.result || "", usage: parsed.usage, cost: parsed.total_cost_usd });
-            res.end();   // a second end() is a no-op; only write-after-end is fatal
-            settle("completed");
-          }
-        } catch (_) {}
-      },
-      () => {
-        if (forkFailed) return;   // already answered and settled as an error
-        if (turn && turn.cancelled) return cancelledExit();
-        if (!resultSent) { sse("done", { text: "" }); res.end(); }
-        settle("completed");
-      },
-      (err) => {
-        if (forkFailed) return;
-        if (turn && turn.cancelled) return cancelledExit();
-        log("CHAT_ERROR", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), error: err.message });
-        sse("error", { message: err.message });
-        res.end();
-        settle("error");
-      }
-    );
-    proc.stdout.on("data", (d) => { streamedChars += d.length; });
-    turn = { msgNum, pid: proc.pid, proc, startedAt: Date.now(), cancelled: false, killed: null };
-    if (!settled) session.turn = turn;   // a turn that already settled (fork-missing) is not in flight
-
-    res.on("close", () => {
-      log("CHAT_DISCONNECT", { chatNum: session.chatNum, msg: msgNum, ...threadTag(session), resultSent });
-      // A disconnect is not a cancel: let the CLI finish (an HMR reload must
-      // not lose a turn — the session keeps the result for the next message).
-      // Stopping is explicit: the client's Stop calls POST /chat/cancel.
-    });
-  }));
+  const turnArgs = { message, cliModel, cliEffort, msgNum };
+  if (!isThreadSession(session)) return runTurn(safeId, session, turnArgs, res, null);
+  enqueueForSession(safeId, () => new Promise((resolve) => runTurn(safeId, session, turnArgs, res, resolve)));
 });
 
 // POST /chat/cancel {sessionId} — see "Turn ownership" at the top. Answers
@@ -1193,6 +1429,19 @@ app.post("/chat/cancel", async (req, res) => {
   res.json({ ok: true, cancelled: true, repeat: true, msg: turn.msgNum, survivors });
 });
 
+// POST /chat/unqueue {sessionId, queueId} — take back a message still waiting.
+// 409 once it has gone into a turn (or never waited here): too late to take back.
+app.post("/chat/unqueue", (req, res) => {
+  const safeId = safeSession(req.body?.sessionId);
+  const session = safeId && sessions[safeId];
+  if (!session) return res.status(404).json({ error: { message: "Session not found" } });
+  const i = session.queue.findIndex((w) => w.queueId === req.body?.queueId);
+  if (i < 0) return res.status(409).json({ error: { message: "That message is no longer waiting: it has gone to the tutor." } });
+  const [w] = session.queue.splice(i, 1);
+  log("CHAT_UNQUEUED", { chatNum: session.chatNum, queueId: w.queueId.slice(0, 8), left: session.queue.length });
+  res.json({ ok: true });
+});
+
 app.get("/sessions", (req, res) => {
   // Chats only. A thread handle is a session everywhere else in this file,
   // but it is not a conversation the student can open or resume — listing one
@@ -1202,8 +1451,12 @@ app.get("/sessions", (req, res) => {
     created: s.created, messageCount: s.messageCount, open: s.open,
     turn: s.turn ? { msg: s.turn.msgNum, pid: s.turn.pid, startedAt: s.turn.startedAt, cancelling: s.turn.cancelled } : null,
     lastTurn: s.lastTurn,
-    // "Resume candidacy" at the top: open, running, or cancelled last -> not a candidate.
-    resumable: !s.open && !s.turn && !(s.lastTurn && s.lastTurn.outcome === "cancelled"),
+    // § "Chats that persist": what the picker shows, and who holds the chat.
+    title: s.title, lastAt: s.lastAt, queued: s.queue.length,
+    lease: liveLease(s) ? { tabId: s.lease.tabId, seen: s.lease.seen } : null,
+    // "Resume candidacy" at the top: open, running, cancelled last, or held
+    // by another tab's live lease -> not a candidate.
+    resumable: !s.open && !s.turn && !(s.lastTurn && s.lastTurn.outcome === "cancelled") && !liveLease(s),
   }));
   res.json({ sessions: list, totalTokens, nextChatNum });
 });

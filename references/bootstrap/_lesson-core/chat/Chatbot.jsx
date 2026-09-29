@@ -12,6 +12,8 @@ import * as obsQueue from "./observationQueue.js";
 import { isRestorable, isPickable, insertFoldCard, pendingFolds, settleFolds } from "./turnState.js";
 import { readTurnWithReattach, attachTurn, needsAttach, dropPartialTail } from "./turnStream.js";
 import { msgsKey, reinfKey, spendKey, keepSession, dropSession, foreignSession, sessionLabel, restoreKept } from "./lessonSessions.js";
+import { callOptional, pingOutcome, newTabId, PING_MS, isMissing, lastAtMs, fmtAgo, sortForPicker } from "./tutorApi.js";
+import { needsHistory, fetchHistory, restoredMessages, newQueueKey, splitQueue, mergeQueued, queuedBubbles, dropQueued, mergeAsks, ASK_LABEL, chatToMarkdown, exportName } from "./chatHistory.js";
 import { useShell } from "../ui/shellContext.js";
 import { IconDockSide, IconDockBottom, IconExternal, IconSettings, IconArrowRight, IconClose, IconMaximize, IconMinimize } from "../ui/icons.jsx";
 
@@ -25,6 +27,9 @@ const LESSON_BASE = import.meta.env.BASE_URL;
 // dev proxy has no attach: it reads {sessionId, attach: true} as a message
 // with no text and runs a turn on it, so a dev build never asks.
 const ATTACH_ENABLED = !import.meta.env.DEV;
+// This page's lease id (tutorApi.js, "Tab leases"): one per page load, sent
+// on open, ping and close so the tutor can tell two tabs on one chat apart.
+const TAB_ID = newTabId();
 // The transcript this lesson kept for a session, as the save effect wrote it.
 function readSavedMsgs(sid) {
   try { return JSON.parse(_ss.getItem(msgsKey(LESSON_BASE, sid)) || "[]"); } catch (_) { return []; }
@@ -400,7 +405,9 @@ export function Chatbot({
       const currentTabs = tabsRef.current;
       for (const tab of currentTabs) {
         if (!tab.sessionId) continue;
-        const blob = new Blob([JSON.stringify({ sessionId: tab.sessionId, keepContext: tab.keepContext })], { type: "application/json" });
+        // Closing never discards (brief: "closing a tab always sends
+        // keepContext:true"); Delete chat is the only way a chat goes.
+        const blob = new Blob([JSON.stringify({ sessionId: tab.sessionId, tabId: TAB_ID, keepContext: true })], { type: "application/json" });
         navigator.sendBeacon(API.sessionClose, blob);
         obsQueue.cleanup(tab.sessionId);
       }
@@ -463,7 +470,12 @@ export function Chatbot({
   // the student's doing, so it leaves no message and no picker -- the caller
   // starts a fresh session (lessonSessions.js, restoreKept). An "error" shows
   // the tab's error state either way and forgets nothing.
-  const resumeSessionIntoTab = useCallback(async (tabId, sid, num, silent) => {
+  //
+  // `opts.meta` is the session's /sessions entry, for the history check;
+  // `opts.takeover` takes the chat from another tab that holds its lease. A
+  // chat another live tab holds resolves "leased": the tab shows it read-only
+  // with Take over, which is an outcome, not a refusal, so restore keeps it.
+  const resumeSessionIntoTab = useCallback(async (tabId, sid, num, silent, opts = {}) => {
     if (tabsRef.current.some(t => t.id !== tabId && t.sessionId === sid)) {
       if (!silent) updateTab(tabId, { messages: [{ role: "assistant", content: "This session is already open in another tab." }], sessionStatus: "picking" });
       return "refused";
@@ -472,8 +484,16 @@ export function Chatbot({
       const res = await fetch(API.sessionOpen, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sid }),
+        body: JSON.stringify({ sessionId: sid, tabId: TAB_ID, ...(opts.takeover ? { takeover: true } : {}) }),
       });
+      if (res.status === 409) {
+        const body = await res.clone().json().catch(() => ({}));
+        if (body.leased) {
+          const saved = readSavedMsgs(sid);
+          updateTab(tabId, { sessionId: sid, chatNum: num, sessionStatus: "taken", ...(saved.length > 0 ? { messages: saved } : {}) });
+          return "leased";
+        }
+      }
       if (res.ok) {
         const data = await res.json();
         let savedMsgs = [];
@@ -508,6 +528,14 @@ export function Chatbot({
         // and the current selection is a safer fallback than an unknown value.
         if (data.model && MODELS.some(m => m.model === data.model)) setModel(data.model);
         if (data.effort && EFFORT_LEVELS.includes(data.effort)) setEffort(data.effort);
+        // "on resume, fetch session/history when sessionStorage has fewer
+        // turns, and render it under a 'restored' divider". A tutor with no
+        // history endpoint leaves the tab exactly as sessionStorage had it.
+        if (needsHistory(savedMsgs, opts.meta)) {
+          const turns = await fetchHistory({ fetchImpl: fetch, url: API.sessionHistory, sessionId: sid });
+          const restored = restoredMessages(turns).map(m => m.role === "assistant" ? { ...m, content: parseChatResponse(m.content).display } : m);
+          if (restored.length > 0) updateTab(tabId, { messages: restored });
+        }
         return "ok";
       }
       // A 5xx is the proxy or the tutor behind it not answering (a restart,
@@ -577,7 +605,7 @@ export function Chatbot({
           // attach so a reloaded tab picks the reply up." Not awaited: the
           // reply streams in while the rest of the restore carries on.
           resume: async (tabId, sid, num) => {
-            const outcome = await resumeSessionIntoTab(tabId, sid, num, true);
+            const outcome = await resumeSessionIntoTab(tabId, sid, num, true, { meta: list.find(s => s.id === sid) });
             if (outcome === "ok" && ATTACH_ENABLED && needsAttach(list.find(s => s.id === sid), readSavedMsgs(sid))) {
               attachIntoTabRef.current(tabId, sid);
             }
@@ -632,7 +660,7 @@ export function Chatbot({
     const tab = tabsRef.current.find(t => t.id === tabId);
     if (tab && tab.sessionId) {
       try {
-        const blob = new Blob([JSON.stringify({ sessionId: tab.sessionId, keepContext: tab.keepContext })], { type: "application/json" });
+        const blob = new Blob([JSON.stringify({ sessionId: tab.sessionId, tabId: TAB_ID, keepContext: true })], { type: "application/json" });
         navigator.sendBeacon(API.sessionClose, blob);
       } catch (_) {}
       obsQueue.cleanup(tab.sessionId);
@@ -755,23 +783,86 @@ export function Chatbot({
     cancelTurn(tab.sessionId);
   };
 
-  const killSession = useCallback(() => {
+  // Delete chat: the only discard (closing a tab keeps it). A tutor with a
+  // session/delete endpoint drops the chat and its history; an older one is
+  // asked the old way, close with keepContext:false. Two clicks, because it
+  // cannot be undone: the first arms the button, the second deletes.
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const deleteChat = useCallback(async () => {
     if (!activeTab) return;
+    if (!deleteArmed) { setDeleteArmed(true); return; }
+    setDeleteArmed(false);
     cancelRequest();
-    if (activeTab.sessionId) {
-      fetch(API.sessionClose, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeTab.sessionId, keepContext: false }),
-      }).catch(() => {});
-      obsQueue.cleanup(activeTab.sessionId);
+    const tabId = activeTab.id;
+    const sid = activeTab.sessionId;
+    if (sid) {
+      const r = await callOptional(fetch, "session/delete", API.sessionDelete, { sessionId: sid });
+      if (r.absent) {
+        fetch(API.sessionClose, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: sid, tabId: TAB_ID, keepContext: false }),
+        }).catch(() => {});
+      }
+      obsQueue.cleanup(sid);
+      dropSession(_ss, LESSON_BASE, sid);
+      try { _ss.removeItem(msgsKey(LESSON_BASE, sid)); } catch (_) {}
     }
-    updateTab(activeTab.id, {
-      sessionId: null, chatNum: null, sessionStatus: "idle",
-      loading: false, statusText: "",
-      messages: [...activeTab.messages, { role: "assistant", content: "Session killed." }],
-    });
-  }, [activeTab, cancelRequest, updateTab]);
+    updateTab(tabId, { sessionId: null, chatNum: null, sessionStatus: "idle", loading: false, statusText: "", messages: [], queue: [], asks: [] });
+    createSessionForTab(tabId);
+  }, [activeTab, deleteArmed, cancelRequest, updateTab, createSessionForTab]);
+
+  // Export: the chat as a Markdown file. A file the tutor sent stays a link
+  // in it, one click from the page it came from.
+  const exportChat = () => {
+    if (!activeTab || activeTab.messages.length === 0) return;
+    const md = chatToMarkdown({ title: activeTab.title || topicTitle, messages: activeTab.messages });
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = exportName(activeTab.title || topicTitle, activeTab.chatNum);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // Tab leases (tutorApi.js). Every PING_MS, and when the page comes back
+  // into view (a phone waking), each open chat says it is still here. A tutor
+  // that answers "taken" means another tab took the chat over, so this one
+  // goes read-only; one with no ping endpoint is never asked again.
+  const pingChats = useCallback(async () => {
+    for (const t of tabsRef.current) {
+      if (isMissing("session/ping")) return;
+      if (!t.sessionId || t.sessionStatus !== "ready") continue;
+      const r = await callOptional(fetch, "session/ping", API.sessionPing, { sessionId: t.sessionId, tabId: TAB_ID });
+      const outcome = pingOutcome(r);
+      if (outcome === "taken") updateTab(t.id, { sessionStatus: "taken" });
+      else if (outcome === "held" && Array.isArray(r.data.asks)) {
+        setTabs(prev => prev.map(x => x.id === t.id ? { ...x, asks: mergeAsks(x.asks, r.data.asks) } : x));
+      }
+    }
+  }, [updateTab]);
+  useEffect(() => {
+    if (!TUTOR_ENABLED) return;
+    const iv = setInterval(pingChats, PING_MS);
+    const onVis = () => { if (!document.hidden) pingChats(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, [pingChats]);
+
+  // Take over: this tab opens the chat with takeover, which always wins, and
+  // the other tab goes read-only on its next ping.
+  const takeOver = useCallback(async () => {
+    const tab = tabsRef.current[activeTabIdxRef.current];
+    if (!tab || !tab.sessionId) return;
+    const list = await fetchSessions();
+    setServerSessions(list);
+    const outcome = await resumeSessionIntoTab(tab.id, tab.sessionId, tab.chatNum, false, { takeover: true, meta: list.find(s => s.id === tab.sessionId) });
+    if (outcome === "ok" && ATTACH_ENABLED && needsAttach(list.find(s => s.id === tab.sessionId), readSavedMsgs(tab.sessionId))) {
+      attachIntoTabRef.current(tab.id, tab.sessionId);
+    }
+  }, [fetchSessions, resumeSessionIntoTab]);
 
   // A turn's reply is final: parse its tags once (suggestion, commit offer,
   // reinforced behaviours) and replace the streaming bubble with it. Shared by
@@ -861,6 +952,7 @@ export function Chatbot({
         updateAssistantMsg(parseChatResponse(stripUnclosedTags(finalText)).display);
       },
       settled: () => updateTab(tabId, { statusText: "" }),
+      ask: (data) => setTabs(prev => prev.map(t => t.id === tabId ? { ...t, asks: mergeAsks(t.asks, [data]) } : t)),
       restart: () => setTabs(prev => prev.map(t => {
         if (t.id !== tabId) return t;
         const messages = dropPartialTail(t.messages);
@@ -901,13 +993,45 @@ export function Chatbot({
   const attachIntoTabRef = useRef(null);
   attachIntoTabRef.current = attachIntoTab;
 
-  const sendMessage = async (overrideText) => {
+  // The note a turn carries for its attachments: the paths the tutor reads
+  // them from, or a line saying they did not arrive. Shared by a send and a
+  // send that waits behind a turn.
+  const uploadNote = async (currentAtts) => {
+    let attachmentNote = "";
+    if (currentAtts.length > 0) {
+      try {
+        const uploadRes = await fetch(API.upload, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: currentAtts.map(a => ({ name: a.name, type: a.type, data: a.data })) }),
+        });
+        const uploadData = await uploadRes.json().catch(() => ({}));
+        if (uploadData.paths?.length > 0) {
+          attachmentNote = "\n\n[Attached files - use Read tool to view them]:\n" + uploadData.paths.map(p => `- ${p}`).join("\n");
+        } else {
+          // The student sees their thumbnail in the transcript either way, so
+          // a silent drop reads as "the tutor is ignoring my screenshot".
+          // Say so in-band instead.
+          const reason = uploadData.error?.message || `upload returned no paths (HTTP ${uploadRes.status})`;
+          attachmentNote = `\n\n[${currentAtts.length} file(s) could NOT be saved for you to read: ${reason}. Tell the student the attachment did not arrive and ask them to retry.]`;
+        }
+      } catch (uploadErr) {
+        attachmentNote = "\n\n[File attachment failed: " + uploadErr.message + "]";
+      }
+    }
+    return attachmentNote;
+  };
+
+  // `opts.tabId` sends into that tab rather than the visible one, and
+  // `opts.bubbles` are the user bubbles to show for it instead of one made
+  // from the text: both are the queue drain's (below).
+  const sendMessage = async (overrideText, opts) => {
     // Defensive: a DOM handler wired as onClick={sendMessage} would hand us a
     // SyntheticEvent here, which then becomes the message body and the React
     // child of the user bubble (crashing the render). Only a string is an
     // override; anything else means "send what is in the composer".
     if (typeof overrideText !== "string") overrideText = undefined;
-    const tab = tabsRef.current[activeTabIdxRef.current];
+    const tab = opts?.tabId ? tabsRef.current.find(t => t.id === opts.tabId) : tabsRef.current[activeTabIdxRef.current];
     if (!tab || !tab.sessionId || tab.sessionStatus !== "ready") return;
     const text = overrideText !== undefined ? overrideText : input.trim();
     const currentAtts = overrideText !== undefined ? [] : [...attachments];
@@ -917,7 +1041,9 @@ export function Chatbot({
       // used to be dropped on the floor while its UI had already been
       // dismissed — the student saw the bar vanish and nothing happen. Park
       // it; the loading-cleared effect below delivers it.
-      if (overrideText !== undefined) _cs.pendingSend[tab.id] = text;
+      if (overrideText !== undefined) { _cs.pendingSend[tab.id] = text; return; }
+      // The student's own send: it waits behind the turn, it is not dropped.
+      queueSend(tab, text, currentAtts);
       return;
     }
     const tabId = tab.id;
@@ -936,8 +1062,9 @@ export function Chatbot({
     // dismisses the suggestion bar and then immediately sends the approval).
     // Rebuilding the array from the pre-update snapshot silently reverted that
     // sibling change, so the approved suggestion bar stayed on screen.
+    const displayMsgs = opts?.bubbles || [displayMsg];
     setTabs(prev => prev.map(t => t.id === tabId
-      ? { ...t, messages: [...t.messages, displayMsg], loading: true }
+      ? { ...t, messages: [...t.messages, ...displayMsgs], loading: true }
       : t));
     if (overrideText === undefined) onClearAllSnippets();
 
@@ -954,28 +1081,7 @@ export function Chatbot({
     let reachedServer = false;
     const markStopped = () => markTabStopped(tabId);
     try {
-      let attachmentNote = "";
-      if (currentAtts.length > 0) {
-        try {
-          const uploadRes = await fetch(API.upload, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ files: currentAtts.map(a => ({ name: a.name, type: a.type, data: a.data })) }),
-          });
-          const uploadData = await uploadRes.json().catch(() => ({}));
-          if (uploadData.paths?.length > 0) {
-            attachmentNote = "\n\n[Attached files - use Read tool to view them]:\n" + uploadData.paths.map(p => `- ${p}`).join("\n");
-          } else {
-            // The student sees their thumbnail in the transcript either way, so
-            // a silent drop reads as "the tutor is ignoring my screenshot".
-            // Say so in-band instead.
-            const reason = uploadData.error?.message || `upload returned no paths (HTTP ${uploadRes.status})`;
-            attachmentNote = `\n\n[${currentAtts.length} file(s) could NOT be saved for you to read: ${reason}. Tell the student the attachment did not arrive and ask them to retry.]`;
-          }
-        } catch (uploadErr) {
-          attachmentNote = "\n\n[File attachment failed: " + uploadErr.message + "]";
-        }
-      }
+      const attachmentNote = await uploadNote(currentAtts);
       const topicText = topicContext?.[topicId] || "";
       const activeCtx = buildActiveContext({
         tabId: topicId,
@@ -983,8 +1089,8 @@ export function Chatbot({
         topicText,
         graphParams,
         graphSchema,
-        isolated: activeTab?.isolated,
-        reinforced: activeTab?.reinforced || [],
+        isolated: tab.isolated,
+        reinforced: tab.reinforced || [],
         answerStyle: answersRef.current,
       });
       observations = obsQueue.drain(tab.sessionId);
@@ -1010,7 +1116,7 @@ export function Chatbot({
         // server numbered. Leaving it counted would push needsAttach's
         // `asked` one ahead of the server's count forever (turnStream.js).
         setTabs(prev => prev.map(t => t.id === tabId
-          ? { ...t, messages: [...t.messages.map(m => m === displayMsg ? { ...m, unsent: true } : m), { role: "assistant", content: errMsg }] }
+          ? { ...t, messages: [...t.messages.map(m => displayMsgs.includes(m) ? { ...m, unsent: true } : m), { role: "assistant", content: errMsg }] }
           : t));
         return;
       }
@@ -1050,7 +1156,7 @@ export function Chatbot({
         // the server did take it -- attach is what brings that turn back.
         if (!reachedServer) {
           setTabs(prev => prev.map(t => t.id === tabId
-            ? { ...t, messages: t.messages.map(m => m === displayMsg ? { ...m, unsent: true } : m) }
+            ? { ...t, messages: t.messages.map(m => displayMsgs.includes(m) ? { ...m, unsent: true } : m) }
             : t));
         }
         showTurnLost(tabId, e);
@@ -1089,6 +1195,88 @@ export function Chatbot({
     delete _cs.pendingSend[activeTab.id];
     sendMessageRef.current?.(queued);
   }, [activeTab?.loading, activeTab?.id]);
+
+  // A send typed while the tutor is still answering (chatHistory.js, "Sends
+  // behind a running turn"). The composer clears at once; the entry shows as
+  // pending until the tutor says whether it queued it (202) or cannot (409,
+  // an older tutor: it is then held here and drained when the turn ends).
+  const queueSend = async (tab, text, atts) => {
+    const tabId = tab.id;
+    setInput("");
+    setAttachments([]);
+    const ctx = contextSnippets.length > 0 ? [...contextSnippets] : null;
+    if (ctx) onClearAllSnippets();
+    const qkey = newQueueKey();
+    const entry = { qkey, content: text || "(attached file)", context: ctx, attachments: atts.length > 0 ? atts : null, pending: true };
+    const setEntry = (upd) => setTabs(prev => prev.map(t => t.id === tabId
+      ? { ...t, queue: (t.queue || []).map(q => q.qkey === qkey ? { ...q, ...upd } : q) } : t));
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, queue: [...(t.queue || []), entry] } : t));
+    let userContent = entry.content;
+    if (ctx) userContent = `${ctx.map((c, i) => `[Context ${i + 1} -- ${c.source}]: ${c.text}`).join("\n")}\n\nQuestion: ${userContent}`;
+    const sendText = userContent + await uploadNote(atts);
+    const activeCtx = buildActiveContext({
+      tabId: topicId, topicTitle, topicText: topicContext?.[topicId] || "", graphParams, graphSchema,
+      isolated: tab.isolated, reinforced: tab.reinforced || [], answerStyle: answersRef.current,
+    });
+    try {
+      const res = await fetch(API.chat, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: tab.sessionId, message: `${activeCtx}\n${sendText}`, model, effort }),
+      });
+      if (res.status === 202) {
+        const data = await res.json().catch(() => ({}));
+        setEntry({ pending: false, sendText, queueId: data.queueId || "server", position: data.position });
+      } else if (res.status === 409) {
+        // An older tutor refuses a send mid-turn: this tab holds it instead.
+        setEntry({ pending: false, sendText });
+      } else if (res.ok) {
+        // The turn had ended between the click and the POST, so this started
+        // a turn of its own. Let go of this stream; the drain attaches to it.
+        try { res.body?.cancel(); } catch (_) {}
+        setEntry({ pending: false, sendText, queueId: "live" });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setEntry({ pending: false, failed: err.error?.message || `API error (${res.status})` });
+      }
+    } catch (e) {
+      setEntry({ pending: false, failed: `Connection error: ${e.message}` });
+    }
+  };
+
+  // × on a waiting send. One the tutor holds is taken back with chat/unqueue;
+  // if it has already gone into a turn (a 409) it stays and drains as sent.
+  const unqueue = async (tabId, qkey) => {
+    const tab = tabsRef.current.find(t => t.id === tabId);
+    const entry = (tab?.queue || []).find(q => q.qkey === qkey);
+    if (!entry || entry.pending || entry.queueId === "live") return;
+    if (entry.queueId) {
+      const r = await callOptional(fetch, "chat/unqueue", API.chatUnqueue, { sessionId: tab.sessionId, queueId: entry.queueId });
+      if (!r.ok) return;
+    }
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, queue: dropQueued(t.queue, qkey) } : t));
+  };
+
+  // When a tab's turn ends, what waited goes. The tutor's own queue has
+  // already become the next turn, so its entries turn into bubbles and the
+  // tab attaches to that turn; entries this tab holds go as one message.
+  useEffect(() => {
+    for (const t of tabs) {
+      if (t.loading || t.sessionStatus !== "ready" || !t.sessionId || !(t.queue || []).length) continue;
+      const { server, local } = splitQueue(t.queue);
+      const going = server.length > 0 ? server : local;
+      if (going.length === 0) continue;
+      const keys = going.map(q => q.qkey);
+      if (server.length > 0) {
+        setTabs(prev => prev.map(x => x.id === t.id
+          ? { ...x, queue: dropQueued(x.queue, keys), messages: [...x.messages, ...queuedBubbles(going)] } : x));
+        attachIntoTabRef.current(t.id, t.sessionId);
+      } else {
+        setTabs(prev => prev.map(x => x.id === t.id ? { ...x, queue: dropQueued(x.queue, keys) } : x));
+        sendMessageRef.current?.(mergeQueued(going), { tabId: t.id, bubbles: queuedBubbles(going) });
+      }
+    }
+  }, [tabs]);
 
   const handleSuggestionApprove = useCallback((msgIdx, placement) => {
     const tab = tabsRef.current[activeTabIdxRef.current];
@@ -1924,9 +2112,11 @@ export function Chatbot({
                           title={keepContext ? "Session survives reload" : "New session on reload"}>
                     Keep on reload
                   </button>
-                  <button className="chat-segment" onClick={killSession}
-                          title="End the session and stop all processes"
-                          style={{ color: "var(--danger)" }}>End session</button>
+                  <button className="chat-segment" onClick={exportChat} disabled={!activeTab || activeTab.messages.length === 0}
+                          title="Download this chat as a Markdown file">Export</button>
+                  <button className="chat-segment" onClick={deleteChat} onBlur={() => setDeleteArmed(false)}
+                          title="Delete this chat and its history for good. Closing a tab keeps it."
+                          style={{ color: "var(--danger)" }}>{deleteArmed ? "Click again to delete" : "Delete chat"}</button>
                 </div>
               </div>
             </div>
@@ -1962,9 +2152,13 @@ export function Chatbot({
               <div className="chat-empty">
                 <div style={{ marginBottom: 8 }}>Available sessions. Pick one or create new:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
-                  {serverSessions.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE) && !tabs.some(t => t.sessionId === s.id)).map(s => (
-                    <button key={s.id} onClick={() => { if (activeTab) resumeSessionIntoTab(activeTab.id, s.id, s.chatNum); }} style={{ background: "var(--bg-eq)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", color: "var(--accent)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
+                  {sortForPicker(serverSessions.filter(s => isPickable(s) && !foreignSession(s, LESSON_BASE) && !tabs.some(t => t.sessionId === s.id))).map(s => (
+                    <button key={s.id} className="chat-pick" onClick={() => { if (activeTab) resumeSessionIntoTab(activeTab.id, s.id, s.chatNum, false, { meta: s }); }} style={{ background: "var(--bg-eq)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", color: "var(--accent)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>
                       {sessionLabel(s, LESSON_BASE)}
+                      {/* Title and last use when the tutor sends them. The
+                          label stays first: tests/resume-metadata clicks it. */}
+                      {s.title && <span className="chat-pick-title">{s.title}</span>}
+                      {lastAtMs(s.lastAt) != null && <span className="chat-pick-when">{fmtAgo(lastAtMs(s.lastAt))}</span>}
                     </button>
                   ))}
                   <button onClick={() => { if (activeTab) createSessionForTab(activeTab.id); }} style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: "6px 10px", color: "var(--bg-main)", cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600 }}>
@@ -1981,7 +2175,11 @@ export function Chatbot({
                 {sessionStatus === "idle" && "Starting session..."}
               </div>
             )}
-            {messages.map((m, i) => m.role === "fold" ? (
+            {messages.map((m, i) => m.role === "divider" ? (
+              // Where the tutor's copy of the chat begins: what follows came
+              // back from session/history, not from this tab.
+              <div key={i} className="chat-divider-restored" data-msg-idx={i}><span>{m.content}</span></div>
+            ) : m.role === "fold" ? (
               // A folded side thread: the ONE message a thread ever puts into
               // the main conversation. The student reads it here, and the same
               // text rides the next main turn — so nothing reaches the main
@@ -2119,6 +2317,33 @@ export function Chatbot({
                 ))}
               </div>
             )}
+            {sessionStatus === "taken" && (
+              <div className="chat-taken">
+                <span>This chat is open in another tab, so it is read-only here.</span>
+                <button className="chat-takeover" onClick={takeOver}>Take over</button>
+              </div>
+            )}
+            {(activeTab?.queue || []).length > 0 && (
+              <div className="chat-queue">
+                {activeTab.queue.map(q => (
+                  <div key={q.qkey} className={`chat-msg chat-msg-user chat-queued${q.failed ? " chat-queued-failed" : ""}`}>
+                    <span className="chat-queued-badge">{q.failed ? "not sent" : q.pending ? "sending…" : q.queueId === "live" ? "sent" : q.position ? `queued #${q.position}` : "queued"}</span>
+                    <span className="chat-queued-text">{q.content}</span>
+                    {q.failed && <span className="chat-queued-error">{q.failed}</span>}
+                    {!q.pending && q.queueId !== "live" && (
+                      <button className="chat-queued-x" title="Don't send this" onClick={() => unqueue(activeTab.id, q.qkey)}>×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {(activeTab?.asks || []).length > 0 && (
+              <div className="chat-ask-chips">
+                {activeTab.asks.map(a => (
+                  <span key={a.id} className={`chat-ask-chip chat-ask-${a.status}`} title={a.text || ""}>{ASK_LABEL[a.status]}</span>
+                ))}
+              </div>
+            )}
             {/* Current settings, and the second way into the popover. */}
             <div className="chat-settings-chip">
               <span className="chat-settings-chip-text">{modelLabel + " · " + effort + " · " + answerLabel}</span>
@@ -2132,11 +2357,11 @@ export function Chatbot({
                 onChange={e => { const picked = Array.from(e.target.files || []); e.target.value = ""; if (picked.length) handleFiles(picked); }} />
               <button className="chat-attach-btn" onClick={() => fileRef.current.click()} title="Attach image or PDF">+</button>
               <textarea ref={inputRef} className="chat-input" value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
-                onFocus={releaseThreadFocus}
-                placeholder={attachments.length > 0 ? "Describe what you attached" : contextSnippets.length > 0 ? "Ask about the attached context" : "Ask about this topic"} rows={1} />
-              {loading
+                onFocus={releaseThreadFocus} disabled={sessionStatus === "taken"}
+                placeholder={sessionStatus === "taken" ? "Read-only: open in another tab" : loading ? "Type ahead: it sends when this reply ends" : attachments.length > 0 ? "Describe what you attached" : contextSnippets.length > 0 ? "Ask about the attached context" : "Ask about this topic"} rows={1} />
+              {loading && !input.trim() && attachments.length === 0
                 ? <button className="chat-stop" onClick={cancelRequest} title="Stop generating">{"■"}</button>
-                : <button className="chat-send" onClick={() => sendMessage()} disabled={!input.trim() && attachments.length === 0} title="Send"><IconArrowRight /></button>
+                : <button className="chat-send" onClick={() => sendMessage()} disabled={sessionStatus === "taken" || (!input.trim() && attachments.length === 0)} title={loading ? "Queue: sends when this reply ends" : "Send"}><IconArrowRight /></button>
               }
             </div>
           </div>
