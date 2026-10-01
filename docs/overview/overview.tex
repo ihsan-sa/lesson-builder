@@ -6,9 +6,10 @@
 % style and no page colour of its own; every figure is a diagram-maker spec in
 % figures/, which the build renders.
 %
-% Revision B. EVERY NUMBER was read off this repo and the built lessons on 27
-% September 2026; the grey line at the foot of each page names what it was read from.
-% Refresh them before sending this again. Goes outside: no hostnames, member
+% Revision C (1 October 2026): cut down, numbers kept only where they explain
+% something, figures re-read from the repo that day. The grey line at the foot of
+% each page names the file a claim comes from. build.sh also renders the PNGs the
+% README shows, so rebuild after any edit here. Goes outside: no hostnames, member
 % names, addresses or tokens in this file.
 \documentclass[11pt]{article}
 \newcommand\hspaper{a4paper}
@@ -25,16 +26,14 @@
 \begin{document}
 
 % ---------------------------------------------------------------- page 1
-\hstitleblock{lesson-builder \textperiodcentered\ September 2026}{Lessons with a tutor inside}%
+\hstitleblock{lesson-builder \textperiodcentered\ October 2026}{Lessons with a tutor inside}%
 {How a team of agents turns course material into a lesson a student can talk to}
 
 lesson-builder is a Claude Code skill. Point it at a course's slides, notes and past problems
 and it builds a lesson: a small web app with the topics in order, the equations typeset, graphs
-the reader can move, animations, demos, and a tutor panel down the side that knows what the
-page says. It works in six phases, and agents it spawns do most of the work. Every number here
-was read off the skill's repo, or the project that uses it, on 27 September 2026, and the grey
-line at the foot of each page says where. This second edition adds a phone layout, GeoGebra
-figures, rendered animations, a linked companion and tests on GitHub Actions.
+the reader can move, animations, demos, and a tutor beside the text that knows what the page
+says. It works in six phases. Agents it spawns do most of the work, and a person approves the
+plan before any of it starts.
 
 \begin{hsfigure}{Figure 1 / six phases, and one of them waits for a person}%
 {Sage is agents at work, rust a check that can say no, slate what ships. The heavy box is the
@@ -52,26 +51,23 @@ and \emph{Execution guidance}.}
 
 \hslead{The first three phases decide what the lesson teaches, and a person signs it off.}
 
-Phase 0 is an interview: which materials count, how far past them to go, and where it ships.
-A build with no one watching answers from the course's notes and safe defaults, and lists what it
-assumed in the plan.
+Phase 0 is an interview: which materials count, how far past them to go, and where the lesson
+ships. A build with no one watching answers from the course's notes and lists what it assumed.
 
 \begin{hsfigure}{Figure 2 / phase 1 reads every source at once}%
 {Ochre is the session, sage the agents that work, rust the one that checks them.}
 \hsdiagram{figures/read}
 \end{hsfigure}
 
-Phase 1 reads. Main Claude spawns one research agent per source, more for ground beyond the
-sources, and a narrower wave for what the first missed. Each pulls out equations, concepts, real
-practice problems and how the claims connect. The content orchestrator writes it all up as one package, and a content review sends
-that back at most twice.
+Phase 1 reads. Main Claude spawns one research agent per source, more for ground the sources
+don't cover, and a second wave for what the first missed. The content orchestrator writes their
+findings up as one package, and a content review can send it back.
 
-Phase 2 writes the plan. Each topic gets objectives and a teaching arc: the question it
-answers, the moves that get the student there, and what they should then be able to show. One
-medium decider, spawned once for the whole lesson so the media stay varied, ranks them for
-every topic. Then the plan goes to a person, as a dialog at a terminal or one message
-in a channel, and silence is not a yes. A build with no one watching records a hash of the plan
-and stops until an instruction quotes it, so an approval names the exact plan somebody read.
+Phase 2 writes the plan. Each topic gets a teaching arc: the question it answers, the steps
+that get the student there, and what they should then be able to do. One medium decider picks
+the media for the whole lesson at once, so they stay varied. Then the plan goes to a person,
+and silence is not a yes. A build with no one watching stops until an instruction quotes the
+plan's hash, so an approval always names the exact plan somebody read.
 
 \hsprovenance{\texttt{references/phase-0-scoping.md}, \texttt{phase-1-content.md} and \texttt{phase-2-plan.md};
 the gate: \texttt{SKILL.md}, \emph{Session modes and gates}.}
@@ -89,15 +85,12 @@ lesson until it has been checked.}
 \hsdiagram{figures/build}
 \end{hsfigure}
 
-Main Claude spawns one specialist per item in the approved plan, all at once, each with that
-item's brief and the facts its topic needs. None of them writes into the lesson. Files the
-lesson serves, such as a rendered animation or an image, go into a staging area, and one script
-moves each into place only after checking that this run made it, so a killed or broken
-production leaves the old file untouched. Code is pasted in by main Claude, which also writes
-the prose and the Desmos and GeoGebra figures itself, against the arc the plan approved. Manim
-now runs where the builds do, so animations render in the run. An update to an existing
-lesson builds on a branch in a git worktree of its own, so the author's checkout is never
-stashed or switched while a run is going.
+Main Claude spawns one specialist per item in the plan, all at once, and none of them writes
+into the lesson. What they make goes into a staging area, and a script moves each file into
+place only once it has checked this run made it, so a crashed run leaves the old lesson as it
+was. Main Claude writes the prose and the Desmos and GeoGebra figures itself. An update to an
+existing lesson runs in a git worktree of its own, so the author's checkout is never touched
+while it runs.
 
 \hsprovenance{Phase 3: \texttt{references/phase-3-execution.md}, \emph{The run staging area} and
 \emph{Parallel specialist spawning}. The worktree: \texttt{references/run-record.md}.}
@@ -107,8 +100,8 @@ stashed or switched while a run is going.
 % ================================================================ 4. the team
 \section{The agent team}
 
-\hslead{Twelve agents ship in the skill's own folder, and the session running the build decides
-which model each one gets.}
+\hslead{Twelve agents ship with the skill, and the session running the build picks each one's
+model.}
 
 \begin{hsblock}
 \hslabel{Table 1 / the twelve agents and where they work}\par\vspace{8pt}
@@ -132,15 +125,13 @@ Interaction & 4 & Drives a running demo and tries every control \\
 \end{hsblock}
 
 \vspace{10pt}
-The session running the skill, main Claude in its own docs, spawns every agent itself, because
-a subagent cannot spawn another. Each worker writes its full output to a file and hands back a
-summary, so main Claude carries a paragraph per worker and whoever needs the detail reads the file.
+Main Claude spawns every agent itself, because a subagent can't spawn another. Each one writes
+its full output to a file and hands back a summary, so the session stays small and the detail is
+there for whoever needs it.
 
-Five of the twelve make judgements, about what the lesson teaches and whether it is right, and run on
-the session's own model. The other seven produce media or apply a rubric, and default to a
-smaller one. Main Claude can raise either for any spawn, and a lesson a student will sit an exam
-from runs its judgements on the strongest model there is. Nothing is lowered to save money unless
-the person asking said so.
+The agents that judge what the lesson teaches and whether it's right run on the session's own
+model. The ones that make media or apply a rubric default to a smaller one. Main Claude can raise
+either, and nothing is lowered to save money unless the person asking said so.
 
 \hsprovenance{Table 1: \texttt{SKILL.md}, \emph{Agent team}, and the description line of each file
 in \texttt{agents/}. The models: \texttt{SKILL.md}, \emph{Model policy} and \emph{Quality policy},
@@ -153,23 +144,18 @@ and the \texttt{model:} line of each agent. Who spawns what: \emph{Agent team}.}
 
 \hslead{Every reviewer runs at once, and none of them can edit.}
 
-Phase 4 fires every review in one batch. Each figure gets two reviewers that fail in different
-ways, one for how it looks and one for whether the science is right.
+Phase 4 starts every review at once. Each figure gets two reviewers, one for how it looks and
+one for whether the science is right, because they miss different things.
 
 \begin{hsfigure}{Figure 4 / phase 4 reviews everything in one batch}%
 {Slate is the lesson, rust the six checks that can say no, sage the list they feed.}
 \hsdiagram{figures/review}
 \end{hsfigure}
 
-\hsprovenance{Figure 4: \texttt{references/phase-4-review.md}, \emph{Parallel reviews}.}
-\newpage
-
-Every finding goes into one issue list, and into the run record before anything is fixed, so a
-crash in the loop loses nothing. A reviewer never fixes what it found, so a re-review is never a model grading its own work. A
-figure goes back to the specialist that made it, with the finding as its brief. Code and prose
-are fixed by main Claude, which assembled the file. Failures a test can prove, such as a parse
-error, a failing check or a broken build, are fixed first, because the rest are often their
-symptoms. After each round, the reviewers of whatever the fix touched run again.
+Every finding goes into one list, written to the run record before anything is fixed. A reviewer
+never fixes what it found, so no model grades its own work. A figure goes back to the specialist
+that made it, and main Claude fixes the code and prose. Failures a test can prove, like a parse
+error or a broken build, go first, because the rest are often their symptoms.
 
 \begin{hsfigure}{Figure 5 / the loop that follows}%
 {Sage is the work, rust the check the loop turns on, and slate the next phase. The dashed line
@@ -177,29 +163,24 @@ is another round; the rust line is a thread given up on.}
 \hsdiagram{figures/loop}
 \end{hsfigure}
 
-The loop is built to stop early rather than churn, because a loop that keeps rewriting risks
-breaking work that was already right. A thread is given up on when two rounds in a row fail to
-cut its open issues, or when the fixer twice reports no real progress, and the loop stops after
-six rounds whatever the numbers say. It is logged as unresolved and listed when the
-lesson ships. One finding stops the loop outright: a failure that shows the plan itself was
-wrong goes back to a person, not into another patch.
+The loop stops early rather than churn, because a loop that keeps rewriting breaks work that was
+already right. A thread is given up when two rounds in a row don't shrink its issues, and it is
+listed as unresolved when the lesson ships. A finding that shows the plan itself was wrong stops
+the loop and goes back to a person.
 
-Phase 5 builds the lesson once more as a check, keeps course material out of the commit by
-default, and commits and pushes. If the plan asked for a printed companion, it builds that too,
-files it in a document library that numbers every finished PDF, and links it from the lesson.
-The link is set when the site is built, so the PDF can be replaced without rebuilding the lesson,
-and a copy beside the page is the fallback.
+Phase 5 builds the lesson once more, keeps course material out of the commit, and pushes. If the
+plan asked for a printed companion, it builds that too and links it from the lesson.
 
-\hsprovenance{Figure 5, who fixes what and the stop rules: \texttt{references/phase-4-review.md},
+\hsprovenance{Figure 4: \texttt{references/phase-4-review.md}, \emph{Parallel reviews}. Figure 5, who fixes what and the stop rules: \texttt{references/phase-4-review.md},
 \emph{Progress-aware fix loop} and \emph{Stop rules}. Phase 5: \texttt{SKILL.md}, \emph{Pipeline}, and
-\texttt{references/phase-5-deploy.md}, \emph{Step 1.75}; the link: \texttt{\_lesson-core/constants/build.js}.}
+\texttt{references/phase-5-deploy.md}.}
 \newpage
 
 % ---------------------------------------------------------------- page 7
 % ================================================================ 6. made of
 \section{What a lesson is made of}
 
-\hslead{Ten files of its own, and a shared core that does the rest.}
+\hslead{A handful of files of its own, and a shared core that does the rest.}
 
 \begin{hsfigure}{Figure 6 / what runs when a student opens a lesson}%
 {Ochre is the person, slate the page they read, sage the two processes behind it, and grey what
@@ -208,25 +189,22 @@ lines are imports, not traffic.}
 \hsdiagram{figures/runtime}
 \end{hsfigure}
 
-What the pipeline ships is a Vite and React project, one per group of related topics, in a
-folder of its own under its course. It holds very little. The long file is the lesson's own
-text and figures; the page shell, the tutor chat, the maths renderer, the graph kit and the
-proxy all come from one shared core that every lesson imports. So a fix to the chat reaches
-every lesson at once, and a lesson stays readable as the thing it teaches.
+Each lesson is a Vite and React project in a folder under its course. The one long file is the
+lesson's own text and figures. The page shell, the tutor chat, the maths and the proxy come from
+a shared core that every lesson imports, so a fix to the chat reaches every lesson at once. Each
+build first brings the workspace's copy of the core up to date with the skill, and puts the old
+one back if the new one fails its smoke test.
 
-The shell is one component of 782 lines. At a desk it lays out the page with a contents rail
-that follows the reader down, a column for the text, and a tutor panel that docks at the side,
-floats over the page, or opens in a window of its own. Below 720 pixels it becomes a phone app:
-the contents and the tutor slide up as sheets, a bar at the foot steps between sections, every
-tap target is 44 pixels, and a wide equation scrolls sideways instead of shrinking. Maths is set
-with KaTeX, loaded with an eight second limit, and if it never arrives the reader sees the LaTeX
-source rather than a blank. A GeoGebra applet loads from GeoGebra's own site with no key, and a
-topic gets at most two, because a phone pays for every one.
+At a desk the page has a contents rail, a column of text and a tutor that docks at the side or
+opens in its own window. On a phone the contents and the tutor slide up as sheets and a wide
+equation scrolls sideways instead of shrinking. If KaTeX never loads, the reader sees the LaTeX
+source rather than a blank. A topic gets at most two GeoGebra applets, because a phone pays for
+every one.
 
 \hsprovenance{The layout and the shared core: \texttt{SKILL.md} and
 \texttt{references/bootstrap/\_lesson-core/}. The proxy's routes:
-\texttt{\_lesson-core/server/proxy.js}, lines 8 to 10. The shell:
-\texttt{\_lesson-core/ui/LessonShell.jsx} and \texttt{SKILL.md}. GeoGebra:
+\texttt{\_lesson-core/server/proxy.js}. The shell:
+\texttt{\_lesson-core/ui/LessonShell.jsx}. The refresh: \texttt{scripts/core-refresh.sh}. GeoGebra:
 \texttt{references/geogebra.md}.}
 \newpage
 
@@ -236,12 +214,12 @@ topic gets at most two, because a phone pays for every one.
 \hstoprule
 \hshead{File} & \hshead{What it does} \\ \hline
 \texttt{src/<slug>.jsx} & The lesson itself: its topics, its prose, and what the tutor is told about each topic \\ \hline
-\texttt{src/main.jsx} & Five lines that mount it \\ \hline
+\texttt{src/main.jsx} & Mounts it \\ \hline
 \texttt{index.html} & The page it mounts into \\ \hline
 \texttt{package.json} & Its own dependencies: React, Vite, KaTeX \\ \hline
 \texttt{server/proxy.js} & One line that starts the shared proxy for this lesson \\ \hline
 \texttt{vite.config.js} & Points the \texttt{@core} import at the shared core \\ \hline
-\texttt{test\_lesson.cjs} & Nineteen checks the lesson must pass before it ships \\ \hline
+\texttt{test\_lesson.cjs} & The checks the lesson must pass before it ships \\ \hline
 \texttt{CLAUDE.md} & What an agent editing this lesson needs to know \\ \hline
 \texttt{.gitignore} & Keeps course material private by default \\ \hline
 \texttt{lesson\_build.log.md} & The build log, rendered from the run record \\
@@ -250,19 +228,20 @@ topic gets at most two, because a phone pays for every one.
 \end{hsblock}
 
 \vspace{10pt}
-The tutor can do more than answer. It talks back to the page through a handful of tagged
-messages: one changes a graph the student is looking at, one draws a demo, one proposes an addition
-to the lesson that the student can accept. A student can Ctrl-click any part of the page to put it into the chat, and can open a
-thread on a paragraph, which starts as a fork of the main conversation and is folded back into
-it as a summary when the student is done. Whatever the model writes is rendered through an
-allowlist of elements, never as raw HTML. A graph the tutor may change declares which settings it
-can touch, and a setting declared wrongly is now skipped rather than fatal: in September one such
-mistake stopped the chat outright in seven lessons. A new nineteenth check reads the settings
-the way the chat does, so the lesson that makes the mistake still fails its tests.
+The tutor can do more than answer. Through tagged messages it can change a graph the student is
+looking at, draw a demo, or propose an addition to the lesson that the student can accept. A
+tag it only quotes, in a code block or a quoted line, does nothing, and whatever it writes is
+rendered through an allowlist, never as raw HTML. A student can Ctrl-click any part of the page
+to bring it into the chat, or open a side thread on a paragraph that folds back into the main
+chat as a summary.
 
-\hsprovenance{Table 2: \texttt{SKILL.md}, the per-lesson file list. The tutor's tags, threads and renderer:
-\texttt{SKILL.md} and \texttt{\_lesson-core/chat/safeRender.js}. The graph settings:
-\texttt{\_lesson-core/chat/graphSchema.js}.}
+Chats outlast the tab. Closing one keeps the chat, reopening it restores the history, and a
+message sent while the tutor is still replying waits its turn. If the same chat is open in two
+tabs, one holds it and the other can take it over.
+
+\hsprovenance{Table 2: \texttt{SKILL.md}, the per-lesson file list. The tags and renderer:
+\texttt{\_lesson-core/chat/processResponse.js} and \texttt{safeRender.js}. Chats that persist:
+\texttt{\_lesson-core/chat/tutorApi.js}.}
 \newpage
 
 % ---------------------------------------------------------------- page 9
@@ -272,27 +251,27 @@ the way the chat does, so the lesson that makes the mistake still fails its test
 \hslead{The tutor is a real Claude Code session, so the proxy decides what it can reach.}
 
 Each chat is its own Claude Code process, started by the lesson's proxy, so the tutor has real
-tools: it can read the course files, search the web, run commands and call on agents of its own.
+tools. It can read the course files, search the web, run commands and call on agents of its own.
 
 \begin{hsfigure}{Figure 7 / where the tutor may write}%
-{Ochre is the student, rust the check that refuses, sage the tutor and the one folder it may
+{Ochre is the student, rust the check that refuses, sage the tutor and what it may
 write, and grey everything else. The rust dashed line is the fence.}
 \hsdiagram{figures/tutor}
 \end{hsfigure}
 
-Every tutor starts restricted. It loads no CLAUDE.md, no hooks and no user MCP servers, so it
-carries no one's instructions but the lesson's. It may edit and write only inside its own
-lesson, shell commands run in a sandbox that may write only there, and anything else it asks
-for is denied without a prompt. Before the proxy starts a single tutor it checks that the CLI
-offers every one of those options, and if one is missing, no tutor starts and every tutor
-route answers 503.
+Every tutor starts restricted. It loads no CLAUDE.md, hooks or user MCP servers, so it carries
+no one's instructions but the lesson's. It may write only the lesson's source and a scratch
+folder, because the rest of the lesson folder holds files that run outside any sandbox. Its
+shell commands run in a sandbox with the same limits, and anything else is denied without a
+prompt. Before the proxy starts a tutor, it checks that the CLI offers every one of those
+options. If one is missing, no tutor starts. If the check only timed out on a busy machine, the
+proxy tries again rather than giving up until a restart.
 
-The agents a tutor may call are a team of its own: two that ship for tutoring, one that notices when a chat
-has filled a gap in the lesson and one that knows what the lesson already says, beside
-copies of the pipeline's agents for a graph, a check or a quick piece of research while the
-student waits. The tutor is their orchestrator, as main Claude is at build time.
+The tutor has a team of its own: one agent that notices when a chat has filled a gap in the
+lesson, one that knows what the lesson already says, and copies of the pipeline's agents for a
+graph, a check or a quick piece of research while the student waits.
 
-\hsprovenance{The flags and the refusal: \texttt{\_lesson-core/server/proxy.js}, \emph{Tutor
+\hsprovenance{The options, the probe and the refusal: \texttt{\_lesson-core/server/proxy.js}, \emph{Tutor
 confinement}, and its fixture \texttt{tests/tutor-confinement/}. The tutor's team:
 \texttt{SKILL.md}, \emph{Runtime tutor team}.}
 \newpage
@@ -303,23 +282,15 @@ confinement}, and its fixture \texttt{tests/tutor-confinement/}. The tutor's tea
 
 \hslead{Two layers of tests, and nothing that can block a merge needs a model or a browser.}
 
-\begin{hsstatrow}[4]
-\hsstat{19}{checks every lesson passes before it ships}
-\hsstat{23}{test scenarios in the skill's own gate}
-\hsstat{13}{runs left out, each printed with its command}
-\hsstat{82}{commits since 13 April}
-\end{hsstatrow}
+The first layer is inside each lesson. Its checks parse the file, confirm every topic has what
+the tutor needs, and build the tutor's whole prompt to see that it fits on the CLI's command
+line. A prompt too long for that has to go in on standard input, where it loses its weight as
+instructions, so the size is a test and not a guideline.
 
-The first layer is inside each lesson. Its nineteen checks parse the file, confirm every topic
-has what the tutor needs, and build the tutor's whole prompt to see that it fits the CLI's
-argument list. Past 28,000 characters the proxy has to pass it on standard input instead, where it
-loses its priority as instructions, so that one is a test and not a guideline.
-
-The second layer is the skill's own gate, a script every pull request must pass before it can
-merge. It runs 23 self-contained scenarios, mostly in parallel, with a fake \texttt{claude}
-where one needs the CLI. The runs that
-need a browser, the real CLI or a model are not skipped in silence: the gate prints each one
-with the exact command that runs it.
+The second layer is the skill's own gate, which every pull request must pass to merge. Each of
+its scenarios builds its own fixture and runs without a model, using a fake \texttt{claude}
+where it needs the CLI. The runs that need a browser, the real CLI or a model aren't skipped in
+silence: the gate prints each one with the command that runs it.
 
 \hsclaim{A person decides what a lesson teaches. Everything after that has something that can
 say no.}%
@@ -331,17 +302,15 @@ test that reviewer and the tutor on blind cases need a model too, so they are no
 and a lesson can pass every test and still teach badly.
 \end{hscallout}
 
-\hsprovenance{The eighteen checks: \texttt{references/checklists.md}. The gate, its fixtures and
-its exclusions: \texttt{tests/check.sh}. The ceiling:
-\texttt{\_lesson-core/constants/promptBudget.js}. Teaching evals: \texttt{evals/teaching/README.md}.
-Commits: \texttt{git log}.}
+\hsprovenance{The lesson's checks: \texttt{references/checklists.md}. The gate, its fixtures and
+its exclusions: \texttt{tests/check.sh}. The prompt ceiling:
+\texttt{\_lesson-core/constants/promptBudget.js}. Teaching evals: \texttt{evals/teaching/README.md}.}
 \newpage
 
-The gate also runs on GitHub Actions, for every pull request and every push to the main branch,
-split four ways: the four scenarios that start real proxies run in turn, the parser and build
-scenarios get jobs of their own, and a fourth runs whatever is left. That last job reads the list
-from the gate itself, so a scenario added to the gate is run there without anyone editing the
-workflow. It needs no secrets and deploys nothing.
+The gate also runs on GitHub Actions for every pull request, split into four jobs. The scenarios
+that start real proxies run one at a time, the parser and build scenarios get jobs of their own,
+and the last job runs whatever is left, read from the gate itself, so a new scenario is covered
+without anyone editing the workflow. It needs no secrets and deploys nothing.
 
 \begin{hsfigure}{Figure 8 / the same gate, on GitHub Actions}%
 {Ochre is the change, rust the four jobs that can each say no, slate where the result shows.}
@@ -355,17 +324,11 @@ workflow. It needs no secrets and deploys nothing.
 % ================================================================ 9. in use
 \section{In use}
 
-\hslead{It builds the lessons for a set of university courses, and most of what it has
-learned came from those lessons going wrong.}
+\hslead{Most of what it has learned came from real lessons going wrong.}
 
-\begin{hsstatrow}[3]
-\hsstat{53}{lessons, across 14 course folders}
-\hsstat{39}{of them built before the current shell}
-\hsstat{425}{commits to the lessons since 10 April}
-\end{hsstatrow}
-
-A built copy is published behind an access list, with the tutor live there since 7 September.
-A lesson can also have a printed companion, built by the skill that built this document.
+It builds the lessons for a set of university courses. A built copy is published behind an
+access list, with the tutor live, and a lesson can have a printed companion made by the skill
+that made this document.
 
 \begin{hsblock}
 \hslabel{Table 3 / what went wrong, and what changed}\par\vspace{8pt}
@@ -376,18 +339,19 @@ Cancelling a turn could kill the proxy itself & A process group is signalled onl
 A dash in a long reply came out as a replacement character & The reader carries a character across a pipe-buffer boundary \\ \hline
 A lesson built to the documented budget shipped a demoted prompt & The size is measured from the real prompt, and tested \\ \hline
 A long reply was lost when the tab's stream dropped & The chat re-attaches to the turn still running \\ \hline
-One wrongly declared graph setting stopped the tutor in seven lessons & The chat skips the setting, and a new check fails the lesson \\
+One wrongly declared graph setting stopped the tutor in several lessons & The chat skips the setting, and a new check fails the lesson \\ \hline
+A busy machine timed out the CLI check, and the tutor stayed off until a restart & A timed-out check is retried, not taken as a no \\ \hline
+A tag the tutor only quoted still changed the page & Tags inside code and quotes are inert \\
 \hstoprule
 \end{tabularx}
 \end{hsblock}
 
 \vspace{10pt}
-Each fix merged with a fixture in the gate that covers it. What is still open is shape: one app
-shell that mounts every lesson, typed actions in place of the tagged messages, and a tutor for
-the author kept apart from the student's.
+Each fix merged with a scenario in the gate that covers it. What's still open is structural: one
+app shell that mounts every lesson, typed actions in place of the tagged messages, and a tutor
+for the author kept apart from the student's.
 
-\hsprovenance{Counts: the built lessons, \texttt{SKILL.md} (classic lessons) and the
-lessons' commit history, 27 September. Table 3: pull requests \#20,
-\#45, \#46 and \#61 and \texttt{ROADMAP.md}, item 16. What is open: \texttt{ROADMAP.md}, P2.}
+\hsprovenance{Table 3: pull requests \#20, \#45, \#46, \#61, \#62 and \#66, and \texttt{ROADMAP.md},
+item 16. What is open: \texttt{ROADMAP.md}, P2.}
 
 \end{document}
