@@ -1,5 +1,22 @@
 # lesson-builder
 
+<p align="center">
+  <a href="docs/overview/overview.pdf"><img src="docs/overview/readme-cover.png" width="760" alt="Lessons with a tutor inside: the cover page of the lesson-builder overview, with the six phases and the one place a person approves the plan"></a>
+</p>
+
+**[Read the full overview (PDF)](docs/overview/overview.pdf)**. It explains how the skill turns course material into a lesson a student can talk to: the six phases, the agents, the review loop, what a lesson is made of, and how the tutor is kept inside its lesson. Two of its pages:
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/overview/overview.pdf"><img src="docs/overview/readme-lesson.png" alt="What a lesson is made of: a Vite page, a local proxy, one Claude Code session per chat, and a shared core"></a></td>
+    <td width="50%"><a href="docs/overview/overview.pdf"><img src="docs/overview/readme-tutor.png" alt="A tutor that stays in its lesson: it may write only the lesson source and a scratch folder"></a></td>
+  </tr>
+</table>
+
+These images are rendered from the PDF by `docs/overview/build.sh`, so rebuild them whenever `overview.tex` changes.
+
+---
+
 A Claude Code skill for building and updating interactive JSX lesson apps. Each lesson is a Vite + React project with tabbed topics, LaTeX math, SVG graphs, manim animations, interactive demos, and an embedded AI tutor chatbot.
 
 The skill operates on workspaces laid out as `<workspace_root>/<course>/claude_lessons/<slug>/`, with shared chat and UI infrastructure at `<workspace_root>/_lesson-core/` imported via the `@core` Vite alias.

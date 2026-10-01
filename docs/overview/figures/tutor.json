@@ -14,7 +14,7 @@
   {
    "id": "px",
    "title": "Proxy",
-   "sub": "checks flags",
+   "sub": "probes the CLI",
    "role": "gate",
    "col": 1,
    "row": 0.5
@@ -29,18 +29,18 @@
   },
   {
    "id": "ls",
-   "title": "Its lesson",
-   "sub": "writable",
+   "title": "Its source",
+   "sub": "+ scratch dir",
    "role": "work",
    "col": 2,
    "row": 1
   },
   {
    "id": "no",
-   "title": "No writes",
+   "title": "Refused",
    "sub": [
-    "outside",
-    "its lesson"
+    "other writes,",
+    "CLAUDE.md"
    ],
    "role": "neutral",
    "col": 3,

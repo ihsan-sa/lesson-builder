@@ -12,22 +12,22 @@
  "branches": [
   {
    "title": "Serial",
-   "sub": "four live proxies",
+   "sub": "live proxies, in turn",
    "role": "gate"
   },
   {
    "title": "Parser",
-   "sub": "four parse the source",
+   "sub": "parse the source",
    "role": "gate"
   },
   {
    "title": "Builds",
-   "sub": "two Vite builds",
+   "sub": "Vite builds",
    "role": "gate"
   },
   {
    "title": "Rest",
-   "sub": "the other thirteen",
+   "sub": "everything else",
    "role": "gate"
   }
  ],

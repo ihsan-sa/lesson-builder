@@ -22,7 +22,7 @@
   {
    "id": "px",
    "title": "Proxy",
-   "sub": "Express",
+   "sub": "keeps chats",
    "role": "work",
    "col": 2,
    "row": 0
@@ -38,7 +38,7 @@
   {
    "id": "co",
    "title": "Shared core",
-   "sub": "the @core alias",
+   "sub": "kept current",
    "role": "neutral",
    "col": 1.5,
    "row": 1
