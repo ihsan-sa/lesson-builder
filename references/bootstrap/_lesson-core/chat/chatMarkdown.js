@@ -190,8 +190,14 @@ export function renderChatHtml(text, { katex } = {}) {
     });
     s = s.replace(/^- (.+)$/gm, '<li class="chat-li">$1</li>');
     s = s.replace(/((?:<li class="chat-li">.*<\/li>\n?)+)/g, '<ul class="chat-ul">$1</ul>');
-    s = s.replace(/^\d+\. (.+)$/gm, '<li class="chat-oli">$1</li>');
-    s = s.replace(/((?:<li class="chat-oli">.*<\/li>\n?)+)/g, '<ol class="chat-ol">$1</ol>');
+    // Keep the source number: a run of items split off by a display equation or a
+    // paragraph would otherwise restart at 1, so an <ol> whose first item isn't 1 gets start=.
+    s = s.replace(/^(\d+)\. (.+)$/gm, '<li class="chat-oli" data-n="$1">$2</li>');
+    s = s.replace(/((?:<li class="chat-oli" data-n="\d+">.*<\/li>\n?)+)/g, (run) => {
+      const first = parseInt(run.match(/data-n="(\d+)"/)[1], 10);
+      const items = run.replace(/ data-n="\d+"/g, '');
+      return first === 1 ? `<ol class="chat-ol">${items}</ol>` : `<ol class="chat-ol" start="${first}">${items}</ol>`;
+    });
     s = s.replace(/\n/g, '<br/>');
     s = s.replace(/\x00FB(\d+)\x00/g, (_, i) => fencedBlocks[parseInt(i)]);
     s = s.replace(/\x00IC(\d+)\x00/g, (_, i) => inlineCode[parseInt(i)]);
