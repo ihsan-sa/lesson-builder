@@ -19,6 +19,10 @@ const carrier = (inner) => `<div class="chat-demo-block"><div class="chat-demo-t
 const WAVE3 = '{"wave":{"freq":3}}';
 
 exports.reply = [
+  // A numbered list split by a display equation keeps counting (owner, #lessons 2026-10-03:
+  // every step showed as "1."): the run after the equation starts at 2, the first run has no start.
+  { name: 'numbered list split by an equation keeps its numbers', text: '1. a\n$$x^2$$\n2. b\n3. c',
+    html: '<ol class="chat-ol"><li class="chat-oli">a</li><br></ol><div class="chat-eq-block"><code>x^2</code></div><ol class="chat-ol" start="2"><li class="chat-oli">b</li><br><li class="chat-oli">c</li></ol>' },
   // Positive controls: the same tags DO act in the reply's own prose.
   { name: 'live edit dispatches', text: `Raising it.\n${edit(WAVE3)}`,
     edits: [{ wave: { freq: 3 } }], html: 'Raising it.' },
