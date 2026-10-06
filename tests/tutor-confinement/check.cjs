@@ -38,11 +38,11 @@ async function confined() {
   const shared = JSON.parse((await post("/session/init", { isolated: false })).text);
   ok(!!iso.sessionId && !!shared.sessionId, "isolated and shared sessions open");
   ok((await post("/chat", { sessionId: iso.sessionId, message: "hi" })).text.includes("event: done"), "a streamed turn runs");
-  ok((await post("/chat", { messages: [{ role: "user", content: "hi" }] })).status === 200, "a stateless turn runs");
+  ok((await post("/chat", { messages: [{ role: "user", content: "hi" }], system: "You tutor." })).status === 200, "a stateless turn runs");
   const all = spawns();
   ok(all.length === 4, `four CLI spawns recorded (${all.length})`);
   const scratch = path.join(L, "server", ".isolated");
-  for (const [i, { args, cwd, addDirsClaudeMd }] of all.entries()) {
+  for (const [i, { args, cwd, addDirsClaudeMd, mplConfigDir }] of all.entries()) {
     const tag = `spawn ${i + 1}`;
     // The sandbox lets Bash write its cwd: a cwd of the lesson root would give it package.json and server/.
     ok(cwd === scratch, `${tag}: runs in the scratch dir, in either memory mode (${cwd})`);
@@ -51,6 +51,8 @@ async function confined() {
     // Brief: "runs with none of the host repo's or the box's CLAUDE.md in its context".
     ok(args.includes("--restricted"), `${tag}: --restricted (no user/project settings, so no CLAUDE.md walk, hooks or user MCP)`);
     ok(addDirsClaudeMd === null, `${tag}: CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD stripped from the CLI's env`);
+    // Brief: "no new write path outside scratch": matplotlib's cache goes in the scratch, not ~/.config.
+    ok(mplConfigDir === path.join(scratch, ".matplotlib"), `${tag}: MPLCONFIGDIR is inside the scratch dir (${mplConfigDir})`);
     ok(argOf(args, "--permission-prompts") === "none", `${tag}: --permission-prompts none`);
     const tools = (argOf(args, "--tools") || "").split(",");
     ok(tools.includes("Bash") && tools.includes("Agent") && tools.includes("Read"), `${tag}: --tools names Bash, Agent, Read (--restricted drops Bash otherwise)`);
@@ -70,9 +72,73 @@ async function confined() {
     const sb = st.sandbox || {};
     ok(sb.enabled === true && sb.failIfUnavailable === true && sb.allowUnsandboxedCommands === false, `${tag}: Bash sandboxed, refused where the sandbox cannot start, never unsandboxed`);
     ok(JSON.stringify(sb.filesystem?.allowWrite) === JSON.stringify([scratch]), `${tag}: the sandbox writes only the scratch dir (${JSON.stringify(sb.filesystem?.allowWrite)})`);
+    // Brief: "no network": drawing opened no domain, socket or port to sandboxed commands.
+    const net = sb.network || {};
+    ok(!(net.allowedDomains || []).length && !net.allowUnixSockets?.length && !net.allowAllUnixSockets && !net.allowLocalBinding, `${tag}: the sandbox opens no network to Bash (${JSON.stringify(net)})`);
     const team = argOf(args, "--plugin-dir");
     ok(!!team && fs.existsSync(path.join(team, "agents", "zebra-agent.md")) && fs.existsSync(path.join(team, ".claude-plugin", "plugin.json")), `${tag}: the workspace's agent registry rides in as a plugin`);
   }
+  const prompt = argOf(all.find((s) => argOf(s.args, "--system-prompt"))?.args || [], "--system-prompt") || "";
+  ok(prompt.startsWith("You tutor.") && /out\/ in your working directory/.test(prompt) && prompt.includes("![](chat/file/<name>)"), "a turn with a system prompt is told where figures go and how to show one");
+  await figures(scratch);
+}
+
+// Brief: "the image served only from that session's scratch, and no path traversal". GET
+// chat/file/<name> serves out/<name> in the scratch dir and nothing else. Each case plants its own
+// file, so a refusal is the route's, not a missing file.
+const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000" + "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082", "hex");
+async function figures(scratch) {
+  const out = path.join(scratch, "out");
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.mkdirSync(out, { recursive: true });
+  const get = async (name) => { const r = await proxyFetch(`/chat/file/${name}`); return { status: r.status, type: r.headers.get("content-type"), body: Buffer.from(await r.arrayBuffer()) }; };
+  fs.writeFileSync(path.join(out, "sine.png"), PNG);
+  const kept = await get("sine.png");
+  ok(kept.status === 200 && kept.type === "image/png" && kept.body.equals(PNG), `a PNG in out/ is served as image/png, byte for byte (${kept.status} ${kept.type})`);
+  // A closed tab mid-download must not leak the proxy an fd per figure.
+  const pid = JSON.parse(fs.readFileSync(path.join(L, "server", ".proxy.json"), "utf8")).pid;
+  const fds = () => fs.readdirSync(`/proc/${pid}/fd`).length;
+  fs.writeFileSync(path.join(out, "big.png"), Buffer.concat([PNG, Buffer.alloc(8 << 20)]));
+  const before = fds();
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => {
+      const rq = require("http").get(`${BASE}/chat/file/big.png`, (r) => r.once("data", () => { rq.destroy(); resolve(); }));
+      rq.on("error", resolve);
+    });
+  }
+  await new Promise((r) => setTimeout(r, 1000));
+  ok(fds() < before + 5, `20 figure downloads aborted mid-body leave no fds open in the proxy (${before} -> ${fds()})`);
+  // The same bytes one directory up, in the scratch but not in out/: never nameable.
+  fs.writeFileSync(path.join(scratch, "up.png"), PNG);
+  for (const name of ["..%2Fup.png", "%2E%2E%2Fup.png", "..%5Cup.png", ".up.png", "%2Fetc%2Fhostname.png"]) {
+    ok((await get(name)).status === 404, `${decodeURIComponent(name)} is refused (traversal)`);
+  }
+  ok((await get("../up.png")).status === 404, "../up.png (normalised by the URL) is refused");
+  // A secret outside the scratch, reached by a link the tutor could plant in out/.
+  const secret = path.join(WS, "secret.png");
+  fs.writeFileSync(secret, PNG);
+  fs.symlinkSync(secret, path.join(out, "link.png"));
+  ok((await get("link.png")).status === 404, "a symlink in out/ to a file outside the scratch is refused, not followed");
+  fs.linkSync(path.join(out, "sine.png"), path.join(out, "hard.png"));
+  ok((await get("hard.png")).status === 200, "a hard link inside out/ to a file in out/ is served (same device, a regular file)");
+  fs.writeFileSync(path.join(out, "page.svg"), "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>");
+  ok((await get("page.svg")).status === 404, "an SVG in out/ is not served (it would run as script)");
+  fs.writeFileSync(path.join(out, "png"), PNG);
+  ok((await get("png")).status === 404, "a name with no extension is not served");
+  fs.mkdirSync(path.join(out, "dir.png"));
+  ok((await get("dir.png")).status === 404, "a directory named like an image is refused");
+  require("child_process").execFileSync("mkfifo", [path.join(out, "pipe.png")]);
+  const t0 = Date.now();
+  ok((await get("pipe.png")).status === 404 && Date.now() - t0 < 5000, "a fifo in out/ is refused at once, not waited on");
+  // out/ itself swapped for a link to a directory outside the scratch that holds a PNG.
+  const elsewhere = path.join(WS, "elsewhere"); fs.mkdirSync(elsewhere, { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, "sine.png"), PNG);
+  fs.rmSync(out, { recursive: true, force: true });
+  fs.symlinkSync(elsewhere, out);
+  ok((await get("sine.png")).status === 404, "out/ replaced by a link to a directory outside the scratch: refused");
+  fs.unlinkSync(out);
+  ok((await get("sine.png")).status === 404, "no out/ at all: 404, and the proxy keeps serving");
+  ok((await post("/chat", { messages: [{ role: "user", content: "hi" }] })).status === 200, "the proxy still answers a turn after every refusal");
 }
 
 async function unconfined(why) {
