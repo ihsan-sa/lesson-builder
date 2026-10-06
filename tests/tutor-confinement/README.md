@@ -30,7 +30,8 @@ the `--help` probe accepted an option named anywhere, even inside another option
   scratch dir, the sandbox opens no domain, socket or port, a turn's system prompt says where figures
   go, and `chat/file/<name>` serves a PNG from `out/` in the scratch and refuses each of: a name that
   climbs out (`../`, encoded `/` or `\`, a leading dot), a symlink in `out/` to a file outside, `out/`
-  itself swapped for a link, an SVG, a name with no extension, a directory and a fifo. A CLI whose `--help` names `--restricted`
+  itself swapped for a link, an SVG, a name with no extension, a directory and a fifo; and 20
+  downloads aborted mid-body leave the proxy no open fds. A CLI whose `--help` names `--restricted`
   only inside another option's text, and a CLI older than the floor: every tutor route answers 503,
   nothing is spawned, `chat.log` says why. `/commit` against a lesson source whose file name would
   run a command in a shell: nothing runs. A CLI whose first two probes stall past the probe
@@ -86,7 +87,11 @@ is the only way that file reaches the browser. It is the hosted tutor's contract
 Nothing new is writable: the sandbox still writes only the scratch dir, and matplotlib's cache goes
 there too (`MPLCONFIGDIR`). The route reads only `out/` under this lesson's scratch, opens `out/` and
 the file without following a link, serves regular files of an image type only (no SVG, which would
-run as script on this origin), and answers 404 to anything else.
+run as script on this origin), and answers 404 to anything else. A hard link is stopped by the
+kernel on Linux, not by the route: the sandbox binds the scratch as its own mount and `link()` across
+mounts fails. On macOS, which has no `/proc` and no such mount, the route checks the device and that
+`out/` is still the directory it opened, which leaves a hard link to an image the tutor could already
+read, and a narrow swap race, untested.
 
 On iiks1 the local tutor still cannot draw, because its Bash sandbox cannot start there (above), so
 the figure route has nothing to serve until that host restriction is lifted. The hosted tutor runs

@@ -104,6 +104,7 @@ import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
+import { pipeline } from "stream";
 import { createNdjsonReader } from "./ndjson.js";
 import { createChatLog } from "./chatLog.js";
 import { withWorkspaceRoot } from "../chat/buildSystemPrompt.js";
@@ -1492,7 +1493,11 @@ function openFigure(name) {
     // Linux: resolve the name against the directory already open, so swapping
     // out/ for a link after the check above changes nothing. Elsewhere there is
     // no /proc: the file must then sit on the directory's own device and out/
-    // must still be that directory once the file is open.
+    // must still be that directory once the file is open. Neither check stops a
+    // hard link: on Linux the kernel does, because the sandbox binds the scratch
+    // as a mount of its own and link() across mounts fails EXDEV. On macOS the
+    // scratch is no separate mount, so a hard link to an image the tutor could
+    // already Read would be served; nothing it cannot read can be linked.
     const viaFd = process.platform === "linux" ? `/proc/self/fd/${dir}/${name}` : path.join(FIGURE_DIR, name);
     const fd = fs.openSync(viaFd, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
     const st = fs.fstatSync(fd);
@@ -1520,7 +1525,9 @@ app.get("/chat/file/:name", (req, res) => {
     return gone();
   }
   res.writeHead(200, { "Content-Type": type, "Content-Length": f.size, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'" });
-  fs.createReadStream(null, { fd: f.fd }).pipe(res);
+  // pipeline, not pipe: a closed tab or a reload must close the fd too, or
+  // each aborted download leaks one until the proxy runs out.
+  pipeline(fs.createReadStream(null, { fd: f.fd }), res, () => {});
 });
 
 // Phase E2 auto-commit. The client POSTs a bot-drafted commit message + paths

@@ -95,6 +95,19 @@ async function figures(scratch) {
   fs.writeFileSync(path.join(out, "sine.png"), PNG);
   const kept = await get("sine.png");
   ok(kept.status === 200 && kept.type === "image/png" && kept.body.equals(PNG), `a PNG in out/ is served as image/png, byte for byte (${kept.status} ${kept.type})`);
+  // A closed tab mid-download must not leak the proxy an fd per figure.
+  const pid = JSON.parse(fs.readFileSync(path.join(L, "server", ".proxy.json"), "utf8")).pid;
+  const fds = () => fs.readdirSync(`/proc/${pid}/fd`).length;
+  fs.writeFileSync(path.join(out, "big.png"), Buffer.concat([PNG, Buffer.alloc(8 << 20)]));
+  const before = fds();
+  for (let i = 0; i < 20; i++) {
+    await new Promise((resolve) => {
+      const rq = require("http").get(`${BASE}/chat/file/big.png`, (r) => r.once("data", () => { rq.destroy(); resolve(); }));
+      rq.on("error", resolve);
+    });
+  }
+  await new Promise((r) => setTimeout(r, 1000));
+  ok(fds() < before + 5, `20 figure downloads aborted mid-body leave no fds open in the proxy (${before} -> ${fds()})`);
   // The same bytes one directory up, in the scratch but not in out/: never nameable.
   fs.writeFileSync(path.join(scratch, "up.png"), PNG);
   for (const name of ["..%2Fup.png", "%2E%2E%2Fup.png", "..%5Cup.png", ".up.png", "%2Fetc%2Fhostname.png"]) {
