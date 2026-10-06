@@ -7,7 +7,8 @@
 //
 // Routes: /whoami, /session/init, /session/open, /session/ping,
 // /session/transfer, /session/close, /session/delete, /session/history,
-// /upload, /chat, /chat/cancel, /chat/unqueue, /sessions, /thread/open,
+// /upload, /chat, /chat/cancel, /chat/unqueue, GET /chat/file/<name> (a
+// figure the tutor drew, § "Figures"), /sessions, /thread/open,
 // /thread/fold, /commit.
 //
 // Log. One line per event in server/chat.log, rotated by chatLog.js. Every
@@ -713,7 +714,9 @@ function confine(args) {
   args.push("--restricted", "--tools", TUTOR_TOOLS, "--settings", TUTOR_SETTINGS, "--permission-prompts", "none");
   const team = teamPluginDir();
   if (team) args.push("--plugin-dir", team);
-  const env = { ...process.env, MPLBACKEND: "agg" };
+  // matplotlib draws headless, and keeps its font cache in the scratch dir, the
+  // one place the sandbox lets it write, rather than ~/.config.
+  const env = { ...process.env, MPLBACKEND: "agg", MPLCONFIGDIR: path.join(TUTOR_CWD, ".matplotlib") };
   // Would load CLAUDE.md from every --add-dir, REPO_DIR's included.
   delete env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD;
   return env;
@@ -721,7 +724,8 @@ function confine(args) {
 
 // Fail closed at the door as well: refuse before a session or a turn is set up.
 app.use(["/session/init", "/session/transfer", "/thread/fold", "/chat"], (req, res, next) => {
-  if (req.path === "/cancel" || req.path === "/unqueue" || (CONFINEMENT_MISSING && !CONFINEMENT_MISSING.length)) return next();
+  // A figure already drawn is a file read, not a turn: it spawns nothing.
+  if (req.path === "/cancel" || req.path === "/unqueue" || (req.method === "GET" && req.path.startsWith("/file/")) || (CONFINEMENT_MISSING && !CONFINEMENT_MISSING.length)) return next();
   if (CONFINEMENT_MISSING === null) {
     reprobe();
     log("TUTOR_REFUSED", { url: req.originalUrl, starting: true });
@@ -813,7 +817,7 @@ function runClaudeStreaming(args, stdinContent, onEvent, onDone, onError) {
 // shell shredded into single words. Returns the stdin content to send.
 function withSystemPrompt(args, system, basePrompt) {
   if (!system) return basePrompt;
-  system = withWorkspaceRoot(system, WORKSPACE_ROOT);
+  system = `${withWorkspaceRoot(system, WORKSPACE_ROOT)}\n\n${FIGURE_RULE}`;
   if (SHELL_FREE && system.length <= 28000) {
     args.push("--system-prompt", system);
     return basePrompt;
@@ -1459,6 +1463,64 @@ app.get("/sessions", (req, res) => {
     resumable: !s.open && !s.turn && !(s.lastTurn && s.lastTurn.outcome === "cancelled") && !liveLease(s),
   }));
   res.json({ sessions: list, totalTokens, nextChatNum });
+});
+
+// § Figures. A tutor turn draws with matplotlib in its sandbox, writes the image
+// into out/ in its scratch dir and shows it as ![](chat/file/<name>), which
+// chatMarkdown renders as an <img>. This route is the only way such a file
+// reaches the browser, and it is the same contract as the hosted tutor's
+// chat/file (lessons/chat.py ep_file on iiks1), so one prompt line and one
+// link form serve both. It runs outside the sandbox as the person who started
+// the proxy, and out/ and every name in it are the tutor's to write, so:
+//   - the name is one component (FIGURE_NAME: no slash, no leading dot, so no
+//     "..") of an image type below; anything else is 404 before a syscall;
+//   - out/ is opened O_NOFOLLOW and the file O_NOFOLLOW through that open
+//     directory, so a link by either name is refused, never followed;
+//   - it must be a regular file (O_NONBLOCK, so a fifo cannot hang the open);
+//   - nothing but TUTOR_CWD/out is ever named, so a file elsewhere in the
+//     scratch, the lesson or the box cannot be asked for at all.
+// The scratch is this lesson's, one per proxy, and this proxy serves one
+// person, so it is that person's chats' scratch. SVG is not served: on this
+// origin it would run as script; the tutor writes SVG inline instead.
+const FIGURE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
+const FIGURE_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+const FIGURE_DIR = path.join(TUTOR_CWD, "out");
+const FIGURE_RULE = "To show the student a graph or picture you have drawn (matplotlib, saved with savefig), write the file into out/ in your working directory (make it if it is not there) and put ![](chat/file/<name>) in your answer: that link is relative to the lesson's page and the chat renders it as an image. Only files directly in out/ of these types are served: " + Object.keys(FIGURE_TYPES).join(", ") + ". An SVG is not served that way; write SVG inline instead.";
+function openFigure(name) {
+  const dir = fs.openSync(FIGURE_DIR, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  try {
+    // Linux: resolve the name against the directory already open, so swapping
+    // out/ for a link after the check above changes nothing. Elsewhere there is
+    // no /proc: the file must then sit on the directory's own device and out/
+    // must still be that directory once the file is open.
+    const viaFd = process.platform === "linux" ? `/proc/self/fd/${dir}/${name}` : path.join(FIGURE_DIR, name);
+    const fd = fs.openSync(viaFd, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const st = fs.fstatSync(fd);
+    const d = fs.fstatSync(dir);
+    const again = process.platform === "linux" ? d : fs.lstatSync(FIGURE_DIR);
+    if (!st.isFile() || st.dev !== d.dev || again.ino !== d.ino || !again.isDirectory()) {
+      fs.closeSync(fd);
+      throw Object.assign(new Error("not a regular file in out/"), { code: "EFTYPE" });
+    }
+    return { fd, size: st.size };
+  } finally {
+    fs.closeSync(dir);
+  }
+}
+app.get("/chat/file/:name", (req, res) => {
+  const name = req.params.name;
+  const type = FIGURE_NAME.test(name) && FIGURE_TYPES[name.split(".").pop().toLowerCase()];
+  const gone = () => res.status(404).json({ error: { message: "That figure is not there any more, or was never one this tutor drew." } });
+  if (!type || !name.includes(".")) return gone();
+  let f;
+  try {
+    f = openFigure(name);
+  } catch (err) {
+    log("FIGURE_REFUSED", { name, error: err.code || err.message });
+    return gone();
+  }
+  res.writeHead(200, { "Content-Type": type, "Content-Length": f.size, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'" });
+  fs.createReadStream(null, { fd: f.fd }).pipe(res);
 });
 
 // Phase E2 auto-commit. The client POSTs a bot-drafted commit message + paths

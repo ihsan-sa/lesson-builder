@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Fake `claude` for tests/tutor-confinement. Records every spawn's argv, cwd and
-// the one env var the proxy must strip into $FAKE_RECORD (one JSON line each),
+// the env vars the proxy must strip or set into $FAKE_RECORD (one JSON line each),
 // then answers like the CLI's -p protocol. FAKE_HELP_OMIT names an option to
 // leave out of --help, which is how a CLI too old to confine the tutor looks;
 // FAKE_VERSION is what --version reports (default: the proxy's TUTOR_MIN_CLI).
@@ -8,7 +8,7 @@
 // before answering, the way a probe does on a machine at load ~260.
 const fs = require("fs");
 const args = process.argv.slice(2);
-if (process.env.FAKE_RECORD) fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, cwd: process.cwd(), addDirsClaudeMd: process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD ?? null }) + "\n");
+if (process.env.FAKE_RECORD) fs.appendFileSync(process.env.FAKE_RECORD, JSON.stringify({ args, cwd: process.cwd(), addDirsClaudeMd: process.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD ?? null, mplConfigDir: process.env.MPLCONFIGDIR ?? null }) + "\n");
 const isProbe = args.includes("--version") || args.includes("--help");
 let stall = 0;
 if (isProbe && process.env.FAKE_STALL_PROBES) {
