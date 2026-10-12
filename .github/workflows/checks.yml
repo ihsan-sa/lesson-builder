@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  fixtures:
     name: check (${{ matrix.group }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -76,3 +76,13 @@ jobs:
           fi
           echo "fixtures: $FIXTURES"
           tests/check.sh $FIXTURES
+
+  # The one required status: green only when every fixture group above passed.
+  check:
+    name: check
+    if: always()
+    needs: [fixtures]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          [ "${{ needs.fixtures.result }}" = success ] || { echo "fixtures: ${{ needs.fixtures.result }}"; exit 1; }
